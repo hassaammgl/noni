@@ -1,0 +1,314 @@
+#include "fs.hpp"
+#include <fstream>
+#include <iostream>
+
+bool FS::create_file(const fs::path &path)
+{
+    try
+    {
+        if (path.has_parent_path())
+        {
+            fs::create_directories(path.parent_path());
+        }
+        std::ofstream file;
+        file.exceptions(std::ofstream::failbit | std::ofstream::badbit);
+        file.open(path);
+        file.close();
+        return true;
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "File System error: " << e.what() << '\n';
+        std::cerr << "Path: " << e.path1() << '\n';
+        return false;
+    }
+    catch (const std::ios_base::failure &e)
+    {
+        std::cerr << "FILE I/O Error: " << e.what() << '\n';
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error: " << e.what() << '\n';
+        return false;
+    }
+}
+
+bool FS::write_file(const fs::path &path, const std::string content)
+{
+    return false;
+}
+
+bool FS::append_file(const fs::path &path, const std::string content)
+{
+    return false;
+}
+
+std::optional<std::string> FS::read_file(const fs::path &path)
+{
+    return std::optional<std::string>();
+}
+
+bool FS::delete_file(const fs::path &path)
+{
+    try
+    {
+        if (!this->exists(path))
+        {
+            std::cerr << "File does not exists on path: " << path << "\n";
+            return false;
+        }
+        else
+        {
+            fs::remove(path);
+            return true;
+        }
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "File System error: " << e.what() << '\n';
+        std::cerr << "Path: " << e.path1() << '\n';
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error: " << e.what() << '\n';
+        return false;
+    }
+}
+
+bool FS::rename_file(const fs::path &oldfile, const fs::path &newpath)
+{
+    return false;
+}
+
+bool FS::copy_file(const fs::path &from, const fs::path &to)
+{
+    return false;
+}
+
+bool FS::createDirectory(const fs::path &path)
+{
+    return false;
+}
+
+bool FS::deleteDirectory(const fs::path &path)
+{
+    return false;
+}
+
+std::vector<fs::path> FS::listDirectory(const fs::path &path)
+{
+    return std::vector<fs::path>();
+}
+
+bool FS::exists(const fs::path &path) const
+{
+    try
+    {
+        if (fs::exists(path) && fs::is_regular_file(path))
+        {
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "File System error: " << e.what() << '\n';
+        std::cerr << "Path: " << e.path1() << '\n';
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error: " << e.what() << '\n';
+        return false;
+    }
+}
+
+bool FS::is_file(const fs::path &path) const
+{
+    try
+    {
+        if (fs::is_regular_file(path))
+        {
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "File System error: " << e.what() << '\n';
+        std::cerr << "Path: " << e.path1() << '\n';
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error: " << e.what() << '\n';
+        return false;
+    }
+}
+
+bool FS::is_directory(const fs::path &path) const
+{
+    try
+    {
+        if (fs::is_directory(path))
+        {
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "File System error: " << e.what() << '\n';
+        std::cerr << "Path: " << e.path1() << '\n';
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error: " << e.what() << '\n';
+        return false;
+    }
+}
+
+uintmax_t FS::file_size(const fs::path &path) const
+{
+    try
+    {
+        if (this->exists(path) && !this->is_directory(path))
+        {
+            return fs::file_size(path);
+        }
+        else
+        {
+            std::cerr << "Path is directory or something else: " << path << "\n";
+            return false;
+        }
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "File System error: " << e.what() << '\n';
+        std::cerr << "Path: " << e.path1() << '\n';
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error: " << e.what() << '\n';
+        return false;
+    }
+}
+
+fs::path FS::currentPath() const
+{
+    try
+    {
+        return fs::current_path();
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "File System error: " << e.what() << '\n';
+        return {};
+    }
+}
+
+bool FS::changeCurrentPath(const fs::path &path)
+{
+    try
+    {
+        if (fs::exists(path))
+        {
+            fs::current_path(path);
+            return true;
+        }
+        else
+        {
+            std::cerr << "Error: Path does not exist or is not a directory: " << path << '\n';
+            return false;
+        }
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "File System error: " << e.what() << '\n';
+        std::cerr << "Path: " << e.path1() << '\n';
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error: " << e.what() << '\n';
+        return false;
+    }
+}
+
+fs::path FS::absolute(const fs::path &path) const
+{
+    try
+    {
+        return fs::absolute(path);
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "File System error (absolute): " << e.what() << '\n';
+        std::cerr << "Path: " << e.path1() << '\n';
+        return {};
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error (absolute): " << e.what() << '\n';
+        return {};
+    }
+}
+
+fs::path FS::canonical(const fs::path &path) const
+{
+    try
+    {
+        if (fs::exists(path))
+        {
+            return fs::canonical(path);
+        }
+        else
+        {
+            std::cerr << "Canonical Error: Path does not exist on disk: " << path << '\n';
+            return {};
+        }
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "File System error (canonical): " << e.what() << '\n';
+        std::cerr << "Path: " << e.path1() << '\n';
+        return {};
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error (canonical): " << e.what() << '\n';
+        return {};
+    }
+}
+
+fs::path FS::weaklyCanonical(const fs::path &path) const
+{
+    try
+    {
+        return fs::weakly_canonical(path);
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "File System error (weaklyCanonical): " << e.what() << '\n';
+        std::cerr << "Path: " << e.path1() << '\n';
+        return {};
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error (weaklyCanonical): " << e.what() << '\n';
+        return {};
+    }
+}
