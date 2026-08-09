@@ -32,6 +32,9 @@ int main()
   std::cout << "current path: " << filesystem.currentPath() << std::endl;
   std::cout << "current path: " << filesystem.changeCurrentPath(filepath2) << std::endl;
   std::cout << "current path: " << filesystem.currentPath() << std::endl;
+  std::cout << "absolute path: " << filesystem.absolute(filepath) << std::endl;
+  std::cout << "cononical path: " << filesystem.canonical(filepath) << std::endl;
+  std::cout << "weak cononical path: " << filesystem.weaklyCanonical(filepath) << std::endl;
 
   // read_json_config("config.json");
   initscr();

@@ -79,27 +79,124 @@ bool FS::delete_file(const fs::path &path)
 
 bool FS::rename_file(const fs::path &oldfile, const fs::path &newpath)
 {
-    return false;
+    try
+    {
+        if (!fs::exists(oldfile))
+        {
+            std::cerr << "FS Error [rename_file]: Source path does not exist.\n";
+            return false;
+        }
+
+        fs::rename(oldfile, newpath);
+        return true;
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "FS Error [rename_file]: " << e.what() << '\n';
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error [rename_file]: " << e.what() << '\n';
+        return false;
+    }
 }
 
 bool FS::copy_file(const fs::path &from, const fs::path &to)
 {
-    return false;
+    try
+    {
+        if (!fs::exists(from))
+        {
+            std::cerr << "FS Error [copy_file]: Source file does not exist.\n";
+            return false;
+        }
+
+        return fs::copy_file(from, to, fs::copy_options::overwrite_existing);
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "FS Error [copy_file]: " << e.what() << '\n';
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error [copy_file]: " << e.what() << '\n';
+        return false;
+    }
 }
 
 bool FS::createDirectory(const fs::path &path)
 {
-    return false;
+    try
+    {
+        return fs::create_directories(path);
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "FS Error [createDirectory]: " << e.what() << '\n';
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error [createDirectory]: " << e.what() << '\n';
+        return false;
+    }
 }
 
 bool FS::deleteDirectory(const fs::path &path)
 {
-    return false;
+    try
+    {
+        return fs::remove_all(path) > 0;
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "FS Error [deleteDirectory]: " << e.what() << '\n';
+        return false;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error [deleteDirectory]: " << e.what() << '\n';
+        return false;
+    }
 }
 
 std::vector<fs::path> FS::listDirectory(const fs::path &path)
 {
-    return std::vector<fs::path>();
+    std::vector<fs::path> items;
+
+    try
+    {
+        if (!fs::exists(path))
+        {
+            std::cerr << "FS Error [listDirectory]: Path does not exist.\n";
+            return items;
+        }
+
+        if (!fs::is_directory(path))
+        {
+            std::cerr << "FS Error [listDirectory]: Path is not a directory.\n";
+            return items;
+        }
+
+        auto options = fs::directory_options::skip_permission_denied;
+
+        for (const auto &entry : fs::directory_iterator(path, options))
+        {
+            items.push_back(entry.path());
+        }
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr << "FS Error [listDirectory]: " << e.what() << '\n';
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "General Error [listDirectory]: " << e.what() << '\n';
+    }
+
+    return items;
 }
 
 bool FS::exists(const fs::path &path) const
