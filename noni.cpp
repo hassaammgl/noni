@@ -1,5 +1,6 @@
 #include "./includes/utils/fs.hpp"
 #include "./includes/utils/logger.hpp"
+#include "./includes/ui/ui.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -252,6 +253,7 @@ void test_delete_directory(FS &filesystem)
 int main()
 {
     FS filesystem;
+    UI u;
 
     std::cout << "========== FS TEST ==========\n";
     test_create_file(filesystem);
@@ -274,11 +276,7 @@ int main()
         << "\nPress ENTER to start ncurses...\n";
 
     std::cin.get();
-    initscr();
-    cbreak();
-    noecho();
-    keypad(stdscr, TRUE);
-    curs_set(0);
+    u.init();
     mvprintw(5, 10, "Hello, ncurses!");
     mvprintw(7, 10, "Press any key to exit.");
     refresh();

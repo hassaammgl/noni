@@ -1,24 +1,46 @@
 #include "utils/logger.hpp"
+
+#include <format>
 #include <iostream>
 
-void Logger::log(const std::string &level, const std::string &message)
+void Logger::log(
+    const std::string &level,
+    const std::string &message,
+    const std::source_location &loc)
 {
-    std::cout << "[ " << level << " ] " << message << std::endl;
+    std::cout << std::format(
+        "[{}:{}] [{}] [{}] {}\n",
+        loc.file_name(),
+        loc.line(),
+        loc.function_name(),
+        level,
+        message);
 }
 
-void Logger::debug(const std::string &message)
+void Logger::info(
+    const std::string &message,
+    const std::source_location &loc)
 {
-    log("DEBUG", message);
+    log("INFO", message, loc);
 }
-void Logger::error(const std::string &message)
+
+void Logger::error(
+    const std::string &message,
+    const std::source_location &loc)
 {
-    log("ERROR", message);
+    log("ERROR", message, loc);
 }
-void Logger::info(const std::string &message)
+
+void Logger::warning(
+    const std::string &message,
+    const std::source_location &loc)
 {
-    log("INFO", message);
+    log("WARNING", message, loc);
 }
-void Logger::warning(const std::string &message)
+
+void Logger::debug(
+    const std::string &message,
+    const std::source_location &loc)
 {
-    log("WARNING", message);
+    log("DEBUG", message, loc);
 }
