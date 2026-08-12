@@ -18,61 +18,6 @@ bool FS::create_file(const fs::path &path)
         file.open(path);
         file.close();
         logger.info("File Created succesfully");
-        return true;
-    }
-    catch (const fs::filesystem_error &e)
-    {
-        std::cerr << "File System error: " << e.what() << '\n';
-        std::cerr << "Path: " << e.path1() << '\n';
-        logger.error("Error while creating file...");
-        return false;
-    }
-    catch (const std::ios_base::failure &e)
-    {
-        std::cerr << "FILE I/O Error: " << e.what() << '\n';
-        logger.error("Error while creating file...");
-        return false;
-    }
-    catch (const std::exception &e)
-    {
-        std::cerr << "General Error: " << e.what() << '\n';
-        logger.error("Error while creating file...");
-        return false;
-    }
-}
-
-bool FS::write_file(const fs::path &path, const std::string &content)
-{
-    try
-    {
-        if (path.has_parent_path())
-        {
-            fs::create_directories(
-                path.parent_path());
-        }
-
-        std::ofstream file(path);
-
-        if (!file)
-        {
-            std::cerr
-                << "Could not open file: "
-                << path << '\n';
-
-            return false;
-        }
-
-        file << content;
-
-        file.close();
-
-        return true;
-    }
-    catch (const fs::filesystem_error &e)
-    {
-        std::cerr
-            << "File System Error: "
-            << e.what() << '\n';
 
         return false;
     }

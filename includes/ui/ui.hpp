@@ -1,8 +1,16 @@
 #include <ncurses.h>
+#include "utils/logger.hpp"
+
+struct Dimentions
+{
+    int height;
+    int width;
+};
 
 class UI
 {
 private:
+    Logger l;
     WINDOW *header;
     WINDOW *sidebar;
     WINDOW *editor;
@@ -12,20 +20,22 @@ private:
     int width;
 
     int sidebarWidth = 25;
-
-public:
-    UI(/* args */);
-    ~UI();
-
+    bool running = true;
     void init();
     void resize();
-
-    void draw();
+    void render();
     void drawHeader();
     void drawSidebar();
     void drawEditor();
     void drawStatusBar();
 
-    int getEditorWidth() const;
-    int getEditorHeight() const;
+    void handle_inputs();
+
+public:
+    UI(/* args */);
+    ~UI();
+
+    void run();
+
+    Dimentions getEditorDim() const;
 };
