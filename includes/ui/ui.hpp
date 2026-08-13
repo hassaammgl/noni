@@ -1,5 +1,12 @@
 #include <ncurses.h>
 #include "utils/logger.hpp"
+#include "components/statusbar.hpp"
+#include "components/header.hpp"
+#include "components/editor.hpp"
+#include "components/sidebar.hpp"
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 struct Dimentions
 {
@@ -11,10 +18,10 @@ class UI
 {
 private:
     Logger l;
-    WINDOW *header;
-    WINDOW *sidebar;
-    WINDOW *editor;
-    WINDOW *statusbar;
+    Header header;
+    Sidebar sidebar;
+    Editor editor;
+    Statusbar statusbar;
 
     int height;
     int width;
@@ -24,15 +31,10 @@ private:
     void init();
     void resize();
     void render();
-    void drawHeader();
-    void drawSidebar();
-    void drawEditor();
-    void drawStatusBar();
-
     void handle_inputs();
 
 public:
-    UI(/* args */);
+    UI(const fs::path filePath);
     ~UI();
 
     void run();

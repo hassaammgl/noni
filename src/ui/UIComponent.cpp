@@ -16,7 +16,11 @@ void UIComponent::create(int height, int width, int y, int x)
     this->y = y;
 }
 
-void UIComponent::resize(int height, int width, int y, int x)
+void UIComponent::resize(
+    int height,
+    int width,
+    int y,
+    int x)
 {
     if (window)
     {
@@ -24,7 +28,16 @@ void UIComponent::resize(int height, int width, int y, int x)
         window = nullptr;
     }
 
-    create(height, width, y, x);
+    this->height = height;
+    this->width = width;
+    this->y = y;
+    this->x = x;
+
+    window = newwin(
+        height,
+        width,
+        y,
+        x);
 }
 
 void UIComponent::clear()

@@ -10,10 +10,10 @@ void Logger::log(
 {
     std::cout << std::format(
         "[{}:{}] [{}] [{}] {}\n",
+        level,
         loc.file_name(),
         loc.line(),
         loc.function_name(),
-        level,
         message);
 }
 

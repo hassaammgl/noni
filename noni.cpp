@@ -1,5 +1,6 @@
 #include "./includes/utils/fs.hpp"
 #include "./includes/utils/logger.hpp"
+#include "./includes/utils/args.hpp"
 #include "./includes/ui/ui.hpp"
 
 #include <fstream>
@@ -7,7 +8,6 @@
 #include <ncurses.h>
 #include <nlohmann/json.hpp>
 #include <string>
-#include <vector>
 
 void read_json_config(const std::string &configfile)
 {
@@ -29,9 +29,11 @@ void read_json_config(const std::string &configfile)
     std::cout << data.dump(4) << '\n';
 }
 
-int main()
+int main(int argc, char *argv[])
 {
-    UI u;
+    fs::path filePath =
+        Args::getFilePath(argc, argv);
+    UI u(filePath);
     u.run();
     return 0;
 }
