@@ -2,13 +2,15 @@
 
 #include "ui/UIComponent.hpp"
 #include "utils/fs.hpp"
+#include "utils/logger.hpp"
 #include <string>
 
 class Sidebar : public UIComponent
 {
 private:
-    std::string title = "File manager";
+    Logger l;
     FS fs;
+    std::string title = "File manager";
 
 public:
     Sidebar() = default;

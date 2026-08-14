@@ -13,8 +13,10 @@ void Sidebar::draw()
         window,
         0,
         1, "%s",
-        this->title.c_str());
+        title.c_str());
+
     std::vector<fs::path> dirs = this->fs.listDirectory(this->fs.currentPath());
+    
     for (size_t i = 0; i < dirs.size(); i++)
     {
         mvwprintw(
