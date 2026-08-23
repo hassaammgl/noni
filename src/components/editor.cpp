@@ -3,19 +3,21 @@
 void Editor::moveCursorUp()
 {
 }
-
 void Editor::moveCursorDown()
 {
 }
 void Editor::moveCursorLeft()
 {
+    wmove(window, cursor.line, cursor.column - 1);
 }
 void Editor::moveCursorRight()
 {
+    wmove(window, cursor.line, cursor.column + 1);
 }
 void Editor::updateScroll()
 {
 }
+
 void Editor::draw()
 {
     if (!window)
@@ -23,11 +25,17 @@ void Editor::draw()
 
     werase(window);
     wbkgd(window, COLOR_PAIR(1));
-    mvwprintw(
-        window,
-        0,
-        0,
-        "NONI EDITOR");
+    auto content = buffer.readBuffer();
+    int line = 0;
+    for (auto c : content)
+    {
+        mvwprintw(
+            window,
+            0 + line,
+            0,
+            c.c_str());
+        line++;
+    }
     wmove(window, cursor.line, cursor.column);
     wnoutrefresh(window);
 }

@@ -12,7 +12,7 @@ class FS
 public:
     // file operations
     bool create_file(const fs::path &path);
-    bool write_file(const fs::path &path, const std::string &content);
+    bool write_file(const fs::path &path, const std::vector<std::string> &content);
     bool append_file(const fs::path &path, const std::string &content);
     std::optional<std::string> read_file(const fs::path &path);
     bool delete_file(const fs::path &path);

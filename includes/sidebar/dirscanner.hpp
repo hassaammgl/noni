@@ -13,7 +13,6 @@ struct ScanedEntry
     bool isDir = false;
     bool isFile = false;
     bool isEmpty = true;
-
     std::vector<ScanedEntry> innerEntries;
 };
 
@@ -23,12 +22,16 @@ private:
     FS fs;
     Logger l;
 
-    std::vector<ScanedEntry> fsentries;
     fs::path projectPath;
+    std::vector<ScanedEntry> fsentries;
+    static bool compareEntries(const ScanedEntry &a, const ScanedEntry &b);
 
 public:
-    DirScanner(const fs::path &projectPath);
-    ~DirScanner();
+    DirScanner() = default;
+    explicit DirScanner(const fs::path &projectPath);
+    ~DirScanner() = default;
+
+    void setProjectPath(const fs::path &projectPath);
 
     void scanDirs();
 

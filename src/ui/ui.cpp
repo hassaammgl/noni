@@ -1,4 +1,5 @@
 #include "ui/ui.hpp"
+#include <locale>
 
 UI::UI(const fs::path filepath = "")
 {
@@ -11,7 +12,10 @@ UI::UI(const fs::path filepath = "")
     else
     {
         std::string filename = filepath.filename().string();
+        std::string parentFolder = filepath.parent_path();
         statusbar.setFilename(filename);
+        sidebar.setProjectPath(parentFolder);
+        editor.buffer.setBufferPath(filepath);
     }
 
     init();
@@ -27,6 +31,7 @@ void UI::init()
 {
     initscr();
 
+    setlocale(LC_ALL, "");
     cbreak();
     noecho();
 
@@ -82,8 +87,8 @@ void UI::render()
 
     header.draw();
     sidebar.draw();
-    editor.draw();
     statusbar.draw();
+    editor.draw();
 
     wnoutrefresh(header.getWindow());
     wnoutrefresh(sidebar.getWindow());

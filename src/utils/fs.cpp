@@ -19,6 +19,56 @@ bool FS::create_file(const fs::path &path)
         file.close();
         logger.info("File Created succesfully");
 
+        return true;
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr
+            << "General Error: "
+            << e.what() << '\n';
+
+        return false;
+    }
+}
+
+bool FS::write_file(
+    const fs::path &path,
+    const std::vector<std::string> &content)
+{
+    try
+    {
+        if (path.has_parent_path())
+        {
+            fs::create_directories(
+                path.parent_path());
+        }
+
+        std::ofstream file(
+            path,
+            std::ios::out | std::ios::trunc);
+
+        if (!file)
+        {
+            std::cerr
+                << "Could not open file: "
+                << path << '\n';
+
+            return false;
+        }
+
+        for (const auto &line : content)
+        {
+            file << line << '\n';
+        }
+
+        return true;
+    }
+    catch (const fs::filesystem_error &e)
+    {
+        std::cerr
+            << "File System Error: "
+            << e.what() << '\n';
+
         return false;
     }
     catch (const std::exception &e)

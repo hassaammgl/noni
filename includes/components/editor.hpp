@@ -1,7 +1,8 @@
 #pragma once
 
-#include "ui/UIComponent.hpp"
+#include <ui/UIComponent.hpp>
 #include <utils/cursor.hpp>
+#include <editor/buffer.hpp>
 
 class Editor : public UIComponent
 {
@@ -17,6 +18,7 @@ private:
     void updateScroll();
 
 public:
+    Buffer buffer;
     void draw() override;
 
     void handleInput(int key);

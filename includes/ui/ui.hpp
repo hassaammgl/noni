@@ -1,3 +1,5 @@
+#pragma once
+
 #include <ncurses.h>
 #include "utils/logger.hpp"
 #include "components/statusbar.hpp"
@@ -20,8 +22,8 @@ private:
     Logger l;
     Header header;
     Sidebar sidebar;
-    Editor editor;
     Statusbar statusbar;
+    Editor editor;
 
     int height;
     int width;

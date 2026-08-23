@@ -8,13 +8,12 @@ void Logger::log(
     const std::string &message,
     const std::source_location &loc)
 {
+    std::cout << std::format("[{}] {}\n",level,message);
     std::cout << std::format(
-        "[{}:{}] [{}] [{}] {}\n",
-        level,
+        "[{}] [{}] [{}]\n",
         loc.file_name(),
         loc.line(),
-        loc.function_name(),
-        message);
+        loc.function_name());
 }
 
 void Logger::info(

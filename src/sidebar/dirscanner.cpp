@@ -1,22 +1,34 @@
 #include "sidebar/dirscanner.hpp"
 
+#include <algorithm>
+#include <ranges>
+#include <array>
+#include <functional>
+#include <iomanip>
 #include <iostream>
+
+bool DirScanner::compareEntries(const ScanedEntry &a, const ScanedEntry &b)
+{
+    if (a.isDir != b.isDir)
+    {
+        return a.isDir > b.isDir;
+    }
+    return a.entriePath.filename().string() < b.entriePath.filename().string();
+}
 
 DirScanner::DirScanner(const fs::path &projectPath)
 {
     this->projectPath = projectPath;
 }
-
-DirScanner::~DirScanner()
+void DirScanner::setProjectPath(const fs::path &projectPath)
 {
+    this->projectPath = projectPath;
 }
 
 void DirScanner::scanDirs()
 {
     fsentries.clear();
-
     std::vector<fs::path> dirs = fs.listDirectory(projectPath);
-
     if (dirs.empty())
     {
         return;
@@ -28,11 +40,10 @@ void DirScanner::scanDirs()
         {
             continue;
         }
-
         ScanedEntry scannedEntry = checkEntrie(entry);
-
         fsentries.push_back(std::move(scannedEntry));
     }
+    std::ranges::sort(fsentries, compareEntries);
 }
 
 ScanedEntry DirScanner::checkEntrie(const fs::path &entriePath)
@@ -46,42 +57,34 @@ ScanedEntry DirScanner::checkEntrie(const fs::path &entriePath)
     if (se.isFile)
     {
         se.isEmpty = true;
-
         return se;
     }
 
-    // Not a directory
     if (!se.isDir)
     {
         se.isEmpty = true;
-
         return se;
     }
 
-    // Directory
-    std::vector<fs::path> dirs = fs.listDirectory(entriePath);
-
-    // Remove .git from children
+    const auto dirs = fs.listDirectory(entriePath);
     std::vector<fs::path> filteredEntries;
 
-    for (const fs::path &entry : dirs)
+    for (const auto &entry : dirs)
     {
         if (entry.filename() == ".git")
         {
             continue;
         }
-
         filteredEntries.push_back(entry);
     }
 
     se.isEmpty = filteredEntries.empty();
 
-    // Recursively scan children
     for (const fs::path &entry : filteredEntries)
     {
         se.innerEntries.push_back(checkEntrie(entry));
     }
-
+    std::ranges::sort(se.innerEntries, compareEntries);
     return se;
 }
 
