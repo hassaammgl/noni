@@ -1,28 +1,28 @@
 #include <editor/buffer.hpp>
 
-void Buffer::setBufferPath(const fs::path &bufferPath)
+void Buffer::set_buffer_path(const fs::path &buffer_path)
 {
-    this->bufferPath = bufferPath;
+    this->buffer_path = buffer_path;
 }
 
-fs::path Buffer::getBufferPath()
+fs::path Buffer::get_buffer_path()
 {
-    return this->bufferPath;
+    return this->buffer_path;
 }
 
-std::vector<std::string> Buffer::readBuffer()
+std::vector<std::string> Buffer::read_buffer()
 {
-    std::string con = fs.read_file(this->bufferPath).value_or("");
+    std::string con = fs.read_file(this->buffer_path).value_or("");
     auto lines = StrUtils::split(con, '\n');
     return lines;
 }
 
-bool Buffer::writeBuffer(std::vector<std::string> &content)
+bool Buffer::write_buffer(std::vector<std::string> &content)
 {
-    return fs.write_file(this->bufferPath, content);
+    return fs.write_file(this->buffer_path, content);
 }
 
-bool Buffer::deleteBuffer(const fs::path &bufferPath)
+bool Buffer::delete_buffer(const fs::path &buffer_path)
 {
-    return fs.delete_file(bufferPath);
+    return fs.delete_file(buffer_path);
 }

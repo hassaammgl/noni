@@ -1,21 +1,22 @@
-#include "ui/ui.hpp"
+#include <ui/ui.hpp>
+#include <ui/theme.hpp>
 #include <locale>
 
-UI::UI(const fs::path filepath = "")
+UI::UI(const fs::path file_path = "")
 {
     l.debug("Constructor called");
 
-    if (filepath == "")
+    if (file_path == "")
     {
         l.info("no file path provided");
     }
     else
     {
-        std::string filename = filepath.filename().string();
-        std::string parentFolder = filepath.parent_path();
-        statusbar.setFilename(filename);
-        sidebar.setProjectPath(parentFolder);
-        editor.buffer.setBufferPath(filepath);
+        std::string filename = file_path.filename().string();
+        std::string parent_folder = file_path.parent_path();
+        statusbar.set_filename(filename);
+        sidebar.set_project_path(parent_folder);
+        editor.buffer.set_buffer_path(file_path);
     }
 
     init();
@@ -41,12 +42,7 @@ void UI::init()
 
     if (has_colors())
     {
-        start_color();
-        use_default_colors();
-
-        init_pair(1, COLOR_WHITE, COLOR_BLACK);
-        init_pair(2, COLOR_BLACK, COLOR_WHITE);
-        init_pair(3, COLOR_MAGENTA, COLOR_BLACK);
+        Theme::init();
     }
 
     resize();
@@ -54,12 +50,12 @@ void UI::init()
 
 void UI::resize()
 {
-    height = getEditorDim().height;
-    width = getEditorDim().width;
+    height = get_editor_dim().height;
+    width = get_editor_dim().width;
 
     refresh();
 
-    if (height < 3 || width <= sidebarWidth)
+    if (height < 3 || width <= sidebar_width)
     {
         mvprintw(
             1,
@@ -71,11 +67,11 @@ void UI::resize()
         return;
     }
 
-    int contentHeight = height - 2;
-    int editorWidth = width - sidebarWidth;
+    int content_height = height - 2;
+    int editor_width = width - sidebar_width;
 
-    sidebar.resize(contentHeight, sidebarWidth, 1, 0);
-    editor.resize(contentHeight, editorWidth, 1, sidebarWidth);
+    sidebar.resize(content_height, sidebar_width, 1, 0);
+    editor.resize(content_height, editor_width, 1, sidebar_width);
     statusbar.resize(1, width, height - 1, 0);
     header.resize(1, width, 0, 0);
 
@@ -84,17 +80,17 @@ void UI::resize()
 
 void UI::render()
 {
-
+    Cursor c = editor.get_cursor();
+    statusbar.set_cursor_position(c.line + 1, c.column + 1);
     header.draw();
     sidebar.draw();
     statusbar.draw();
     editor.draw();
 
-    wnoutrefresh(header.getWindow());
-    wnoutrefresh(sidebar.getWindow());
-    wnoutrefresh(editor.getWindow());
-    wnoutrefresh(statusbar.getWindow());
-
+    wnoutrefresh(header.get_window());
+    wnoutrefresh(sidebar.get_window());
+    wnoutrefresh(statusbar.get_window());
+    wnoutrefresh(editor.get_window());
     doupdate();
 }
 
@@ -103,7 +99,6 @@ void UI::run()
     while (running)
     {
         render();
-
         handle_inputs();
     }
 
@@ -121,7 +116,28 @@ void UI::handle_inputs()
         running = false;
         break;
     }
-
+    case '\t':
+    {
+        focus = (focus == Focus::Editor) ? Focus::Sidebar : Focus::Editor;
+        break;
+    }
+    case '\n':
+        // case KEY_ENTER:
+        {
+            if (focus == Focus::Sidebar)
+                break;
+            fs::path path = sidebar.get_selected_path();
+            if (path.empty() || !fs::is_regular_file(path))
+            {
+                break;
+            }
+            editor.buffer.set_buffer_path(path);
+            editor.set_cursor_position(0, 0);
+            statusbar.set_filename(path.filename().string());
+            focus = Focus::Editor;
+            resize();
+            break;
+        }
     case KEY_RESIZE:
     {
         resize();
@@ -130,19 +146,24 @@ void UI::handle_inputs()
 
     default:
     {
-        break;
+        if (focus == Focus::Editor)
+        {
+            editor.handle_input(ch);
+        }
+        else if (focus == Focus::Sidebar)
+        {
+            sidebar.handle_input(ch);
+        }
     }
+    break;
     }
 }
 
-Dimentions UI::getEditorDim() const
+Dimentions UI::get_editor_dim() const
 {
     Dimentions d;
 
-    getmaxyx(
-        stdscr,
-        d.height,
-        d.width);
+    getmaxyx(stdscr, d.height, d.width);
 
     return d;
 }

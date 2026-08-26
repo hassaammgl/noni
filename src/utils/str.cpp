@@ -17,7 +17,7 @@ namespace StrUtils
         return tokens;
     }
 
-    std::string trimLeft(std::string_view str)
+    std::string trim_left(std::string_view str)
     {
         auto start = str.begin();
 
@@ -31,7 +31,7 @@ namespace StrUtils
         return std::string(start, str.end());
     }
 
-    std::string trimRight(std::string_view str)
+    std::string trim_right(std::string_view str)
     {
         auto end = str.end();
 
@@ -54,10 +54,10 @@ namespace StrUtils
 
     std::string trim(std::string_view str)
     {
-        return trimRight(trimLeft(str));
+        return trim_right(trim_left(str));
     }
 
-    std::string toLower(std::string_view str)
+    std::string to_lower(std::string_view str)
     {
         std::string result(str);
 
@@ -72,7 +72,7 @@ namespace StrUtils
         return result;
     }
 
-    std::string toUpper(std::string_view str)
+    std::string to_upper(std::string_view str)
     {
         std::string result(str);
 
@@ -87,12 +87,12 @@ namespace StrUtils
         return result;
     }
 
-    bool startsWith(std::string_view str, std::string_view prefix)
+    bool starts_with(std::string_view str, std::string_view prefix)
     {
         return str.starts_with(prefix);
     }
 
-    bool endsWith(std::string_view str, std::string_view suffix)
+    bool ends_with(std::string_view str, std::string_view suffix)
     {
         return str.ends_with(suffix);
     }
@@ -147,12 +147,12 @@ namespace StrUtils
         return str;
     }
 
-    bool isEmpty(std::string_view str)
+    bool is_empty(std::string_view str)
     {
         return str.empty();
     }
 
-    bool isWhitespace(std::string_view str)
+    bool is_whitespace(std::string_view str)
     {
         return std::ranges::all_of(
             str,
@@ -169,7 +169,7 @@ namespace StrUtils
             character);
     }
 
-    std::string padLeft(std::string_view str, std::size_t length, char fill)
+    std::string pad_left(std::string_view str, std::size_t length, char fill)
     {
         if (str.size() >= length)
         {
@@ -179,7 +179,7 @@ namespace StrUtils
         return std::string(length - str.size(), fill) + std::string(str);
     }
 
-    std::string padRight(std::string_view str, std::size_t length, char fill)
+    std::string pad_right(std::string_view str, std::size_t length, char fill)
     {
         std::string result(str);
 
@@ -193,7 +193,7 @@ namespace StrUtils
         return result;
     }
 
-    std::string removeWhitespace(std::string_view str)
+    std::string remove_whitespace(std::string_view str)
     {
         std::string result;
 

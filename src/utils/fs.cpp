@@ -1,5 +1,5 @@
-#include "utils/fs.hpp"
-#include "utils/logger.hpp"
+#include <utils/fs.hpp>
+#include <utils/logger.hpp>
 #include <fstream>
 #include <iostream>
 
@@ -262,7 +262,7 @@ bool FS::copy_file(const fs::path &from, const fs::path &to)
     }
 }
 
-bool FS::createDirectory(const fs::path &path)
+bool FS::create_directory(const fs::path &path)
 {
     try
     {
@@ -270,17 +270,17 @@ bool FS::createDirectory(const fs::path &path)
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "FS Error [createDirectory]: " << e.what() << '\n';
+        std::cerr << "FS Error [create_directory]: " << e.what() << '\n';
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error [createDirectory]: " << e.what() << '\n';
+        std::cerr << "General Error [create_directory]: " << e.what() << '\n';
         return false;
     }
 }
 
-bool FS::deleteDirectory(const fs::path &path)
+bool FS::delete_directory(const fs::path &path)
 {
     try
     {
@@ -288,17 +288,17 @@ bool FS::deleteDirectory(const fs::path &path)
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "FS Error [deleteDirectory]: " << e.what() << '\n';
+        std::cerr << "FS Error [delete_directory]: " << e.what() << '\n';
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error [deleteDirectory]: " << e.what() << '\n';
+        std::cerr << "General Error [delete_directory]: " << e.what() << '\n';
         return false;
     }
 }
 
-std::vector<fs::path> FS::listDirectory(const fs::path &path)
+std::vector<fs::path> FS::list_directory(const fs::path &path)
 {
     std::vector<fs::path> items;
 
@@ -306,13 +306,13 @@ std::vector<fs::path> FS::listDirectory(const fs::path &path)
     {
         if (!fs::exists(path))
         {
-            std::cerr << "FS Error [listDirectory]: Path does not exist.\n";
+            std::cerr << "FS Error [list_directory]: Path does not exist.\n";
             return items;
         }
 
         if (!fs::is_directory(path))
         {
-            std::cerr << "FS Error [listDirectory]: Path is not a directory.\n";
+            std::cerr << "FS Error [list_directory]: Path is not a directory.\n";
             return items;
         }
 
@@ -325,11 +325,11 @@ std::vector<fs::path> FS::listDirectory(const fs::path &path)
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "FS Error [listDirectory]: " << e.what() << '\n';
+        std::cerr << "FS Error [list_directory]: " << e.what() << '\n';
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error [listDirectory]: " << e.what() << '\n';
+        std::cerr << "General Error [list_directory]: " << e.what() << '\n';
     }
 
     return items;
@@ -438,7 +438,7 @@ uintmax_t FS::file_size(const fs::path &path) const
     }
 }
 
-fs::path FS::currentPath() const
+fs::path FS::current_path() const
 {
     try
     {
@@ -451,7 +451,7 @@ fs::path FS::currentPath() const
     }
 }
 
-bool FS::changeCurrentPath(const fs::path &path)
+bool FS::change_current_path(const fs::path &path)
 {
     try
     {
@@ -525,7 +525,7 @@ fs::path FS::canonical(const fs::path &path) const
     }
 }
 
-fs::path FS::weaklyCanonical(const fs::path &path) const
+fs::path FS::weakly_canonical(const fs::path &path) const
 {
     try
     {
@@ -533,13 +533,13 @@ fs::path FS::weaklyCanonical(const fs::path &path) const
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "File System error (weaklyCanonical): " << e.what() << '\n';
+        std::cerr << "File System error (weakly_canonical): " << e.what() << '\n';
         std::cerr << "Path: " << e.path1() << '\n';
         return {};
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error (weaklyCanonical): " << e.what() << '\n';
+        std::cerr << "General Error (weakly_canonical): " << e.what() << '\n';
         return {};
     }
 }

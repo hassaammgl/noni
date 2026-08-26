@@ -13,7 +13,7 @@ private:
 
 public:
     void draw() override;
-    void setMode(const std::string &mode);
-    void setFilename(const std::string &filename);
-    void setCursorPosition(int line, int column);
+    void set_mode(const std::string &mode);
+    void set_filename(const std::string &filename);
+    void set_cursor_position(int line, int column);
 };

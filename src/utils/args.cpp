@@ -1,6 +1,6 @@
-#include "utils/args.hpp"
+#include <utils/args.hpp>
 
-fs::path Args::getFilePath(
+fs::path Args::get_file_path(
     int argc,
     char *argv[])
 {

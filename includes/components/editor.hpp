@@ -7,21 +7,21 @@
 class Editor : public UIComponent
 {
 private:
-    int cursorLine = 0;
-    int cursorColumn = 0;
-    Cursor cursor = {.line = 1, .column = 1};
-
-    void moveCursorUp();
-    void moveCursorDown();
-    void moveCursorLeft();
-    void moveCursorRight();
-    void updateScroll();
+    Cursor cursor = {.line = 0, .column = 0};
+    int scroll_y = 0;
+    void move_cursor_up();
+    void move_cursor_down();
+    void move_cursor_left();
+    void move_cursor_right();
+    void update_scroll();
+    void clamp_cursor();
 
 public:
+    Cursor get_cursor() const;
     Buffer buffer;
     void draw() override;
 
-    void handleInput(int key);
+    void handle_input(int key);
 
-    void setCursorPosition(int line, int column);
+    void set_cursor_position(int line, int column);
 };

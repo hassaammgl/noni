@@ -1,10 +1,10 @@
-#include "./includes/ui/ui.hpp"
-#include "./includes/utils/args.hpp"
+#include <ui/ui.hpp>
+#include <utils/args.hpp>
 
 int main(int argc, char *argv[]) {
-  fs::path filePath = Args::getFilePath(argc, argv);
+  fs::path file_path = Args::get_file_path(argc, argv);
 
-  UI u(filePath);
+  UI u(file_path);
   u.run();
   return 0;
 }

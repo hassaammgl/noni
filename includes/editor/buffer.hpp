@@ -7,21 +7,16 @@
 class Buffer
 {
 private:
-    fs::path bufferPath;
+    fs::path buffer_path;
     std::vector<std::string> content;
     FS fs;
 
 public:
     Buffer() = default;
     ~Buffer() = default;
-    // set path
-    void setBufferPath(const fs::path &projectPath);
-    // get path
-    fs::path getBufferPath();
-    // read buffer
-    std::vector<std::string> readBuffer();
-    // write buffer
-    bool writeBuffer(std::vector<std::string> &);
-    // delete buffer
-    bool deleteBuffer(const fs::path &bufferPath);
+    void set_buffer_path(const fs::path &project_path);
+    fs::path get_buffer_path();
+    std::vector<std::string> read_buffer();
+    bool write_buffer(std::vector<std::string> &);
+    bool delete_buffer(const fs::path &buffer_path);
 };

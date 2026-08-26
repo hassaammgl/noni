@@ -1,11 +1,11 @@
 #pragma once
 
 #include <ncurses.h>
-#include "utils/logger.hpp"
-#include "components/statusbar.hpp"
-#include "components/header.hpp"
-#include "components/editor.hpp"
-#include "components/sidebar.hpp"
+#include <utils/logger.hpp>
+#include <components/statusbar.hpp>
+#include <components/header.hpp>
+#include <components/editor.hpp>
+#include <components/sidebar.hpp>
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -14,6 +14,12 @@ struct Dimentions
 {
     int height;
     int width;
+};
+
+enum class Focus
+{
+    Editor,
+    Sidebar,
 };
 
 class UI
@@ -28,7 +34,7 @@ private:
     int height;
     int width;
 
-    int sidebarWidth = 25;
+    int sidebar_width = 25;
     bool running = true;
     void init();
     void resize();
@@ -36,10 +42,11 @@ private:
     void handle_inputs();
 
 public:
-    UI(const fs::path filePath);
+    Focus focus = Focus::Editor;
+    UI(const fs::path file_path);
     ~UI();
 
     void run();
 
-    Dimentions getEditorDim() const;
+    Dimentions get_editor_dim() const;
 };

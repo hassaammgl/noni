@@ -1,4 +1,4 @@
-#include "ui/UIComponent.hpp"
+#include <ui/UIComponent.hpp>
 
 UIComponent::~UIComponent()
 {
@@ -48,7 +48,7 @@ void UIComponent::clear()
     }
 }
 
-WINDOW *UIComponent::getWindow() const
+WINDOW *UIComponent::get_window() const
 {
     return window;
 }

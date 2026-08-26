@@ -1,4 +1,5 @@
-#include "components/header.hpp"
+#include <components/header.hpp>
+#include <ui/theme.hpp>
 
 void Header::draw()
 {
@@ -6,28 +7,29 @@ void Header::draw()
         return;
 
     werase(window);
-    wbkgd(window, COLOR_PAIR(2));
+    leaveok(window, TRUE);
+    wbkgd(window, COLOR_PAIR(Theme::Header));
     mvwprintw(
         window,
         0,
         1,
         "NONI EDITOR");
-    int branchnameX =
-        width - static_cast<int>(this->branchname.length()) - 2;
+    int branch_name_x =
+        width - static_cast<int>(this->branch_name.length()) - 2;
 
-    if (branchnameX < 0)
-        branchnameX = 0;
+    if (branch_name_x < 0)
+        branch_name_x = 0;
 
     mvwprintw(
         window,
         0,
-        branchnameX,
+        branch_name_x,
         "%s",
-        this->branchname.c_str());
+        this->branch_name.c_str());
 }
 
-std::string Header::getProjectGitBranch()
+std::string Header::get_project_git_branch()
 {
-    std::string br = this->branchname;
+    std::string br = this->branch_name;
     return br;
 }

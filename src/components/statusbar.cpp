@@ -1,4 +1,5 @@
-#include "components/statusbar.hpp"
+#include <components/statusbar.hpp>
+#include <ui/theme.hpp>
 
 void Statusbar::draw()
 {
@@ -6,52 +7,46 @@ void Statusbar::draw()
         return;
 
     werase(window);
+    leaveok(window, TRUE);
 
-    wbkgd(window, COLOR_PAIR(2));
+    wbkgd(window, COLOR_PAIR(Theme::Statusbar));
 
-    mvwprintw(
-        window,
-        0,
-        1,
-        " NORMAL ");
+    short mode_pair = Theme::StatusbarModeNormal;
+    if (mode == "INSERT")
+        mode_pair = Theme::StatusbarModeInsert;
+    else if (mode == "VISUAL")
+        mode_pair = Theme::StatusbarModeVisual;
 
-    mvwprintw(
-        window,
-        0,
-        15,
-        "Ln %d, Col %d", cursor.line, cursor.column);
+    wattron(window, COLOR_PAIR(mode_pair));
+    mvwprintw(window, 0, 1, " %s ", this->mode.c_str());
+    wattroff(window, COLOR_PAIR(mode_pair));
 
-    mvwprintw(
-        window,
-        0,
-        30,
-        "UTF-8");
+    wattron(window, COLOR_PAIR(Theme::Statusbar));
+    mvwprintw(window, 0, 15, "Ln %d, Col %d", cursor.line, cursor.column);
 
-    int filenameX =
+    mvwprintw(window, 0, 30, "UTF-8");
+
+    int filename_x =
         width - static_cast<int>(this->filename.length()) - 2;
 
-    if (filenameX < 0)
-        filenameX = 0;
+    if (filename_x < 0)
+        filename_x = 0;
 
-    mvwprintw(
-        window,
-        0,
-        filenameX,
-        "%s",
-        this->filename.c_str());
+    mvwprintw(window, 0, filename_x, "%s", this->filename.c_str());
+    wattroff(window, COLOR_PAIR(Theme::Statusbar));
 }
 
-void Statusbar::setMode(const std::string &mode)
+void Statusbar::set_mode(const std::string &mode)
 {
     this->mode = mode;
 }
 
-void Statusbar::setFilename(const std::string &filename)
+void Statusbar::set_filename(const std::string &filename)
 {
     this->filename = filename;
 }
 
-void Statusbar::setCursorPosition(int line, int column)
+void Statusbar::set_cursor_position(int line, int column)
 {
     this->cursor = {.line = line, .column = column};
 }

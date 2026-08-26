@@ -1,4 +1,4 @@
-#include "sidebar/dirscanner.hpp"
+#include <sidebar/dirscanner.hpp>
 
 #include <algorithm>
 #include <ranges>
@@ -7,28 +7,28 @@
 #include <iomanip>
 #include <iostream>
 
-bool DirScanner::compareEntries(const ScanedEntry &a, const ScanedEntry &b)
+bool DirScanner::compare_entries(const ScanedEntry &a, const ScanedEntry &b)
 {
-    if (a.isDir != b.isDir)
+    if (a.is_dir != b.is_dir)
     {
-        return a.isDir > b.isDir;
+        return a.is_dir > b.is_dir;
     }
-    return a.entriePath.filename().string() < b.entriePath.filename().string();
+    return a.entry_path.filename().string() < b.entry_path.filename().string();
 }
 
-DirScanner::DirScanner(const fs::path &projectPath)
+DirScanner::DirScanner(const fs::path &project_path)
 {
-    this->projectPath = projectPath;
+    this->project_path = project_path;
 }
-void DirScanner::setProjectPath(const fs::path &projectPath)
+void DirScanner::set_project_path(const fs::path &project_path)
 {
-    this->projectPath = projectPath;
+    this->project_path = project_path;
 }
 
-void DirScanner::scanDirs()
+void DirScanner::scan_dirs()
 {
-    fsentries.clear();
-    std::vector<fs::path> dirs = fs.listDirectory(projectPath);
+    fs_entries.clear();
+    std::vector<fs::path> dirs = fs.list_directory(project_path);
     if (dirs.empty())
     {
         return;
@@ -40,34 +40,34 @@ void DirScanner::scanDirs()
         {
             continue;
         }
-        ScanedEntry scannedEntry = checkEntrie(entry);
-        fsentries.push_back(std::move(scannedEntry));
+        ScanedEntry scanned_entry = check_entry(entry);
+        fs_entries.push_back(std::move(scanned_entry));
     }
-    std::ranges::sort(fsentries, compareEntries);
+    std::ranges::sort(fs_entries, compare_entries);
 }
 
-ScanedEntry DirScanner::checkEntrie(const fs::path &entriePath)
+ScanedEntry DirScanner::check_entry(const fs::path &entry_path)
 {
     ScanedEntry se;
 
-    se.entriePath = entriePath;
-    se.isDir = fs.is_directory(entriePath);
-    se.isFile = fs.is_file(entriePath);
+    se.entry_path = entry_path;
+    se.is_dir = fs.is_directory(entry_path);
+    se.is_file = fs.is_file(entry_path);
 
-    if (se.isFile)
+    if (se.is_file)
     {
-        se.isEmpty = true;
+        se.is_empty = true;
         return se;
     }
 
-    if (!se.isDir)
+    if (!se.is_dir)
     {
-        se.isEmpty = true;
+        se.is_empty = true;
         return se;
     }
 
-    const auto dirs = fs.listDirectory(entriePath);
-    std::vector<fs::path> filteredEntries;
+    const auto dirs = fs.list_directory(entry_path);
+    std::vector<fs::path> filtered_entries;
 
     for (const auto &entry : dirs)
     {
@@ -75,20 +75,20 @@ ScanedEntry DirScanner::checkEntrie(const fs::path &entriePath)
         {
             continue;
         }
-        filteredEntries.push_back(entry);
+        filtered_entries.push_back(entry);
     }
 
-    se.isEmpty = filteredEntries.empty();
+    se.is_empty = filtered_entries.empty();
 
-    for (const fs::path &entry : filteredEntries)
+    for (const fs::path &entry : filtered_entries)
     {
-        se.innerEntries.push_back(checkEntrie(entry));
+        se.inner_entries.push_back(check_entry(entry));
     }
-    std::ranges::sort(se.innerEntries, compareEntries);
+    std::ranges::sort(se.inner_entries, compare_entries);
     return se;
 }
 
-const std::vector<ScanedEntry> &DirScanner::getEntries() const
+const std::vector<ScanedEntry> &DirScanner::get_entries() const
 {
-    return fsentries;
+    return fs_entries;
 }

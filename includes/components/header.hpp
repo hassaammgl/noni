@@ -1,14 +1,14 @@
 #pragma once
 
-#include "ui/UIComponent.hpp"
+#include <ui/UIComponent.hpp>
 #include <string>
 
 class Header : public UIComponent
 {
 private:
-    std::string branchname = "TODO: [Branch] later";
+    std::string branch_name = "TODO: [Branch] later";
 
 public:
     void draw() override;
-    std::string getProjectGitBranch();
+    std::string get_project_git_branch();
 };
