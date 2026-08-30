@@ -1,5 +1,7 @@
 #include <components/editor.hpp>
 #include <ui/theme.hpp>
+#include <utils/logger.hpp>
+#include <format>
 
 void Editor::move_cursor_up()
 {
@@ -24,14 +26,14 @@ void Editor::move_cursor_left()
     if (cursor.line > 0)
     {
         cursor.line--;
-        auto lines = buffer.read_buffer();
+        const auto &lines = buffer.lines();
         if (!lines.empty())
             cursor.column = static_cast<int>(lines[cursor.line].size());
     }
 }
 void Editor::move_cursor_right()
 {
-    auto lines = buffer.read_buffer();
+    const auto &lines = buffer.lines();
     if (lines.empty())
         return;
     clamp_cursor();
@@ -66,31 +68,25 @@ void Editor::update_scroll()
 
 void Editor::clamp_cursor()
 {
-    auto lines = buffer.read_buffer();
+    const auto &lines = buffer.lines();
     if (lines.empty())
     {
         cursor.line = 0;
         cursor.column = 0;
         return;
     }
+
     if (cursor.line < 0)
-    {
         cursor.line = 0;
-    }
     if (cursor.line >= static_cast<int>(lines.size()))
         cursor.line = static_cast<int>(lines.size()) - 1;
 
     int max_column = static_cast<int>(lines[cursor.line].size());
     if (cursor.column < 0)
-    {
         cursor.column = 0;
-    }
     if (cursor.column > max_column)
-    {
         cursor.column = max_column;
-    }
 }
-
 void Editor::draw()
 {
     if (!window)
@@ -101,7 +97,7 @@ void Editor::draw()
     wbkgd(window, COLOR_PAIR(Theme::Editor));
     clamp_cursor();
     update_scroll();
-    auto content = buffer.read_buffer();
+    const auto &content = buffer.lines();
     for (int row = 0; row < height; ++row)
     {
         int line_index = scroll_y + row;
@@ -109,7 +105,7 @@ void Editor::draw()
             break;
 
         mvwprintw(window, row, 0,
-             content[line_index].c_str());
+                  content[line_index].c_str());
     }
     wmove(window, cursor.line - scroll_y, cursor.column);
     wnoutrefresh(window);
@@ -117,30 +113,59 @@ void Editor::draw()
 
 void Editor::handle_input(int key)
 {
+    Logger::debug(std::format("Editor input key={}", key));
+
     switch (key)
     {
     case KEY_UP:
-        this->move_cursor_up();
+        move_cursor_up();
         break;
     case KEY_DOWN:
-        this->move_cursor_down();
+        move_cursor_down();
         break;
     case KEY_LEFT:
-        this->move_cursor_left();
+        move_cursor_left();
         break;
     case KEY_RIGHT:
-        this->move_cursor_right();
+        move_cursor_right();
         break;
-
-    default:
+    case KEY_BACKSPACE:
+    case 127:
+    case 8:
+    {
+        buffer.delete_char_before(cursor.line, cursor.column);
+        if (cursor.column > 0)
+            cursor.column--;
+        else if (cursor.line > 0)
+        {
+            cursor.line--;
+            cursor.column = static_cast<int>(buffer.lines()[cursor.line].size());
+        }
         break;
     }
-    this->update_scroll();
+    case '\n':
+    case KEY_ENTER:
+        buffer.insert_newline(cursor.line, cursor.column);
+        cursor.line++;
+        cursor.column = 0;
+        break;
+    default:
+        if (key >= 32 && key <= 126)
+        {
+            buffer.insert_char(cursor.line, cursor.column, static_cast<char>(key));
+            cursor.column++;
+        }
+        break;
+    }
+
+    clamp_cursor();
+    update_scroll();
 }
 
 void Editor::set_cursor_position(int line, int column)
 {
-    this->cursor = {.line = line, .column = column};
+    cursor = {.line = line, .column = column};
+    Logger::debug(std::format("Editor cursor set to line={} column={}", line, column));
 }
 
 Cursor Editor::get_cursor() const

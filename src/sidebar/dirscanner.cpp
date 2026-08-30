@@ -1,11 +1,8 @@
 #include <sidebar/dirscanner.hpp>
 
 #include <algorithm>
+#include <format>
 #include <ranges>
-#include <array>
-#include <functional>
-#include <iomanip>
-#include <iostream>
 
 bool DirScanner::compare_entries(const ScanedEntry &a, const ScanedEntry &b)
 {
@@ -20,17 +17,22 @@ DirScanner::DirScanner(const fs::path &project_path)
 {
     this->project_path = project_path;
 }
+
 void DirScanner::set_project_path(const fs::path &project_path)
 {
     this->project_path = project_path;
+    Logger::debug(std::format("DirScanner project path: {}", project_path.string()));
 }
 
 void DirScanner::scan_dirs()
 {
     fs_entries.clear();
+    Logger::debug(std::format("Scanning directory: {}", project_path.string()));
+
     std::vector<fs::path> dirs = fs.list_directory(project_path);
     if (dirs.empty())
     {
+        Logger::debug(std::format("Directory empty or unreadable: {}", project_path.string()));
         return;
     }
 
@@ -44,6 +46,10 @@ void DirScanner::scan_dirs()
         fs_entries.push_back(std::move(scanned_entry));
     }
     std::ranges::sort(fs_entries, compare_entries);
+    Logger::info(std::format(
+        "Directory scan complete: {} ({} entries)",
+        project_path.string(),
+        fs_entries.size()));
 }
 
 ScanedEntry DirScanner::check_entry(const fs::path &entry_path)

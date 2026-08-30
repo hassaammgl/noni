@@ -1,4 +1,5 @@
 #include <ui/theme.hpp>
+#include <utils/logger.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -291,4 +292,5 @@ void Theme::init()
     set_pair(MarkupItalic, string_fg, editor_bg);
     set_pair(MarkupLink, markup_link_fg, editor_bg);
     set_pair(MarkupRaw, string_fg, editor_bg);
+    Logger::debug("Theme color pairs initialized");
 }

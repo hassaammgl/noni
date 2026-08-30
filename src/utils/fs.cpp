@@ -1,9 +1,8 @@
 #include <utils/fs.hpp>
 #include <utils/logger.hpp>
 #include <fstream>
-#include <iostream>
+#include <format>
 
-Logger logger;
 
 bool FS::create_file(const fs::path &path)
 {
@@ -17,15 +16,13 @@ bool FS::create_file(const fs::path &path)
         file.exceptions(std::ofstream::failbit | std::ofstream::badbit);
         file.open(path);
         file.close();
-        logger.info("File Created succesfully");
+        Logger::info("File Created succesfully");
 
         return true;
     }
     catch (const std::exception &e)
     {
-        std::cerr
-            << "General Error: "
-            << e.what() << '\n';
+        Logger::error(std::format("General Error: {}", e.what()));
 
         return false;
     }
@@ -49,9 +46,7 @@ bool FS::write_file(
 
         if (!file)
         {
-            std::cerr
-                << "Could not open file: "
-                << path << '\n';
+            Logger::error(std::format("Could not open file: {}", path.string()));
 
             return false;
         }
@@ -61,21 +56,18 @@ bool FS::write_file(
             file << line << '\n';
         }
 
+        Logger::info(std::format("File written: {}", path.string()));
         return true;
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr
-            << "File System Error: "
-            << e.what() << '\n';
+        Logger::error(std::format("File System Error: {}", e.what()));
 
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr
-            << "General Error: "
-            << e.what() << '\n';
+        Logger::error(std::format("General Error: {}", e.what()));
 
         return false;
     }
@@ -97,9 +89,7 @@ bool FS::append_file(const fs::path &path, const std::string &content)
 
         if (!file)
         {
-            std::cerr
-                << "Could not open file: "
-                << path << '\n';
+            Logger::error(std::format("Could not open file: {}", path.string()));
 
             return false;
         }
@@ -108,21 +98,18 @@ bool FS::append_file(const fs::path &path, const std::string &content)
 
         file.close();
 
+        Logger::info(std::format("File appended: {}", path.string()));
         return true;
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr
-            << "File System Error: "
-            << e.what() << '\n';
+        Logger::error(std::format("File System Error: {}", e.what()));
 
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr
-            << "General Error: "
-            << e.what() << '\n';
+        Logger::error(std::format("General Error: {}", e.what()));
 
         return false;
     }
@@ -134,18 +121,14 @@ std::optional<std::string> FS::read_file(const fs::path &path)
     {
         if (!fs::exists(path))
         {
-            std::cerr
-                << "File does not exist: "
-                << path << '\n';
+            Logger::error(std::format("File does not exist: {}", path.string()));
 
             return std::nullopt;
         }
 
         if (!fs::is_regular_file(path))
         {
-            std::cerr
-                << "Path is not a file: "
-                << path << '\n';
+            Logger::error(std::format("Path is not a file: {}", path.string()));
 
             return std::nullopt;
         }
@@ -154,9 +137,7 @@ std::optional<std::string> FS::read_file(const fs::path &path)
 
         if (!file)
         {
-            std::cerr
-                << "Could not open file: "
-                << path << '\n';
+            Logger::error(std::format("Could not open file: {}", path.string()));
 
             return std::nullopt;
         }
@@ -169,17 +150,13 @@ std::optional<std::string> FS::read_file(const fs::path &path)
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr
-            << "File System Error: "
-            << e.what() << '\n';
+        Logger::error(std::format("File System Error: {}", e.what()));
 
         return std::nullopt;
     }
     catch (const std::exception &e)
     {
-        std::cerr
-            << "General Error: "
-            << e.what() << '\n';
+        Logger::error(std::format("General Error: {}", e.what()));
 
         return std::nullopt;
     }
@@ -191,24 +168,24 @@ bool FS::delete_file(const fs::path &path)
     {
         if (!this->exists(path))
         {
-            std::cerr << "File does not exists on path: " << path << "\n";
+            Logger::error(std::format("File does not exists on path: {}", path.string()));
             return false;
         }
         else
         {
             fs::remove(path);
+            Logger::info(std::format("File deleted: {}", path.string()));
             return true;
         }
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "File System error: " << e.what() << '\n';
-        std::cerr << "Path: " << e.path1() << '\n';
+        Logger::error(std::format("File System error: {} | Path: {}", e.what(), e.path1().string()));
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error: " << e.what() << '\n';
+        Logger::error(std::format("General Error: {}", e.what()));
         return false;
     }
 }
@@ -219,21 +196,22 @@ bool FS::rename_file(const fs::path &oldfile, const fs::path &newpath)
     {
         if (!fs::exists(oldfile))
         {
-            std::cerr << "FS Error [rename_file]: Source path does not exist.\n";
+            Logger::error("FS Error [rename_file]: Source path does not exist.");
             return false;
         }
 
         fs::rename(oldfile, newpath);
+        Logger::info(std::format("File renamed: {} -> {}", oldfile.string(), newpath.string()));
         return true;
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "FS Error [rename_file]: " << e.what() << '\n';
+        Logger::error(std::format("FS Error [rename_file]: {}", e.what()));
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error [rename_file]: " << e.what() << '\n';
+        Logger::error(std::format("General Error [rename_file]: {}", e.what()));
         return false;
     }
 }
@@ -244,20 +222,23 @@ bool FS::copy_file(const fs::path &from, const fs::path &to)
     {
         if (!fs::exists(from))
         {
-            std::cerr << "FS Error [copy_file]: Source file does not exist.\n";
+            Logger::error("FS Error [copy_file]: Source file does not exist.");
             return false;
         }
 
-        return fs::copy_file(from, to, fs::copy_options::overwrite_existing);
+        const bool copied = fs::copy_file(from, to, fs::copy_options::overwrite_existing);
+        if (copied)
+            Logger::info(std::format("File copied: {} -> {}", from.string(), to.string()));
+        return copied;
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "FS Error [copy_file]: " << e.what() << '\n';
+        Logger::error(std::format("FS Error [copy_file]: {}", e.what()));
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error [copy_file]: " << e.what() << '\n';
+        Logger::error(std::format("General Error [copy_file]: {}", e.what()));
         return false;
     }
 }
@@ -266,16 +247,19 @@ bool FS::create_directory(const fs::path &path)
 {
     try
     {
-        return fs::create_directories(path);
+        const bool created = fs::create_directories(path);
+        if (created)
+            Logger::info(std::format("Directory created: {}", path.string()));
+        return created;
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "FS Error [create_directory]: " << e.what() << '\n';
+        Logger::error(std::format("FS Error [create_directory]: {}", e.what()));
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error [create_directory]: " << e.what() << '\n';
+        Logger::error(std::format("General Error [create_directory]: {}", e.what()));
         return false;
     }
 }
@@ -284,16 +268,19 @@ bool FS::delete_directory(const fs::path &path)
 {
     try
     {
-        return fs::remove_all(path) > 0;
+        const auto removed = fs::remove_all(path);
+        if (removed > 0)
+            Logger::info(std::format("Directory deleted: {} ({} items)", path.string(), removed));
+        return removed > 0;
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "FS Error [delete_directory]: " << e.what() << '\n';
+        Logger::error(std::format("FS Error [delete_directory]: {}", e.what()));
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error [delete_directory]: " << e.what() << '\n';
+        Logger::error(std::format("General Error [delete_directory]: {}", e.what()));
         return false;
     }
 }
@@ -306,13 +293,13 @@ std::vector<fs::path> FS::list_directory(const fs::path &path)
     {
         if (!fs::exists(path))
         {
-            std::cerr << "FS Error [list_directory]: Path does not exist.\n";
+            Logger::error("FS Error [list_directory]: Path does not exist.");
             return items;
         }
 
         if (!fs::is_directory(path))
         {
-            std::cerr << "FS Error [list_directory]: Path is not a directory.\n";
+            Logger::error("FS Error [list_directory]: Path is not a directory.");
             return items;
         }
 
@@ -325,11 +312,11 @@ std::vector<fs::path> FS::list_directory(const fs::path &path)
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "FS Error [list_directory]: " << e.what() << '\n';
+        Logger::error(std::format("FS Error [list_directory]: {}", e.what()));
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error [list_directory]: " << e.what() << '\n';
+        Logger::error(std::format("General Error [list_directory]: {}", e.what()));
     }
 
     return items;
@@ -343,17 +330,13 @@ bool FS::exists(const fs::path &path) const
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr
-            << "File System Error: "
-            << e.what() << '\n';
+        Logger::error(std::format("File System Error: {}", e.what()));
 
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr
-            << "General Error: "
-            << e.what() << '\n';
+        Logger::error(std::format("General Error: {}", e.what()));
 
         return false;
     }
@@ -374,13 +357,12 @@ bool FS::is_file(const fs::path &path) const
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "File System error: " << e.what() << '\n';
-        std::cerr << "Path: " << e.path1() << '\n';
+        Logger::error(std::format("File System error: {} | Path: {}", e.what(), e.path1().string()));
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error: " << e.what() << '\n';
+        Logger::error(std::format("General Error: {}", e.what()));
         return false;
     }
 }
@@ -400,13 +382,12 @@ bool FS::is_directory(const fs::path &path) const
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "File System error: " << e.what() << '\n';
-        std::cerr << "Path: " << e.path1() << '\n';
+        Logger::error(std::format("File System error: {} | Path: {}", e.what(), e.path1().string()));
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error: " << e.what() << '\n';
+        Logger::error(std::format("General Error: {}", e.what()));
         return false;
     }
 }
@@ -421,19 +402,18 @@ uintmax_t FS::file_size(const fs::path &path) const
         }
         else
         {
-            std::cerr << "Path is directory or something else: " << path << "\n";
+            Logger::error(std::format("Path is directory or something else: {}", path.string()));
             return false;
         }
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "File System error: " << e.what() << '\n';
-        std::cerr << "Path: " << e.path1() << '\n';
+        Logger::error(std::format("File System error: {} | Path: {}", e.what(), e.path1().string()));
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error: " << e.what() << '\n';
+        Logger::error(std::format("General Error: {}", e.what()));
         return false;
     }
 }
@@ -446,7 +426,7 @@ fs::path FS::current_path() const
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "File System error: " << e.what() << '\n';
+        Logger::error(std::format("File System error: {}", e.what()));
         return {};
     }
 }
@@ -462,19 +442,18 @@ bool FS::change_current_path(const fs::path &path)
         }
         else
         {
-            std::cerr << "Error: Path does not exist or is not a directory: " << path << '\n';
+            Logger::error(std::format("Error: Path does not exist or is not a directory: {}", path.string()));
             return false;
         }
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "File System error: " << e.what() << '\n';
-        std::cerr << "Path: " << e.path1() << '\n';
+        Logger::error(std::format("File System error: {} | Path: {}", e.what(), e.path1().string()));
         return false;
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error: " << e.what() << '\n';
+        Logger::error(std::format("General Error: {}", e.what()));
         return false;
     }
 }
@@ -487,13 +466,12 @@ fs::path FS::absolute(const fs::path &path) const
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "File System error (absolute): " << e.what() << '\n';
-        std::cerr << "Path: " << e.path1() << '\n';
+        Logger::error(std::format("File System error (absolute): {} | Path: {}", e.what(), e.path1().string()));
         return {};
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error (absolute): " << e.what() << '\n';
+        Logger::error(std::format("General Error (absolute): {}", e.what()));
         return {};
     }
 }
@@ -508,19 +486,18 @@ fs::path FS::canonical(const fs::path &path) const
         }
         else
         {
-            std::cerr << "Canonical Error: Path does not exist on disk: " << path << '\n';
+            Logger::error(std::format("Canonical Error: Path does not exist on disk: {}", path.string()));
             return {};
         }
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "File System error (canonical): " << e.what() << '\n';
-        std::cerr << "Path: " << e.path1() << '\n';
+        Logger::error(std::format("File System error (canonical): {} | Path: {}", e.what(), e.path1().string()));
         return {};
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error (canonical): " << e.what() << '\n';
+        Logger::error(std::format("General Error (canonical): {}", e.what()));
         return {};
     }
 }
@@ -533,13 +510,12 @@ fs::path FS::weakly_canonical(const fs::path &path) const
     }
     catch (const fs::filesystem_error &e)
     {
-        std::cerr << "File System error (weakly_canonical): " << e.what() << '\n';
-        std::cerr << "Path: " << e.path1() << '\n';
+        Logger::error(std::format("File System error (weakly_canonical): {} | Path: {}", e.what(), e.path1().string()));
         return {};
     }
     catch (const std::exception &e)
     {
-        std::cerr << "General Error (weakly_canonical): " << e.what() << '\n';
+        Logger::error(std::format("General Error (weakly_canonical): {}", e.what()));
         return {};
     }
 }

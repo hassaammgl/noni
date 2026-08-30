@@ -1,8 +1,13 @@
 #pragma once
+
 #include <utils/fs.hpp>
 #include <utils/str.hpp>
-#include <vector>
+
+#include <filesystem>
 #include <string>
+#include <vector>
+
+namespace fs = std::filesystem;
 
 class Buffer
 {
@@ -10,13 +15,25 @@ private:
     fs::path buffer_path;
     std::vector<std::string> content;
     FS fs;
+    bool dirty = false;
+
+    void ensure_line_exists(int line);
+    int clamp_column(int line, int column) const;
 
 public:
     Buffer() = default;
     ~Buffer() = default;
-    void set_buffer_path(const fs::path &project_path);
-    fs::path get_buffer_path();
-    std::vector<std::string> read_buffer();
-    bool write_buffer(std::vector<std::string> &);
-    bool delete_buffer(const fs::path &buffer_path);
+
+    void set_buffer_path(const fs::path &path);
+    fs::path get_buffer_path() const;
+
+    void load();
+    const std::vector<std::string> &lines() const;
+    bool is_dirty() const;
+
+    void insert_char(int line, int column, char ch);
+    void insert_newline(int line, int column);
+    void delete_char_before(int line, int column);
+
+    bool save();
 };

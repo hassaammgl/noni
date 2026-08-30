@@ -20,12 +20,12 @@ enum class Focus
 {
     Editor,
     Sidebar,
+    Command,
 };
 
 class UI
 {
 private:
-    Logger l;
     Header header;
     Sidebar sidebar;
     Statusbar statusbar;

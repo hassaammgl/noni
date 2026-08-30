@@ -1,5 +1,7 @@
 #include <components/statusbar.hpp>
 #include <ui/theme.hpp>
+#include <utils/logger.hpp>
+#include <format>
 
 void Statusbar::draw()
 {
@@ -38,11 +40,15 @@ void Statusbar::draw()
 
 void Statusbar::set_mode(const std::string &mode)
 {
+    if (this->mode != mode)
+        Logger::debug(std::format("Statusbar mode: {} -> {}", this->mode, mode));
     this->mode = mode;
 }
 
 void Statusbar::set_filename(const std::string &filename)
 {
+    if (this->filename != filename)
+        Logger::debug(std::format("Statusbar filename: {} -> {}", this->filename, filename));
     this->filename = filename;
 }
 

@@ -19,7 +19,6 @@ class DirScanner
 {
 private:
     FS fs;
-    Logger l;
     fs::path project_path;
     std::vector<ScanedEntry> fs_entries;
     static bool compare_entries(const ScanedEntry &a, const ScanedEntry &b);
