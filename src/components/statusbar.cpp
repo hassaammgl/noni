@@ -18,6 +18,12 @@ void Statusbar::draw()
         mode_pair = Theme::StatusbarModeInsert;
     else if (mode == "VISUAL")
         mode_pair = Theme::StatusbarModeVisual;
+    else if (mode == "COMMAND")
+        mode_pair = Theme::InputFocus;
+    else if (mode == "SIDEBAR")
+        mode_pair = Theme::StatusbarDebugging;
+    else if (mode == "MESSAGES")
+        mode_pair = Theme::Notification;
 
     wattron(window, COLOR_PAIR(mode_pair));
     mvwprintw(window, 0, 1, " %s ", this->mode.c_str());

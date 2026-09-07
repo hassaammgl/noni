@@ -1,0 +1,60 @@
+#include <components/commandline.hpp>
+#include <ui/theme.hpp>
+
+void CommandLine::draw()
+{
+    if (!window || !active)
+        return;
+
+    werase(window);
+    leaveok(window, FALSE);
+    wbkgd(window, COLOR_PAIR(Theme::InputFocus));
+    mvwprintw(window, 0, 0, ":%s", input.c_str());
+    wmove(window, 0, 1 + static_cast<int>(input.size()));
+}
+
+void CommandLine::open()
+{
+    active = true;
+    input.clear();
+}
+
+void CommandLine::close()
+{
+    active = false;
+}
+
+bool CommandLine::is_active() const
+{
+    return active;
+}
+
+void CommandLine::handle_input(int key)
+{
+    if (key == 27)
+    {
+        input.clear();
+        close();
+        return;
+    }
+
+    if (key == KEY_BACKSPACE || key == 127 || key == 8)
+    {
+        if (!input.empty())
+            input.pop_back();
+        return;
+    }
+
+    if (key >= 32 && key <= 126)
+        input += static_cast<char>(key);
+}
+
+void CommandLine::clear_input()
+{
+    input.clear();
+}
+
+const std::string &CommandLine::get_input() const
+{
+    return input;
+}
