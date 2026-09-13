@@ -17,6 +17,7 @@ struct AppConfig
     int sidebar_width = 25;
     int line_number_width = 5;
     int esc_delay_ms = 25;
+    bool syntax_auto_install = true;
     std::vector<Keybinding> keybindings;
 
     static AppConfig defaults();

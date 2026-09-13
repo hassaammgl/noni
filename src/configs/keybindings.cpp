@@ -88,18 +88,30 @@ void KeybindingEngine::load(const AppConfig &config)
         rb.command = kb.command;
         rb.when = kb.when;
         if (!rb.chord.empty() && !rb.command.empty())
+        {
+            rb.leader = is_leader_token(rb.chord.front());
             bindings.push_back(std::move(rb));
+        }
     }
-}
-
-void KeybindingEngine::register_command(const std::string &id, std::function<void()> action)
-{
-    actions[id] = std::move(action);
 }
 
 void KeybindingEngine::clear_chord()
 {
     pending.clear();
+}
+
+bool KeybindingEngine::is_leader_token(const KeyToken &t) const
+{
+    return !t.ctrl && !t.alt && t.code == ' ';
+}
+
+std::vector<CommandId> KeybindingEngine::bound_commands() const
+{
+    std::vector<CommandId> out;
+    out.reserve(bindings.size());
+    for (const auto &b : bindings)
+        out.push_back(b.command);
+    return out;
 }
 
 KeyToken KeybindingEngine::from_raw(int raw_key)
@@ -158,7 +170,6 @@ KeyToken KeybindingEngine::from_raw(int raw_key)
         return t;
     }
 
-    // Ctrl+A .. Ctrl+Z
     if (raw_key >= 1 && raw_key <= 26)
     {
         t.ctrl = true;
@@ -180,10 +191,8 @@ KeyToken KeybindingEngine::from_raw(int raw_key)
 std::vector<KeyToken> KeybindingEngine::parse_key(const std::string &spec)
 {
     std::vector<KeyToken> out;
-    std::string cur;
     std::istringstream iss(spec);
     std::string part;
-    // Space separates chord steps: "g t", "ctrl+k ctrl+s"
     while (iss >> part)
         out.push_back(parse_single(part));
     return out;
@@ -230,18 +239,21 @@ bool KeybindingEngine::when_matches(const std::string &when, const std::string &
     return false;
 }
 
-bool KeybindingEngine::handle(int raw_key, const std::string &when_context)
+ResolveResult KeybindingEngine::resolve_pending(const std::string &when_context, InputContext input_ctx)
 {
-    const KeyToken tok = from_raw(raw_key);
-    pending.push_back(tok);
-
+    ResolveResult result;
     bool any_prefix = false;
+    bool any_leader_prefix = false;
 
     for (const auto &b : bindings)
     {
         if (!when_matches(b.when, when_context))
             continue;
         if (b.chord.size() < pending.size())
+            continue;
+
+        // Leader chords only when context allows Space leader.
+        if (b.leader && !context_allows_leader(input_ctx))
             continue;
 
         bool prefix = true;
@@ -259,30 +271,110 @@ bool KeybindingEngine::handle(int raw_key, const std::string &when_context)
         if (b.chord.size() == pending.size())
         {
             pending.clear();
-            if (auto it = actions.find(b.command); it != actions.end() && it->second)
-            {
-                it->second();
-                return true;
-            }
-            return false;
+            result.status = ResolveStatus::Matched;
+            result.command_id = b.command;
+            return result;
         }
 
         any_prefix = true;
+        if (b.leader)
+            any_leader_prefix = true;
     }
 
     if (!any_prefix)
     {
-        // No binding matched this sequence — if first key alone was wrong, clear and fail.
         if (pending.size() > 1)
         {
+            const KeyToken last = pending.back();
             pending.clear();
-            // Retry as fresh single key
-            return handle(raw_key, when_context);
+            pending.push_back(last);
+            return resolve_pending(when_context, input_ctx);
         }
         pending.clear();
-        return false;
+        result.status = ResolveStatus::Unmatched;
+        return result;
     }
 
-    // Chord in progress (e.g. pressed "g", waiting for "t")
-    return true;
+    // Soft prefix: bare editor-modal starters (g, d, c, y, m, ', ") must not
+    // steal keys from the editor state machine. Ctrl/Alt chords (ctrl+w …) and
+    // Space-leader chords still consume as Prefix.
+    if (!any_leader_prefix &&
+        (input_ctx == InputContext::EditorNormal ||
+         input_ctx == InputContext::EditorVisual ||
+         input_ctx == InputContext::EditorInsert))
+    {
+        bool any_modified_prefix = false;
+        for (const auto &b : bindings)
+        {
+            if (!when_matches(b.when, when_context))
+                continue;
+            if (b.chord.size() <= pending.size())
+                continue;
+            bool prefix = true;
+            for (std::size_t i = 0; i < pending.size(); ++i)
+            {
+                if (!(b.chord[i] == pending[i]))
+                {
+                    prefix = false;
+                    break;
+                }
+            }
+            if (!prefix)
+                continue;
+            if (b.chord.front().ctrl || b.chord.front().alt)
+                any_modified_prefix = true;
+        }
+
+        const KeyToken &first = pending.front();
+        const bool editor_modal =
+            !first.ctrl && !first.alt &&
+            (first.code == 'g' || first.code == 'd' || first.code == 'c' ||
+             first.code == 'y' || first.code == 'm' || first.code == '\'' ||
+             first.code == '"');
+
+        if (!any_modified_prefix && editor_modal)
+        {
+            pending.clear();
+            result.status = ResolveStatus::Unmatched;
+            return result;
+        }
+    }
+
+    result.status = ResolveStatus::Prefix;
+    return result;
+}
+
+ResolveResult KeybindingEngine::resolve(int raw_key, const std::string &when_context, InputContext input_ctx)
+{
+    const KeyToken tok = from_raw(raw_key);
+
+    // Literal contexts: only allow Esc / explicit control bindings (single-key),
+    // never start a Space leader chord.
+    if (context_is_literal(input_ctx) && !has_pending())
+    {
+        // Allow Esc and F-keys to match single-key bindings.
+        const bool controlish =
+            tok.code == 27 || tok.code == KEY_F(4) || tok.ctrl;
+        if (!controlish && tok.code == ' ')
+        {
+            ResolveResult r;
+            r.status = ResolveStatus::Unmatched;
+            return r;
+        }
+        if (!controlish && !context_allows_leader(input_ctx))
+        {
+            // Still allow non-leader single-key bindings (e.g. escape).
+            pending.push_back(tok);
+            ResolveResult r = resolve_pending(when_context, input_ctx);
+            if (r.status == ResolveStatus::Prefix)
+            {
+                pending.clear();
+                r.status = ResolveStatus::Unmatched;
+            }
+            return r;
+        }
+    }
+
+    pending.push_back(tok);
+    return resolve_pending(when_context, input_ctx);
 }

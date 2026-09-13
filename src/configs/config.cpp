@@ -11,24 +11,32 @@ AppConfig AppConfig::defaults()
     AppConfig cfg;
     cfg.keybindings = {
         {"escape", "noni.mode.normal", ""},
-        {"ctrl+c", "noni.mode.normal", ""},
-        {"ctrl+s", "workbench.action.files.save", "editorFocus"},
-        {"ctrl+w", "workbench.action.closeActiveEditor", "editorFocus"},
+        {"space w", "workbench.action.files.save", "editorFocus && normalMode"},
+        {"space x", "workbench.action.closeActiveEditor", "editorFocus && normalMode"},
+        {"space f", "noni.search.files", "editorFocus && normalMode || sidebarFocus || searchFocus"},
+        {"space b", "workbench.action.toggleSidebarVisibility", "editorFocus && normalMode || sidebarFocus || searchFocus"},
+        {"space e", "workbench.view.explorer", "editorFocus && normalMode || searchFocus"},
+        {"space e", "noni.focus.editor", "sidebarFocus"},
+        {"space s", "workbench.action.findInFiles", "editorFocus && normalMode || searchFocus || sidebarFocus"},
+        {"space t", "workbench.action.terminal.toggle", "editorFocus && normalMode || terminalFocus || sidebarFocus || searchFocus"},
+        {"space p", "editor.action.clipboardPasteAction", "editorFocus && normalMode"},
         {"tab", "noni.focus.toggleSidebar", "editorFocus && normalMode || sidebarFocus"},
         {":", "noni.command.open", "editorFocus && normalMode"},
         {"g t", "workbench.action.nextEditor", "editorFocus && normalMode"},
         {"g shift+t", "workbench.action.previousEditor", "editorFocus && normalMode"},
-        {"ctrl+b", "workbench.action.toggleSidebarVisibility", ""},
-        {"space e", "workbench.view.explorer", "editorFocus && normalMode || searchFocus"},
-        {"space e", "noni.focus.editor", "sidebarFocus"},
-        {"space s", "workbench.action.findInFiles", "editorFocus && normalMode || searchFocus || sidebarFocus"},
-        {"f2", "workbench.view.explorer", ""},
-        {"f3", "workbench.view.search", ""},
-        {"ctrl+p", "workbench.action.quickOpen", "editorFocus || sidebarFocus || searchFocus"},
-        {"space f", "noni.search.files", "editorFocus && normalMode"},
-        {"space t", "workbench.action.terminal.toggle", "editorFocus && normalMode || terminalFocus || sidebarFocus || searchFocus"},
-        {"ctrl+`", "workbench.action.terminal.toggle", ""},
-        {"f4", "workbench.action.terminal.toggle", ""},
+        {"u", "editor.action.undo", "editorFocus && normalMode"},
+        {"ctrl+r", "editor.action.redo", "editorFocus && normalMode"},
+        {"ctrl+w v", "workbench.action.splitEditorRight", "editorFocus"},
+        {"ctrl+w s", "workbench.action.splitEditorDown", "editorFocus"},
+        {"ctrl+w q", "workbench.action.closeActiveEditorGroup", "editorFocus"},
+        {"ctrl+w h", "workbench.action.focusLeftGroup", "editorFocus"},
+        {"ctrl+w l", "workbench.action.focusRightGroup", "editorFocus"},
+        {"ctrl+w k", "workbench.action.focusAboveGroup", "editorFocus"},
+        {"ctrl+w j", "workbench.action.focusBelowGroup", "editorFocus"},
+        {"ctrl+w <", "workbench.action.decreaseViewWidth", "editorFocus"},
+        {"ctrl+w >", "workbench.action.increaseViewWidth", "editorFocus"},
+        {"ctrl+w -", "workbench.action.decreaseViewHeight", "editorFocus"},
+        {"ctrl+w +", "workbench.action.increaseViewHeight", "editorFocus"},
     };
     return cfg;
 }
@@ -55,6 +63,8 @@ AppConfig AppConfig::load(const std::string &path)
         cfg.sidebar_width = root.get_int("sidebarWidth", cfg.sidebar_width);
         cfg.line_number_width = root.get_int("lineNumberWidth", cfg.line_number_width);
         cfg.esc_delay_ms = root.get_int("escDelayMs", cfg.esc_delay_ms);
+        if (const MiniJson::Value *v = root.get("syntaxAutoInstall"); v && v->is_bool())
+            cfg.syntax_auto_install = v->as_bool(cfg.syntax_auto_install);
 
         if (const MiniJson::Value *arr = root.get("keybindings"); arr && arr->is_array())
         {

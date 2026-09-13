@@ -2,18 +2,20 @@
 
 #include <ui/UIComponent.hpp>
 #include <string>
-#include <utils/cursor.hpp>
 
 class Statusbar : public UIComponent
 {
 private:
     std::string mode = "NORMAL";
     std::string filename = "[No Name]";
-    Cursor cursor = {.line = 1, .column = 1};
+    int line_ = 1;          // 1-based line
+    int char_ = 1;          // 1-based codepoint index on line
+    int display_col_ = 1;   // 1-based display column
 
 public:
     void draw() override;
     void set_mode(const std::string &mode);
     void set_filename(const std::string &filename);
-    void set_cursor_position(int line, int column);
+    // line / char / display_col are 1-based user-facing values.
+    void set_cursor_position(int line, int char_pos, int display_col);
 };

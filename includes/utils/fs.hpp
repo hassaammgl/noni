@@ -7,14 +7,24 @@
 
 namespace fs = std::filesystem;
 
+struct FsReadResult
+{
+    bool ok = false;
+    std::string content;
+    std::string error;
+};
+
 class FS
 {
 public:
     // file operations
     bool create_file(const fs::path &path);
+    // Atomic write: temp in same directory → flush/fsync → rename.
+    // On failure the destination (if any) is left unchanged.
     bool write_file(const fs::path &path, const std::vector<std::string> &content);
     bool append_file(const fs::path &path, const std::string &content);
     std::optional<std::string> read_file(const fs::path &path);
+    FsReadResult read_file_detailed(const fs::path &path);
     bool delete_file(const fs::path &path);
     bool rename_file(const fs::path &oldfile, const fs::path &newpath);
     bool copy_file(const fs::path &from, const fs::path &to);

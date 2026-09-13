@@ -1,7 +1,13 @@
 #include <utils/fs.hpp>
 #include <utils/logger.hpp>
-#include <fstream>
+
+#include <cerrno>
+#include <cstring>
+#include <fcntl.h>
 #include <format>
+#include <fstream>
+#include <unistd.h>
+#include <vector>
 
 
 bool FS::create_file(const fs::path &path)
@@ -34,41 +40,123 @@ bool FS::write_file(
 {
     try
     {
-        if (path.has_parent_path())
+        if (path.empty())
         {
-            fs::create_directories(
-                path.parent_path());
-        }
-
-        std::ofstream file(
-            path,
-            std::ios::out | std::ios::trunc);
-
-        if (!file)
-        {
-            Logger::error(std::format("Could not open file: {}", path.string()));
-
+            Logger::error("write_file: empty path");
             return false;
         }
 
-        for (const auto &line : content)
+        const fs::path parent = path.has_parent_path() ? path.parent_path() : fs::path(".");
+        if (!parent.empty() && parent != ".")
+            fs::create_directories(parent);
+
+        // Unique temp beside the destination so rename can be atomic on the same filesystem.
+        std::string pattern = (parent / (path.filename().string() + ".noni.XXXXXX")).string();
+        std::vector<char> tmpl(pattern.begin(), pattern.end());
+        tmpl.push_back('\0');
+
+        const int fd = ::mkstemp(tmpl.data());
+        if (fd < 0)
         {
-            file << line << '\n';
+            Logger::error(std::format(
+                "write_file: mkstemp failed for {}: {}",
+                path.string(),
+                std::strerror(errno)));
+            return false;
         }
 
-        Logger::info(std::format("File written: {}", path.string()));
-        return true;
+        const fs::path temp_path(tmpl.data());
+        bool rename_ok = false;
+
+        // Ensure temp cleanup on all failure paths.
+        struct TempGuard
+        {
+            fs::path path;
+            bool keep = false;
+            ~TempGuard()
+            {
+                if (!keep && !path.empty())
+                {
+                    std::error_code ec;
+                    fs::remove(path, ec);
+                }
+            }
+        } guard{temp_path, false};
+
+        {
+            // Close mkstemp fd; rewrite via ofstream for line-oriented write.
+            ::close(fd);
+
+            std::ofstream file(temp_path, std::ios::out | std::ios::trunc | std::ios::binary);
+            if (!file)
+            {
+                Logger::error(std::format("write_file: could not open temp {}", temp_path.string()));
+                return false;
+            }
+
+            for (const auto &line : content)
+                file << line << '\n';
+
+            file.flush();
+            if (!file)
+            {
+                Logger::error(std::format("write_file: write failed for temp {}", temp_path.string()));
+                return false;
+            }
+
+            // Best-effort durability of file data before rename.
+            file.close();
+            const int sync_fd = ::open(temp_path.c_str(), O_RDONLY);
+            if (sync_fd >= 0)
+            {
+                (void)::fsync(sync_fd);
+                ::close(sync_fd);
+            }
+        }
+
+        // Preserve destination mode bits when replacing an existing file (best-effort).
+        std::error_code pec;
+        if (fs::exists(path, pec) && fs::is_regular_file(path, pec))
+        {
+            const auto st = fs::status(path, pec);
+            if (!pec)
+                fs::permissions(temp_path, st.permissions(), pec);
+        }
+
+        std::error_code rec;
+        fs::rename(temp_path, path, rec);
+        if (rec)
+        {
+            Logger::error(std::format(
+                "write_file: rename {} → {} failed: {}",
+                temp_path.string(),
+                path.string(),
+                rec.message()));
+            return false;
+        }
+
+        guard.keep = true; // temp now is the destination
+        rename_ok = true;
+
+        // Best-effort directory fsync so the rename itself is durable.
+        const int dir_fd = ::open(parent.c_str(), O_RDONLY | O_DIRECTORY);
+        if (dir_fd >= 0)
+        {
+            (void)::fsync(dir_fd);
+            ::close(dir_fd);
+        }
+
+        Logger::info(std::format("File written atomically: {}", path.string()));
+        return rename_ok;
     }
     catch (const fs::filesystem_error &e)
     {
         Logger::error(std::format("File System Error: {}", e.what()));
-
         return false;
     }
     catch (const std::exception &e)
     {
         Logger::error(std::format("General Error: {}", e.what()));
-
         return false;
     }
 }
@@ -117,48 +205,75 @@ bool FS::append_file(const fs::path &path, const std::string &content)
 
 std::optional<std::string> FS::read_file(const fs::path &path)
 {
+    const FsReadResult result = read_file_detailed(path);
+    if (!result.ok)
+        return std::nullopt;
+    return result.content;
+}
+
+FsReadResult FS::read_file_detailed(const fs::path &path)
+{
+    FsReadResult result;
     try
     {
-        if (!fs::exists(path))
+        if (path.empty())
         {
+            result.error = "empty path";
+            Logger::error("read_file: empty path");
+            return result;
+        }
+
+        std::error_code ec;
+        if (!fs::exists(path, ec) || ec)
+        {
+            result.error = ec ? ec.message() : "file does not exist";
             Logger::error(std::format("File does not exist: {}", path.string()));
-
-            return std::nullopt;
+            return result;
         }
 
-        if (!fs::is_regular_file(path))
+        if (!fs::is_regular_file(path, ec) || ec)
         {
+            result.error = "path is not a regular file";
             Logger::error(std::format("Path is not a file: {}", path.string()));
-
-            return std::nullopt;
+            return result;
         }
 
-        std::ifstream file(path);
-
+        std::ifstream file(path, std::ios::in | std::ios::binary);
         if (!file)
         {
+            result.error = std::strerror(errno);
+            if (!result.error.empty() && result.error == "Success")
+                result.error = "could not open file";
             Logger::error(std::format("Could not open file: {}", path.string()));
-
-            return std::nullopt;
+            return result;
         }
 
-        std::string content{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+        result.content.assign(
+            std::istreambuf_iterator<char>(file),
+            std::istreambuf_iterator<char>());
 
-        file.close();
+        if (file.bad())
+        {
+            result.content.clear();
+            result.error = "read failed";
+            Logger::error(std::format("Read failed: {}", path.string()));
+            return result;
+        }
 
-        return content;
+        result.ok = true;
+        return result;
     }
     catch (const fs::filesystem_error &e)
     {
+        result.error = e.what();
         Logger::error(std::format("File System Error: {}", e.what()));
-
-        return std::nullopt;
+        return result;
     }
     catch (const std::exception &e)
     {
+        result.error = e.what();
         Logger::error(std::format("General Error: {}", e.what()));
-
-        return std::nullopt;
+        return result;
     }
 }
 

@@ -591,6 +591,57 @@ Language Syntax::detect_language(const fs::path &path)
     return Language::Plain;
 }
 
+const LanguageDefinition &Syntax::language_definition(Language lang)
+{
+    static const LanguageDefinition plain{Language::Plain, "plain", false, false, false};
+    static const LanguageDefinition c{Language::C, "c", true, true, true};
+    static const LanguageDefinition cpp{Language::Cpp, "cpp", true, true, true};
+    static const LanguageDefinition python{Language::Python, "python", true, false, true};
+    static const LanguageDefinition rust{Language::Rust, "rust", true, true, true};
+    static const LanguageDefinition go{Language::Go, "go", true, true, true};
+    static const LanguageDefinition js{Language::JavaScript, "javascript", true, true, true};
+    static const LanguageDefinition ts{Language::TypeScript, "typescript", true, true, true};
+    static const LanguageDefinition json{Language::JSON, "json", false, false, true};
+    static const LanguageDefinition shell{Language::Shell, "shell", true, false, true};
+    static const LanguageDefinition lua{Language::Lua, "lua", true, true, true};
+    static const LanguageDefinition java{Language::Java, "java", true, true, true};
+    static const LanguageDefinition csharp{Language::CSharp, "csharp", true, true, true};
+    static const LanguageDefinition markdown{Language::Markdown, "markdown", false, false, true};
+
+    switch (lang)
+    {
+    case Language::C:
+        return c;
+    case Language::Cpp:
+        return cpp;
+    case Language::Python:
+        return python;
+    case Language::Rust:
+        return rust;
+    case Language::Go:
+        return go;
+    case Language::JavaScript:
+        return js;
+    case Language::TypeScript:
+        return ts;
+    case Language::JSON:
+        return json;
+    case Language::Shell:
+        return shell;
+    case Language::Lua:
+        return lua;
+    case Language::Java:
+        return java;
+    case Language::CSharp:
+        return csharp;
+    case Language::Markdown:
+        return markdown;
+    case Language::Plain:
+    default:
+        return plain;
+    }
+}
+
 std::vector<SyntaxToken> Syntax::highlight_line(
     std::string_view line,
     Language lang,

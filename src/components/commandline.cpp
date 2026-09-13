@@ -11,15 +11,16 @@ void CommandLine::draw()
     wbkgd(window, COLOR_PAIR(Theme::InputFocus));
     wattron(window, COLOR_PAIR(Theme::InputFocus));
     mvwhline(window, 0, 0, ' ', width);
-    mvwprintw(window, 0, 0, ":%s", input.c_str());
+    mvwprintw(window, 0, 0, "%c%s", prompt_, input.c_str());
     wattroff(window, COLOR_PAIR(Theme::InputFocus));
     wmove(window, 0, 1 + static_cast<int>(input.size()));
 }
 
-void CommandLine::open()
+void CommandLine::open(char prompt)
 {
     active = true;
     input.clear();
+    prompt_ = (prompt == '/' || prompt == '?') ? prompt : ':';
 }
 
 void CommandLine::close()
@@ -30,6 +31,11 @@ void CommandLine::close()
 bool CommandLine::is_active() const
 {
     return active;
+}
+
+char CommandLine::prompt() const
+{
+    return prompt_;
 }
 
 void CommandLine::handle_input(int key)

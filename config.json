@@ -3,6 +3,7 @@
   "sidebarWidth": 25,
   "lineNumberWidth": 5,
   "escDelayMs": 25,
+  "syntaxAutoInstall": true,
   "keybindings": [
     {
       "key": "escape",
@@ -10,34 +11,24 @@
       "when": ""
     },
     {
-      "key": "ctrl+c",
-      "command": "noni.mode.normal",
-      "when": ""
-    },
-    {
-      "key": "ctrl+s",
+      "key": "space w",
       "command": "workbench.action.files.save",
-      "when": "editorFocus"
+      "when": "editorFocus && normalMode"
     },
     {
-      "key": "ctrl+w",
+      "key": "space x",
       "command": "workbench.action.closeActiveEditor",
-      "when": "editorFocus"
-    },
-    {
-      "key": "ctrl+p",
-      "command": "workbench.action.quickOpen",
-      "when": "editorFocus || sidebarFocus"
+      "when": "editorFocus && normalMode"
     },
     {
       "key": "space f",
       "command": "noni.search.files",
-      "when": "editorFocus && normalMode"
+      "when": "editorFocus && normalMode || sidebarFocus || searchFocus"
     },
     {
-      "key": "ctrl+b",
+      "key": "space b",
       "command": "workbench.action.toggleSidebarVisibility",
-      "when": ""
+      "when": "editorFocus && normalMode || sidebarFocus || searchFocus"
     },
     {
       "key": "space e",
@@ -55,14 +46,14 @@
       "when": "editorFocus && normalMode || searchFocus || sidebarFocus"
     },
     {
-      "key": "f2",
-      "command": "workbench.view.explorer",
-      "when": ""
+      "key": "space t",
+      "command": "workbench.action.terminal.toggle",
+      "when": "editorFocus && normalMode || terminalFocus || sidebarFocus || searchFocus"
     },
     {
-      "key": "f3",
-      "command": "workbench.view.search",
-      "when": ""
+      "key": "space p",
+      "command": "editor.action.clipboardPasteAction",
+      "when": "editorFocus && normalMode"
     },
     {
       "key": "tab",
@@ -85,19 +76,69 @@
       "when": "editorFocus && normalMode"
     },
     {
-      "key": "space t",
-      "command": "workbench.action.terminal.toggle",
-      "when": "editorFocus && normalMode || terminalFocus || sidebarFocus || searchFocus"
+      "key": "u",
+      "command": "editor.action.undo",
+      "when": "editorFocus && normalMode"
     },
     {
-      "key": "ctrl+`",
-      "command": "workbench.action.terminal.toggle",
-      "when": ""
+      "key": "ctrl+r",
+      "command": "editor.action.redo",
+      "when": "editorFocus && normalMode"
     },
     {
-      "key": "f4",
-      "command": "workbench.action.terminal.toggle",
-      "when": ""
+      "key": "ctrl+w v",
+      "command": "workbench.action.splitEditorRight",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+w s",
+      "command": "workbench.action.splitEditorDown",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+w q",
+      "command": "workbench.action.closeActiveEditorGroup",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+w h",
+      "command": "workbench.action.focusLeftGroup",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+w l",
+      "command": "workbench.action.focusRightGroup",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+w k",
+      "command": "workbench.action.focusAboveGroup",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+w j",
+      "command": "workbench.action.focusBelowGroup",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+w <",
+      "command": "workbench.action.decreaseViewWidth",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+w >",
+      "command": "workbench.action.increaseViewWidth",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+w -",
+      "command": "workbench.action.decreaseViewHeight",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+w +",
+      "command": "workbench.action.increaseViewHeight",
+      "when": "editorFocus"
     }
   ]
 }

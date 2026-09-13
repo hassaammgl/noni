@@ -83,8 +83,8 @@ void TabBar::draw()
     {
         const EditorTab &tab = tabs[static_cast<std::size_t>(i)];
         const bool is_active = (i == active);
-        const bool dirty = tab.buffer.is_dirty();
-        const fs::path path = tab.buffer.get_buffer_path();
+        const bool dirty = tab.buffer().is_dirty();
+        const fs::path path = tab.buffer().get_buffer_path();
         const wchar_t *icon = Icons::for_file(path.empty() ? fs::path("untitled.txt") : path);
 
         std::string name = truncate_name(tab.display_name(), 22);

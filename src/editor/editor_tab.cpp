@@ -2,7 +2,7 @@
 
 std::string EditorTab::display_name() const
 {
-    const fs::path path = buffer.get_buffer_path();
+    const fs::path path = buffer().get_buffer_path();
     if (path.empty())
         return "[No Name]";
     return path.filename().string();
@@ -10,5 +10,5 @@ std::string EditorTab::display_name() const
 
 bool EditorTab::is_untitled() const
 {
-    return buffer.get_buffer_path().empty();
+    return buffer().get_buffer_path().empty();
 }

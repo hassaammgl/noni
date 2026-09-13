@@ -2,18 +2,58 @@
 #include <utils/async.hpp>
 #include <ui/theme.hpp>
 #include <editor/ex_commands.hpp>
+#include <editor/buffer_search.hpp>
+#include <commands/command.hpp>
+#include <syntax/grammar_installer.hpp>
 #include <utils/logger.hpp>
 #include <utils/messages.hpp>
 #include <utils/str.hpp>
+#include <utils/text_metrics.hpp>
 #include <algorithm>
+#include <cstdint>
 #include <csignal>
 #include <fstream>
 #include <locale>
 #include <format>
+#include <map>
 #include <regex>
 #include <termios.h>
 #include <unistd.h>
 #include <utils/fs.hpp>
+#include <vector>
+
+namespace
+{
+    InputContext input_context_for(Focus focus, EditorMode mode, bool search_in_text_field)
+    {
+        switch (focus)
+        {
+        case Focus::Command:
+            return InputContext::CommandLine;
+        case Focus::Prompt:
+            return InputContext::PromptInput;
+        case Focus::FileSearch:
+            return InputContext::Picker;
+        case Focus::Terminal:
+            return InputContext::Terminal;
+        case Focus::Confirm:
+            return InputContext::Confirm;
+        case Focus::Messages:
+            return InputContext::Messages;
+        case Focus::Sidebar:
+            return InputContext::Sidebar;
+        case Focus::Search:
+            return search_in_text_field ? InputContext::SearchText : InputContext::SearchResults;
+        case Focus::Editor:
+        default:
+            if (mode == EditorMode::Insert)
+                return InputContext::EditorInsert;
+            if (mode == EditorMode::Visual || mode == EditorMode::VisualLine)
+                return InputContext::EditorVisual;
+            return InputContext::EditorNormal;
+        }
+    }
+}
 
 UI::UI(const fs::path file_path = "")
 {
@@ -25,12 +65,12 @@ UI::UI(const fs::path file_path = "")
     if (file_path.empty())
     {
         Logger::info("No file path provided");
-        buffers.open_untitled();
+        core.buffers().open_untitled();
     }
     else
     {
         Logger::info(std::format("Opening file: {}", file_path.string()));
-        buffers.open_file(file_path);
+        core.buffers().open_file(file_path);
     }
 
     // Always root the explorer at the project (nearest folder with .git).
@@ -39,7 +79,30 @@ UI::UI(const fs::path file_path = "")
     header.refresh_git(workspace);
     file_picker.warm(workspace);
 
-    tab_bar.set_manager(&buffers);
+    tab_bar.set_manager(&core.buffers());
+    editor.bind_core(&core);
+    editor.set_tab_switch_handlers(
+        [this]() {
+            core.buffers().next_tab();
+            sync_active_tab();
+        },
+        [this]() {
+            core.buffers().prev_tab();
+            sync_active_tab();
+        });
+    editor.set_search_handlers(
+        [this]() {
+            command_line.open('/');
+            focus = Focus::Command;
+            keys.clear_chord();
+            resize();
+        },
+        [this]() {
+            command_line.open('?');
+            focus = Focus::Command;
+            keys.clear_chord();
+            resize();
+        });
     sync_active_tab();
     load_config();
     init();
@@ -93,36 +156,34 @@ void UI::load_config()
 {
     config = AppConfig::load("config.json");
     keys.load(config);
+    GrammarInstaller::set_auto_install(config.syntax_auto_install);
 }
 
 void UI::register_actions()
 {
-    keys.register_command("noni.mode.normal", [this]() { return_to_normal(); });
+    commands.register_command("noni.mode.normal", [this]() { return_to_normal(); });
 
-    keys.register_command("workbench.action.files.save", [this]() {
-        if (!buffers.has_tabs())
+    commands.register_command("workbench.action.files.save", [this]() {
+        if (!core.buffers().has_tabs())
             return;
-        if (editor.get_buffer().save())
-            Messages::info(std::format("\"{}\" written", buffers.active().display_name()));
-        else
-            Messages::error("E212: Can't open file for writing");
+        (void)save_active_buffer();
     });
 
-    keys.register_command("workbench.action.closeActiveEditor", [this]() {
+    commands.register_command("workbench.action.closeActiveEditor", [this]() {
         close_active_tab(false);
     });
 
-    keys.register_command("workbench.action.nextEditor", [this]() {
-        buffers.next_tab();
+    commands.register_command("workbench.action.nextEditor", [this]() {
+        core.buffers().next_tab();
         sync_active_tab();
     });
 
-    keys.register_command("workbench.action.previousEditor", [this]() {
-        buffers.prev_tab();
+    commands.register_command("workbench.action.previousEditor", [this]() {
+        core.buffers().prev_tab();
         sync_active_tab();
     });
 
-    keys.register_command("noni.focus.toggleSidebar", [this]() {
+    commands.register_command("noni.focus.toggleSidebar", [this]() {
         if (!sidebar_visible)
         {
             open_explorer_view(true);
@@ -145,60 +206,145 @@ void UI::register_actions()
         }
     });
 
-    keys.register_command("noni.focus.sidebar", [this]() {
+    commands.register_command("noni.focus.sidebar", [this]() {
         open_sidebar(true);
     });
 
-    keys.register_command("noni.focus.editor", [this]() {
+    commands.register_command("noni.focus.editor", [this]() {
         return_to_normal();
     });
 
-    keys.register_command("workbench.action.toggleSidebarVisibility", [this]() {
+    commands.register_command("workbench.action.toggleSidebarVisibility", [this]() {
         toggle_sidebar();
     });
 
-    keys.register_command("workbench.action.closeSidebar", [this]() {
+    commands.register_command("workbench.action.closeSidebar", [this]() {
         close_sidebar();
     });
 
-    keys.register_command("workbench.view.explorer", [this]() {
+    commands.register_command("workbench.view.explorer", [this]() {
         open_explorer_view(true);
     });
 
-    keys.register_command("workbench.view.search", [this]() {
+    commands.register_command("workbench.view.search", [this]() {
         open_search_view(true);
     });
 
-    keys.register_command("workbench.action.findInFiles", [this]() {
+    commands.register_command("workbench.action.findInFiles", [this]() {
         open_search_view(true);
     });
 
-    keys.register_command("noni.command.open", [this]() {
+    commands.register_command("noni.command.open", [this]() {
         command_line.open();
         focus = Focus::Command;
         keys.clear_chord();
         resize();
     });
 
-    keys.register_command("workbench.action.quit", [this]() {
+    commands.register_command("workbench.action.quit", [this]() {
         ex_quit(false);
     });
 
-    keys.register_command("workbench.action.quickOpen", [this]() {
+    commands.register_command("workbench.action.quickOpen", [this]() {
         open_file_search();
     });
 
-    keys.register_command("noni.search.files", [this]() {
+    commands.register_command("noni.search.files", [this]() {
         open_file_search();
     });
 
-    keys.register_command("workbench.action.terminal.toggle", [this]() {
+    commands.register_command("workbench.action.terminal.toggle", [this]() {
         toggle_terminal();
     });
 
-    keys.register_command("workbench.action.terminal.focus", [this]() {
+    commands.register_command("workbench.action.terminal.focus", [this]() {
         open_terminal(true);
     });
+
+    commands.register_command("editor.action.clipboardPasteAction", [this]() {
+        if (focus != Focus::Editor || !core.buffers().has_tabs())
+            return;
+        if (!editor.paste_clipboard())
+            Messages::warning("Clipboard empty (need wl-paste or xclip)");
+    });
+
+    commands.register_command("editor.action.undo", [this]() {
+        if (focus != Focus::Editor || !core.buffers().has_tabs())
+            return;
+        if (!editor.undo())
+            Messages::info("Nothing to undo");
+    });
+
+    commands.register_command("editor.action.redo", [this]() {
+        if (focus != Focus::Editor || !core.buffers().has_tabs())
+            return;
+        if (!editor.redo())
+            Messages::info("Nothing to redo");
+    });
+
+    commands.register_command(Commands::SplitVertical, [this]() {
+        if (core.split_vertical())
+            Messages::info("Vertical split");
+    });
+    commands.register_command(Commands::SplitHorizontal, [this]() {
+        if (core.split_horizontal())
+            Messages::info("Horizontal split");
+    });
+    commands.register_command(Commands::CloseWindow, [this]() {
+        if (!core.close_window())
+            Messages::info("No split to close");
+    });
+    commands.register_command(Commands::FocusLeft, [this]() { core.focus_left(); });
+    commands.register_command(Commands::FocusRight, [this]() { core.focus_right(); });
+    commands.register_command(Commands::FocusUp, [this]() { core.focus_up(); });
+    commands.register_command(Commands::FocusDown, [this]() { core.focus_down(); });
+    commands.register_command(Commands::ResizeLeft, [this]() { core.resize_left(); });
+    commands.register_command(Commands::ResizeRight, [this]() { core.resize_right(); });
+    commands.register_command(Commands::ResizeUp, [this]() { core.resize_up(); });
+    commands.register_command(Commands::ResizeDown, [this]() { core.resize_down(); });
+
+    commands.register_command(Commands::SearchNext, [this]() {
+        const std::string err = core.search_next(false);
+        if (!err.empty())
+            Messages::info(err);
+    });
+    commands.register_command(Commands::SearchPrevious, [this]() {
+        const std::string err = core.search_next(true);
+        if (!err.empty())
+            Messages::info(err);
+    });
+    commands.register_command(Commands::SearchReplace, [this]() {
+        // Replace current with empty unless replace text from panel; buffer search uses "".
+        // Prefer panel replace text when search panel has one; else no-op message.
+        const std::string &r = search_panel.get_replace();
+        const std::string err = core.replace_current(r);
+        if (!err.empty())
+            Messages::warning(err);
+        else
+            Messages::info("Replaced match");
+    });
+    commands.register_command(Commands::SearchReplaceAll, [this]() {
+        if (focus == Focus::Search)
+        {
+            apply_replace_all();
+            return;
+        }
+        const std::string &r = search_panel.get_replace();
+        const std::string err = core.replace_all(r);
+        if (!err.empty())
+            Messages::warning(err);
+        else
+            Messages::info("Replaced all matches in buffer");
+    });
+
+    // Binding diagnostics
+    std::vector<CommandId> unbound;
+    std::vector<CommandId> unknown;
+    commands.diagnose(keys.bound_commands(), &unbound, &unknown);
+    for (const auto &id : unknown)
+        Logger::warning(std::format("keybinding references unknown command: {}", id));
+    for (const auto &id : unbound)
+        Logger::debug(std::format("command registered but unbound: {}", id));
 }
 
 std::string UI::when_context() const
@@ -226,6 +372,8 @@ std::string UI::when_context() const
         ctx += "normalMode ";
     if (editor.get_mode() == EditorMode::Insert)
         ctx += "insertMode ";
+    if (editor.get_mode() == EditorMode::Visual || editor.get_mode() == EditorMode::VisualLine)
+        ctx += "visualMode ";
     if (sidebar_visible)
         ctx += "sidebarVisible ";
     else
@@ -318,62 +466,73 @@ void UI::apply_replace_all()
     }
 
     const auto opts = search_panel.get_options();
-    std::sort(matches.begin(), matches.end(), [](const TextMatch &a, const TextMatch &b) {
-        if (a.path != b.path)
-            return a.path < b.path;
-        if (a.line != b.line)
-            return a.line > b.line;
-        return a.column > b.column;
-    });
+
+    auto find_open_buffer = [&](const fs::path &path) -> Buffer * {
+        return core.buffers().find_buffer_by_path(path);
+    };
+
+    // Group by path.
+    std::map<fs::path, std::vector<TextMatch>> by_path;
+    for (const auto &m : matches)
+        by_path[m.path].push_back(m);
 
     int files_touched = 0;
     int replacements = 0;
-    fs::path current;
-    std::vector<std::string> lines;
-    bool dirty_file = false;
 
-    auto write_current = [&]() {
-        if (current.empty() || !dirty_file)
-            return;
-        FS fs;
-        if (!fs.write_file(current, lines))
-            return;
-        ++files_touched;
-        if (buffers.has_tabs() && buffers.active().buffer.get_buffer_path() == current)
-        {
-            buffers.active().buffer.load();
-            sync_active_tab();
-        }
-        dirty_file = false;
-    };
-
-    for (const auto &m : matches)
+    for (auto &[path, file_matches] : by_path)
     {
-        if (m.path != current)
+        std::sort(file_matches.begin(), file_matches.end(), [](const TextMatch &a, const TextMatch &b) {
+            if (a.line != b.line)
+                return a.line > b.line;
+            return a.column > b.column;
+        });
+
+        if (Buffer *buf = find_open_buffer(path))
         {
-            write_current();
-            current = m.path;
-            lines.clear();
-            dirty_file = false;
-            std::ifstream in(current);
-            if (!in)
-            {
-                current.clear();
+            BufferSearchQuery bq;
+            bq.pattern = q;
+            bq.options = opts;
+            auto buffer_matches = BufferSearch::find_all(buf->lines(), bq);
+            if (buffer_matches.empty())
                 continue;
-            }
-            std::string line;
-            while (std::getline(in, line))
+
+            std::sort(buffer_matches.begin(), buffer_matches.end(),
+                      [](const BufferSearchMatch &a, const BufferSearchMatch &b) {
+                          if (a.start.line != b.start.line)
+                              return a.start.line > b.start.line;
+                          return a.start.column > b.start.column;
+                      });
+
+            Cursor cur{.line = 0, .column = 0};
+            if (core.active_buffer() == buf && core.active_window())
+                cur = core.active_window()->cursor();
+
+            buf->begin_edit(cur.line, cur.column);
+            for (const auto &m : buffer_matches)
             {
-                if (!line.empty() && line.back() == '\r')
-                    line.pop_back();
-                lines.push_back(line);
+                buf->delete_range(m.start.line, m.start.column, m.end.line, m.end.column);
+                (void)buf->insert_text(m.start.line, m.start.column, r);
+                ++replacements;
             }
+            buf->end_edit(cur.line, cur.column);
+            ++files_touched;
+            continue;
         }
 
-        if (current.empty() || m.line < 0 || m.line >= static_cast<int>(lines.size()))
+        // File not open: atomic FS write (no Buffer history).
+        std::ifstream in(path);
+        if (!in)
             continue;
+        std::vector<std::string> lines;
+        std::string line;
+        while (std::getline(in, line))
+        {
+            if (!line.empty() && line.back() == '\r')
+                line.pop_back();
+            lines.push_back(line);
+        }
 
-        std::string &line = lines[static_cast<std::size_t>(m.line)];
+        bool dirty = false;
         if (opts.use_regex)
         {
             try
@@ -382,36 +541,53 @@ void UI::apply_replace_all()
                 if (!opts.match_case)
                     flags |= std::regex::icase;
                 std::regex re(q, flags);
-                const std::string before = line;
-                line = std::regex_replace(line, re, r);
-                if (line != before)
+                for (auto &row : lines)
                 {
-                    ++replacements;
-                    dirty_file = true;
+                    const std::string before = row;
+                    row = std::regex_replace(row, re, r);
+                    if (row != before)
+                    {
+                        ++replacements;
+                        dirty = true;
+                    }
                 }
             }
             catch (...)
             {
+                continue;
             }
         }
         else
         {
-            if (m.column < 0 ||
-                m.column + static_cast<int>(q.size()) > static_cast<int>(line.size()))
-                continue;
-            std::string span = line.substr(static_cast<std::size_t>(m.column), q.size());
-            const bool ok = opts.match_case
-                ? (span == q)
-                : (StrUtils::to_lower(span) == StrUtils::to_lower(q));
-            if (!ok)
-                continue;
-            line.replace(static_cast<std::size_t>(m.column), q.size(), r);
-            ++replacements;
-            dirty_file = true;
+            for (const auto &m : file_matches)
+            {
+                if (m.line < 0 || m.line >= static_cast<int>(lines.size()))
+                    continue;
+                std::string &row = lines[static_cast<std::size_t>(m.line)];
+                if (m.column < 0 ||
+                    m.column + static_cast<int>(q.size()) > static_cast<int>(row.size()))
+                    continue;
+                std::string span = row.substr(static_cast<std::size_t>(m.column), q.size());
+                const bool ok = opts.match_case
+                                    ? (span == q)
+                                    : (StrUtils::to_lower(span) == StrUtils::to_lower(q));
+                if (!ok)
+                    continue;
+                row.replace(static_cast<std::size_t>(m.column), q.size(), r);
+                ++replacements;
+                dirty = true;
+            }
+        }
+
+        if (dirty)
+        {
+            FS fs;
+            if (fs.write_file(path, lines))
+                ++files_touched;
         }
     }
-    write_current();
 
+    sync_active_tab();
     Messages::info(std::format("Replaced {} matches across {} files", replacements, files_touched));
 }
 
@@ -425,9 +601,9 @@ fs::path UI::project_root() const
     fs::path root = sidebar.get_project_path();
     if (!root.empty())
         return root;
-    if (buffers.has_tabs())
+    if (core.buffers().has_tabs())
     {
-        const auto path = buffers.active().buffer.get_buffer_path();
+        const auto path = core.buffers().active().buffer().get_buffer_path();
         if (!path.empty())
             return path.parent_path().empty() ? fs::current_path() : path.parent_path();
     }
@@ -532,22 +708,22 @@ void UI::close_file_search(bool open_selected)
     if (!has_sel)
         return;
 
-    buffers.open_file(path);
+    core.buffers().open_file(path);
     sync_active_tab();
     editor.enter_normal_mode();
     header.refresh_git(path.parent_path());
-    Messages::info(std::format("\"{}\"", buffers.active().display_name()));
+    Messages::info(std::format("\"{}\"", core.buffers().active().display_name()));
 }
 
 void UI::sync_active_tab()
 {
-    if (!buffers.has_tabs())
-        buffers.open_untitled();
+    if (!core.buffers().has_tabs())
+        core.buffers().open_untitled();
 
-    editor.bind(&buffers.active());
-    statusbar.set_filename(buffers.active().display_name());
+    editor.bind(&core.buffers().active());
+    statusbar.set_filename(core.buffers().active().display_name());
 
-    const fs::path path = buffers.active().buffer.get_buffer_path();
+    const fs::path path = core.buffers().active().buffer().get_buffer_path();
     sidebar.set_active_file(path);
     if (!path.empty())
         sidebar.reveal_path(path);
@@ -590,22 +766,24 @@ void UI::return_to_normal()
 
 bool UI::close_active_tab(bool force)
 {
-    if (!buffers.has_tabs())
+    if (!core.buffers().has_tabs())
         return true;
 
-    if (!force && buffers.active().buffer.is_dirty())
+    if (!force && core.buffers().active().buffer().is_dirty())
     {
         open_save_confirm(ConfirmIntent::CloseTab);
         return false;
     }
 
-    const bool was_last = buffers.size() == 1;
-    buffers.close_active(true);
+    Buffer *closed = &core.buffers().active().buffer();
+    const bool was_last = core.buffers().size() == 1;
+    core.buffers().close_active(true);
+    core.on_buffer_closed(closed);
 
     if (was_last)
     {
         if (running)
-            buffers.open_untitled();
+            core.buffers().open_untitled();
         sync_active_tab();
         return true;
     }
@@ -627,7 +805,7 @@ void UI::open_save_confirm(ConfirmIntent intent)
     editor.enter_normal_mode();
 
     confirm_intent = intent;
-    const std::string name = buffers.active().display_name();
+    const std::string name = core.buffers().active().display_name();
     confirm_prompt.open(std::format("Save changes to \"{}\"?", name));
     focus = Focus::Confirm;
     resize();
@@ -641,14 +819,22 @@ bool UI::save_active_buffer()
         return false;
     }
 
+    if (editor.get_buffer().has_load_error())
+    {
+        Messages::error(std::format(
+            "E13: Cannot save — file was not loaded ({})",
+            editor.get_buffer().get_load_error()));
+        return false;
+    }
+
     if (!editor.get_buffer().save())
     {
         Messages::error("E212: Can't open file for writing");
         return false;
     }
 
-    statusbar.set_filename(buffers.active().display_name());
-    Messages::info(std::format("\"{}\" written", buffers.active().display_name()));
+    statusbar.set_filename(core.buffers().active().display_name());
+    Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
     return true;
 }
 
@@ -661,12 +847,12 @@ void UI::finish_close_or_quit(ConfirmIntent intent, bool force)
 
     if (intent == ConfirmIntent::Quit)
     {
-        if (buffers.size() > 1)
+        if (core.buffers().size() > 1)
         {
             close_active_tab(force);
             return;
         }
-        if (!force && buffers.active().buffer.is_dirty())
+        if (!force && core.buffers().active().buffer().is_dirty())
             return;
         request_quit();
         return;
@@ -777,7 +963,7 @@ void UI::resolve_sidebar_prompt()
             file_picker.reindex();
             if (!path.empty() && fs::is_regular_file(path))
             {
-                buffers.open_file(path);
+                core.buffers().open_file(path);
                 sync_active_tab();
             }
         }
@@ -802,10 +988,10 @@ void UI::resolve_sidebar_prompt()
         {
             const fs::path after = sidebar.get_selected_path();
             Messages::info(std::format("Renamed to {}", name));
-            if (!before.empty() && !after.empty() && buffers.has_tabs() &&
-                buffers.active().buffer.get_buffer_path() == before)
+            if (!before.empty() && !after.empty() && core.buffers().has_tabs() &&
+                core.buffers().active().buffer().get_buffer_path() == before)
             {
-                buffers.active().buffer.set_buffer_path(after);
+                core.buffers().active().buffer().set_buffer_path(after);
                 sync_active_tab();
             }
             file_picker.reindex();
@@ -860,7 +1046,7 @@ void UI::resolve_delete_confirm(ConfirmChoice choice)
     }
 
     // Close tab if this file is open.
-    if (buffers.has_tabs() && buffers.active().buffer.get_buffer_path() == path)
+    if (core.buffers().has_tabs() && core.buffers().active().buffer().get_buffer_path() == path)
         close_active_tab(true);
 
     if (!sidebar.delete_path(path))
@@ -1024,11 +1210,20 @@ void UI::resize()
 
 void UI::render()
 {
-    if (!buffers.has_tabs())
+    if (!core.buffers().has_tabs())
         return;
 
     Cursor c = editor.get_cursor();
-    statusbar.set_cursor_position(c.line + 1, c.column + 1);
+    int chr = 1;
+    int dcol = 1;
+    const auto &lines = editor.get_buffer().lines();
+    if (!lines.empty() && c.line >= 0 && c.line < static_cast<int>(lines.size()))
+    {
+        const auto &row = lines[static_cast<std::size_t>(c.line)];
+        chr = TextMetrics::byte_to_codepoint_index(row, static_cast<std::size_t>(c.column)) + 1;
+        dcol = TextMetrics::byte_to_display(row, static_cast<std::size_t>(c.column)) + 1;
+    }
+    statusbar.set_cursor_position(c.line + 1, chr, dcol);
     update_statusbar_mode();
     update_cursor_visibility();
 
@@ -1140,9 +1335,9 @@ void UI::run()
         file_picker.poll();
         search_panel.poll();
         terminal.poll();
-        if (sidebar.poll() && buffers.has_tabs())
+        if (sidebar.poll() && core.buffers().has_tabs())
         {
-            const fs::path path = buffers.active().buffer.get_buffer_path();
+            const fs::path path = core.buffers().active().buffer().get_buffer_path();
             if (!path.empty())
                 sidebar.reveal_path(path);
         }
@@ -1159,11 +1354,31 @@ void UI::request_quit()
 
 void UI::execute_command()
 {
+    const char prompt = command_line.prompt();
     const std::string line = StrUtils::trim(command_line.get_input());
     command_line.close();
     focus = Focus::Editor;
     editor.enter_normal_mode();
     resize();
+
+    if (prompt == '/' || prompt == '?')
+    {
+        if (line.empty())
+        {
+            Messages::info("Empty pattern");
+            return;
+        }
+        const SearchDirection dir =
+            (prompt == '?') ? SearchDirection::Backward : SearchDirection::Forward;
+        const std::string err = core.search_start(line, dir);
+        if (!err.empty())
+            Messages::info(err);
+        else
+            Messages::info(std::format(
+                "{} matches",
+                core.search().matches().size()));
+        return;
+    }
 
     if (line.empty())
         return;
@@ -1173,13 +1388,13 @@ void UI::execute_command()
 
 void UI::ex_quit(bool bang)
 {
-    if (buffers.size() > 1)
+    if (core.buffers().size() > 1)
     {
         close_active_tab(bang);
         return;
     }
 
-    if (!bang && buffers.active().buffer.is_dirty())
+    if (!bang && core.buffers().active().buffer().is_dirty())
     {
         open_save_confirm(ConfirmIntent::Quit);
         return;
@@ -1197,8 +1412,8 @@ void UI::ex_write(bool bang, const std::string &path)
             Messages::error("E212: Can't open file for writing");
             return;
         }
-        statusbar.set_filename(buffers.active().display_name());
-        Messages::info(std::format("\"{}\" written", buffers.active().display_name()));
+        statusbar.set_filename(core.buffers().active().display_name());
+        Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
         return;
     }
 
@@ -1208,10 +1423,18 @@ void UI::ex_write(bool bang, const std::string &path)
         return;
     }
 
+    if (editor.get_buffer().has_load_error())
+    {
+        Messages::error(std::format(
+            "E13: Cannot save — file was not loaded ({})",
+            editor.get_buffer().get_load_error()));
+        return;
+    }
+
     if (editor.get_buffer().save())
     {
-        statusbar.set_filename(buffers.active().display_name());
-        Messages::info(std::format("\"{}\" written", buffers.active().display_name()));
+        statusbar.set_filename(core.buffers().active().display_name());
+        Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
     }
     else
     {
@@ -1237,13 +1460,20 @@ void UI::ex_write_quit(bool bang, const std::string &path)
             return;
         }
     }
+    else if (editor.get_buffer().has_load_error())
+    {
+        Messages::error(std::format(
+            "E13: Cannot save — file was not loaded ({})",
+            editor.get_buffer().get_load_error()));
+        return;
+    }
     else if (!editor.get_buffer().save())
     {
         Messages::error("E212: Can't open file for writing");
         return;
     }
 
-    if (buffers.size() > 1)
+    if (core.buffers().size() > 1)
         close_active_tab(true);
     else
         request_quit();
@@ -1260,32 +1490,42 @@ void UI::ex_edit(bool bang, const std::string &path)
         }
         editor.get_buffer().load();
         editor.set_cursor_position(0, 0);
-        Messages::info("Buffer reloaded");
+        if (editor.get_buffer().has_load_error())
+        {
+            Messages::error(std::format(
+                "Failed to reload {}: {}",
+                editor.get_buffer().get_buffer_path().string(),
+                editor.get_buffer().get_load_error()));
+        }
+        else
+        {
+            Messages::info("Buffer reloaded");
+        }
         return;
     }
 
-    if (!bang && editor.get_buffer().is_dirty() && buffers.size() == 1)
+    if (!bang && editor.get_buffer().is_dirty() && core.buffers().size() == 1)
     {
         // Opening another file in a new tab is fine; only warn when replacing sole dirty buf.
     }
 
-    buffers.open_file(path);
+    core.buffers().open_file(path);
     sync_active_tab();
     editor.enter_normal_mode();
     header.refresh_git(fs::path(path).parent_path());
     focus = Focus::Editor;
-    Messages::info(std::format("\"{}\"", buffers.active().display_name()));
+    Messages::info(std::format("\"{}\"", core.buffers().active().display_name()));
 }
 
 void UI::ex_bnext()
 {
-    buffers.next_tab();
+    core.buffers().next_tab();
     sync_active_tab();
 }
 
 void UI::ex_bprevious()
 {
-    buffers.prev_tab();
+    core.buffers().prev_tab();
     sync_active_tab();
 }
 
@@ -1321,6 +1561,22 @@ void UI::ex_find()
 void UI::ex_search()
 {
     open_search_view(true);
+}
+
+void UI::ex_undo()
+{
+    if (!core.buffers().has_tabs())
+        return;
+    if (!editor.undo())
+        Messages::info("Nothing to undo");
+}
+
+void UI::ex_redo()
+{
+    if (!core.buffers().has_tabs())
+        return;
+    if (!editor.redo())
+        Messages::info("Nothing to redo");
 }
 
 void UI::toggle_terminal()
@@ -1406,7 +1662,7 @@ Editor &UI::get_editor()
 
 BufferManager &UI::get_buffers()
 {
-    return buffers;
+    return core.buffers();
 }
 
 void UI::handle_inputs()
@@ -1414,7 +1670,7 @@ void UI::handle_inputs()
     const int ch = getch();
 
     if (ch == ERR)
-        return; // idle tick for background jobs
+        return;
 
     if (ch == KEY_RESIZE)
     {
@@ -1422,12 +1678,22 @@ void UI::handle_inputs()
         return;
     }
 
-    // Typing in command / messages stays raw (except Esc via keybindings).
+    auto dispatch_resolved = [this](int key, InputContext ctx) -> bool {
+        const ResolveResult result = keys.resolve(key, when_context(), ctx);
+        if (result.status == ResolveStatus::Matched)
+        {
+            if (!commands.execute(result.command_id))
+                Logger::warning(std::format("unhandled command: {}", result.command_id));
+            return true;
+        }
+        return result.status == ResolveStatus::Prefix;
+    };
+
     if (focus == Focus::Command)
     {
         if (ch == 27 || ch == 3)
         {
-            keys.handle(ch, when_context());
+            (void)dispatch_resolved(ch, InputContext::CommandLine);
             return;
         }
         if (ch == '\n' || ch == KEY_ENTER)
@@ -1445,7 +1711,7 @@ void UI::handle_inputs()
     {
         if (ch == 27 || ch == 3)
         {
-            keys.handle(ch, when_context());
+            (void)dispatch_resolved(ch, InputContext::Messages);
             return;
         }
         messages_panel.handle_input(ch);
@@ -1472,30 +1738,23 @@ void UI::handle_inputs()
 
     if (focus == Focus::Terminal)
     {
-        // Esc / Ctrl+] leave terminal focus (shell keeps running).
         if (ch == 27 || ch == 29)
         {
             return_to_normal();
             return;
         }
-        if (ch == KEY_F(4))
-        {
-            toggle_terminal();
+        // Allow F4 / explicit control bindings; never Space leader / editor chords.
+        if (dispatch_resolved(ch, InputContext::Terminal))
             return;
-        }
-        // Keys go to the shell (Ctrl+C included). Don't steal Space for chords.
         terminal.handle_input(ch);
         return;
     }
 
     if (focus == Focus::Search)
     {
-        // Ctrl chords / F4 still work; Tab and typing stay in the panel.
-        if ((ch >= 1 && ch <= 26 && ch != 3) || ch == KEY_F(4))
-        {
-            if (keys.handle(ch, when_context()))
-                return;
-        }
+        // Leader chords + ctrl bindings; typing falls through to the panel.
+        if (dispatch_resolved(ch, InputContext::SearchResults))
+            return;
 
         const SearchPanelAction action = search_panel.handle_input(ch);
         if (action == SearchPanelAction::FocusEditor)
@@ -1508,7 +1767,7 @@ void UI::handle_inputs()
             const TextMatch m = search_panel.selected_match();
             if (!m.path.empty())
             {
-                buffers.open_file(m.path);
+                core.buffers().open_file(m.path);
                 sync_active_tab();
                 editor.set_cursor_position(m.line, m.column);
                 editor.enter_normal_mode();
@@ -1540,6 +1799,22 @@ void UI::handle_inputs()
             resolve_sidebar_prompt();
             return;
         }
+        if (ch == 27 || ch == 3)
+        {
+            (void)dispatch_resolved(ch, InputContext::PromptInput);
+            if (input_prompt.is_active())
+            {
+                input_prompt.handle_input(ch);
+            }
+            if (!input_prompt.is_active())
+            {
+                prompt_intent = PromptIntent::None;
+                focus = Focus::Sidebar;
+                resize();
+                Messages::info("Cancelled");
+            }
+            return;
+        }
         input_prompt.handle_input(ch);
         if (!input_prompt.is_active())
         {
@@ -1559,8 +1834,7 @@ void UI::handle_inputs()
             return;
         }
 
-        // Global shortcuts still work (Ctrl+B, Ctrl+P, ...).
-        if (keys.handle(ch, when_context()))
+        if (dispatch_resolved(ch, InputContext::Sidebar))
             return;
 
         const SidebarAction action = sidebar.handle_input(ch);
@@ -1569,7 +1843,7 @@ void UI::handle_inputs()
             const fs::path path = sidebar.get_selected_path();
             if (!path.empty() && fs::is_regular_file(path))
             {
-                buffers.open_file(path);
+                core.buffers().open_file(path);
                 sync_active_tab();
                 editor.enter_normal_mode();
                 header.refresh_git(find_workspace_root(path));
@@ -1644,10 +1918,10 @@ void UI::handle_inputs()
                 to.string()));
 
             if (mode == SidebarClipboardMode::Cut &&
-                buffers.has_tabs() && !from.empty() && !to.empty() &&
-                buffers.active().buffer.get_buffer_path() == from)
+                core.buffers().has_tabs() && !from.empty() && !to.empty() &&
+                core.buffers().active().buffer().get_buffer_path() == from)
             {
-                buffers.active().buffer.set_buffer_path(to);
+                core.buffers().active().buffer().set_buffer_path(to);
                 sync_active_tab();
             }
             file_picker.reindex();
@@ -1656,13 +1930,14 @@ void UI::handle_inputs()
         return;
     }
 
-    // VS Code-style JSON keybindings first.
-    if (keys.handle(ch, when_context()))
-        return;
-
-    // Fallback: editor local input (vim motions, typing).
-    if (focus == Focus::Editor)
-        editor.handle_input(ch);
+    // Editor focus (and default): resolve commands, else modal editor input.
+    {
+        const InputContext ctx = input_context_for(focus, editor.get_mode(), false);
+        if (dispatch_resolved(ch, ctx))
+            return;
+        if (focus == Focus::Editor)
+            editor.handle_input(ch);
+    }
 }
 
 Dimentions UI::get_editor_dim() const

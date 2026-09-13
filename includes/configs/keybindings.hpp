@@ -1,9 +1,9 @@
 #pragma once
 
+#include <commands/command.hpp>
 #include <configs/config.hpp>
-#include <functional>
+
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 struct KeyToken
@@ -11,7 +11,7 @@ struct KeyToken
     bool ctrl = false;
     bool alt = false;
     bool shift = false;
-    int code = 0; // printable char, or special: 27 esc, 9 tab, 10 enter, etc.
+    int code = 0;
 
     bool operator==(const KeyToken &o) const
     {
@@ -22,20 +22,23 @@ struct KeyToken
 struct ResolvedBinding
 {
     std::vector<KeyToken> chord;
-    std::string command;
+    CommandId command;
     std::string when;
+    bool leader = false; // first key is Space
 };
 
+// Resolves KeySequence → CommandId. Does not execute.
 class KeybindingEngine
 {
 public:
     void load(const AppConfig &config);
-    void register_command(const std::string &id, std::function<void()> action);
 
-    // Returns true if a binding fully matched and ran (or chord advanced).
-    bool handle(int raw_key, const std::string &when_context);
+    ResolveResult resolve(int raw_key, const std::string &when_context, InputContext input_ctx);
 
     void clear_chord();
+    bool has_pending() const { return !pending.empty(); }
+
+    std::vector<CommandId> bound_commands() const;
 
     static KeyToken from_raw(int raw_key);
     static std::vector<KeyToken> parse_key(const std::string &spec);
@@ -43,6 +46,8 @@ public:
 
 private:
     std::vector<ResolvedBinding> bindings;
-    std::unordered_map<std::string, std::function<void()>> actions;
     std::vector<KeyToken> pending;
+
+    bool is_leader_token(const KeyToken &t) const;
+    ResolveResult resolve_pending(const std::string &when_context, InputContext input_ctx);
 };

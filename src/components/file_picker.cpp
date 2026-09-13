@@ -165,7 +165,6 @@ void FilePicker::handle_input(int key)
     switch (key)
     {
     case KEY_UP:
-    case 16: // Ctrl+P
         if (selected > 0)
         {
             --selected;
@@ -173,7 +172,6 @@ void FilePicker::handle_input(int key)
         }
         break;
     case KEY_DOWN:
-    case 14: // Ctrl+N
         if (selected + 1 < static_cast<int>(matches.size()))
         {
             ++selected;
@@ -209,11 +207,6 @@ void FilePicker::handle_input(int key)
             selected = 0;
             refilter();
         }
-        break;
-    case 21: // Ctrl+U clear query
-        query.clear();
-        selected = 0;
-        refilter();
         break;
     default:
         if (key >= 32 && key <= 126)

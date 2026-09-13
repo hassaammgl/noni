@@ -367,6 +367,36 @@ void ExCommands::register_builtins()
     });
 
     add({
+        .name = "undo",
+        .aliases = {"u"},
+        .bang_allowed = false,
+        .min_args = 0,
+        .max_args = 0,
+        .usage = ":u[ndo]",
+        .description = "Undo last change",
+        .run =
+            [](UI &ui, const ParsedEx &)
+        {
+            ui.ex_undo();
+        },
+    });
+
+    add({
+        .name = "redo",
+        .aliases = {},
+        .bang_allowed = false,
+        .min_args = 0,
+        .max_args = 0,
+        .usage = ":redo",
+        .description = "Redo last undone change",
+        .run =
+            [](UI &ui, const ParsedEx &)
+        {
+            ui.ex_redo();
+        },
+    });
+
+    add({
         .name = "commands",
         .aliases = {"com"},
         .bang_allowed = false,

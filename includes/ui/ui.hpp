@@ -17,6 +17,8 @@
 #include <configs/config.hpp>
 #include <configs/keybindings.hpp>
 #include <editor/buffer_manager.hpp>
+#include <editor/editor_core.hpp>
+#include <commands/command_registry.hpp>
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -78,7 +80,8 @@ private:
     ConfirmPrompt confirm_prompt;
     InputPrompt input_prompt;
     TerminalPanel terminal;
-    BufferManager buffers;
+    EditorCore core;
+    CommandRegistry commands;
     AppConfig config;
     KeybindingEngine keys;
 
@@ -154,6 +157,8 @@ public:
     void ex_find();
     void ex_terminal(const std::string &arg);
     void ex_search();
+    void ex_undo();
+    void ex_redo();
 
     CommandLine &get_command_line();
     MessagesPanel &get_messages_panel();

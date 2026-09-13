@@ -314,11 +314,9 @@ SidebarAction Sidebar::handle_input(int key)
             ++selected_index;
         break;
     case KEY_PPAGE:
-    case 21: // Ctrl+U
         selected_index = std::max(0, selected_index - std::max(1, lh));
         break;
     case KEY_NPAGE:
-    case 4: // Ctrl+D
         selected_index = std::min(
             static_cast<int>(visible.size()) - 1,
             selected_index + std::max(1, lh));

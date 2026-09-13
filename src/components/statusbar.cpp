@@ -19,7 +19,7 @@ void Statusbar::draw()
     short mode_pair = Theme::StatusbarModeNormal;
     if (mode == "INSERT")
         mode_pair = Theme::StatusbarModeInsert;
-    else if (mode == "VISUAL")
+    else if (mode == "VISUAL" || mode == "V-LINE")
         mode_pair = Theme::StatusbarModeVisual;
     else if (mode == "COMMAND")
         mode_pair = Theme::InputFocus;
@@ -33,9 +33,9 @@ void Statusbar::draw()
     wattroff(window, COLOR_PAIR(mode_pair));
 
     wattron(window, COLOR_PAIR(Theme::Statusbar));
-    mvwprintw(window, 0, 15, "Ln %d, Col %d", cursor.line, cursor.column);
+    mvwprintw(window, 0, 15, "Ln %d, Chr %d, Col %d", line_, char_, display_col_);
 
-    mvwprintw(window, 0, 30, "UTF-8");
+    mvwprintw(window, 0, 42, "UTF-8");
 
     int filename_x =
         width - static_cast<int>(this->filename.length()) - 2;
@@ -61,7 +61,9 @@ void Statusbar::set_filename(const std::string &filename)
     this->filename = filename;
 }
 
-void Statusbar::set_cursor_position(int line, int column)
+void Statusbar::set_cursor_position(int line, int char_pos, int display_col)
 {
-    this->cursor = {.line = line, .column = column};
+    line_ = line;
+    char_ = char_pos;
+    display_col_ = display_col;
 }
