@@ -247,10 +247,13 @@ bool FS::create_directory(const fs::path &path)
 {
     try
     {
-        const bool created = fs::create_directories(path);
-        if (created)
-            Logger::info(std::format("Directory created: {}", path.string()));
-        return created;
+        fs::create_directories(path);
+        if (fs::is_directory(path))
+        {
+            Logger::info(std::format("Directory ready: {}", path.string()));
+            return true;
+        }
+        return false;
     }
     catch (const fs::filesystem_error &e)
     {

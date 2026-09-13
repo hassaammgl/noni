@@ -11,10 +11,13 @@ int main(int argc, char *argv[])
 
   fs::path file_path = Args::get_file_path(argc, argv);
 
-  UI u(file_path);
-  u.run();
+  {
+    UI u(file_path);
+    u.run();
+  }
 
   Logger::info("noni exiting");
+  Logger::shutdown();
 
   return 0;
 }

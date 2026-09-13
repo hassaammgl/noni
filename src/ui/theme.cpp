@@ -44,8 +44,10 @@ namespace
     constexpr Rgb search_bg{0x51, 0x5C, 0x6A};
     constexpr Rgb search_current_bg{0xEA, 0x5C, 0x00};
     constexpr Rgb word_hl_bg{0x3A, 0x3D, 0x41};
+    constexpr Rgb tab_bar_bg{0x25, 0x25, 0x26};
     constexpr Rgb tab_inactive_bg{0x2D, 0x2D, 0x2D};
     constexpr Rgb tab_inactive_fg{0x96, 0x96, 0x96};
+    constexpr Rgb tab_active_fg{0xFF, 0xFF, 0xFF};
     constexpr Rgb tab_modified_fg{0xE2, 0xC0, 0x8D};
     constexpr Rgb popup_bg{0x25, 0x25, 0x26};
     constexpr Rgb popup_border_fg{0x45, 0x45, 0x45};
@@ -194,7 +196,7 @@ namespace
 void Theme::init()
 {
     start_color();
-    use_default_colors();
+    // Keep opaque backgrounds so terminal wallpaper does not bleed through.
 
     color_ids.clear();
     next_custom_id = 16;
@@ -226,9 +228,9 @@ void Theme::init()
     set_pair(SearchMatch, editor_fg, search_bg);
     set_pair(SearchMatchCurrent, status_fg, search_current_bg);
     set_pair(WordHighlight, editor_fg, word_hl_bg);
-    set_pair(TabActive, status_fg, editor_bg);
-    set_pair(TabInactive, tab_inactive_fg, tab_inactive_bg);
-    set_pair(TabModified, tab_modified_fg, tab_inactive_bg);
+    set_pair(TabActive, tab_active_fg, editor_bg);
+    set_pair(TabInactive, tab_inactive_fg, tab_bar_bg);
+    set_pair(TabModified, tab_modified_fg, tab_bar_bg);
     set_pair(Popup, sidebar_fg, popup_bg);
     set_pair(PopupSelected, status_fg, list_sel_bg);
     set_pair(PopupBorder, popup_border_fg, popup_bg);

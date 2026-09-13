@@ -33,6 +33,9 @@ void UIComponent::resize(
     this->y = y;
     this->x = x;
 
+    if (height <= 0 || width <= 0)
+        return;
+
     window = newwin(
         height,
         width,

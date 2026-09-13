@@ -1,3 +1,103 @@
 {
-  "appName": "noni"
+  "appName": "noni",
+  "sidebarWidth": 25,
+  "lineNumberWidth": 5,
+  "escDelayMs": 25,
+  "keybindings": [
+    {
+      "key": "escape",
+      "command": "noni.mode.normal",
+      "when": ""
+    },
+    {
+      "key": "ctrl+c",
+      "command": "noni.mode.normal",
+      "when": ""
+    },
+    {
+      "key": "ctrl+s",
+      "command": "workbench.action.files.save",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+w",
+      "command": "workbench.action.closeActiveEditor",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+p",
+      "command": "workbench.action.quickOpen",
+      "when": "editorFocus || sidebarFocus"
+    },
+    {
+      "key": "space f",
+      "command": "noni.search.files",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+b",
+      "command": "workbench.action.toggleSidebarVisibility",
+      "when": ""
+    },
+    {
+      "key": "space e",
+      "command": "workbench.view.explorer",
+      "when": "editorFocus && normalMode || searchFocus"
+    },
+    {
+      "key": "space e",
+      "command": "noni.focus.editor",
+      "when": "sidebarFocus"
+    },
+    {
+      "key": "space s",
+      "command": "workbench.action.findInFiles",
+      "when": "editorFocus && normalMode || searchFocus || sidebarFocus"
+    },
+    {
+      "key": "f2",
+      "command": "workbench.view.explorer",
+      "when": ""
+    },
+    {
+      "key": "f3",
+      "command": "workbench.view.search",
+      "when": ""
+    },
+    {
+      "key": "tab",
+      "command": "noni.focus.toggleSidebar",
+      "when": "editorFocus && normalMode || sidebarFocus"
+    },
+    {
+      "key": ":",
+      "command": "noni.command.open",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "g t",
+      "command": "workbench.action.nextEditor",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "g shift+t",
+      "command": "workbench.action.previousEditor",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "space t",
+      "command": "workbench.action.terminal.toggle",
+      "when": "editorFocus && normalMode || terminalFocus || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "ctrl+`",
+      "command": "workbench.action.terminal.toggle",
+      "when": ""
+    },
+    {
+      "key": "f4",
+      "command": "workbench.action.terminal.toggle",
+      "when": ""
+    }
+  ]
 }

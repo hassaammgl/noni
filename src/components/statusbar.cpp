@@ -12,6 +12,9 @@ void Statusbar::draw()
     leaveok(window, TRUE);
 
     wbkgd(window, COLOR_PAIR(Theme::Statusbar));
+    wattron(window, COLOR_PAIR(Theme::Statusbar));
+    mvwhline(window, 0, 0, ' ', width);
+    wattroff(window, COLOR_PAIR(Theme::Statusbar));
 
     short mode_pair = Theme::StatusbarModeNormal;
     if (mode == "INSERT")

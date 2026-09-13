@@ -7,6 +7,7 @@ class Logger
 {
 public:
     static void init();
+    static void shutdown();
 
     static void info(
         const std::string &message,
@@ -30,6 +31,7 @@ private:
         const std::string &message,
         const std::source_location &loc);
 
-    static void write_line(const std::string &line);
+    static void enqueue(std::string line);
+    static void writer_loop();
     static void ensure_open();
 };

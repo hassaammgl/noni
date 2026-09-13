@@ -25,6 +25,7 @@ public:
     ~Buffer() = default;
 
     void set_buffer_path(const fs::path &path);
+    void set_save_path(const fs::path &path);
     fs::path get_buffer_path() const;
 
     void load();
@@ -33,7 +34,10 @@ public:
 
     void insert_char(int line, int column, char ch);
     void insert_newline(int line, int column);
+    void insert_empty_line(int line);
     void delete_char_before(int line, int column);
+    void delete_char_at(int line, int column);
 
     bool save();
+    bool save_as(const fs::path &path);
 };

@@ -9,7 +9,10 @@ void CommandLine::draw()
     werase(window);
     leaveok(window, FALSE);
     wbkgd(window, COLOR_PAIR(Theme::InputFocus));
+    wattron(window, COLOR_PAIR(Theme::InputFocus));
+    mvwhline(window, 0, 0, ' ', width);
     mvwprintw(window, 0, 0, ":%s", input.c_str());
+    wattroff(window, COLOR_PAIR(Theme::InputFocus));
     wmove(window, 0, 1 + static_cast<int>(input.size()));
 }
 

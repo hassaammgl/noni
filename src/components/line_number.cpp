@@ -15,20 +15,24 @@ void LineNumber::draw()
 
     werase(window);
     leaveok(window, TRUE);
-    wbkgd(window, COLOR_PAIR(Theme::Editor));
+    wbkgd(window, COLOR_PAIR(Theme::LineNumber));
+    wattron(window, COLOR_PAIR(Theme::LineNumber));
+    for (int row = 0; row < height; ++row)
+        mvwhline(window, row, 0, ' ', width);
+    wattroff(window, COLOR_PAIR(Theme::LineNumber));
 
     for (int row = 0; row < height; ++row)
     {
         const int line_index = scroll_y + row;
         if (line_index >= total_lines)
-            break;
+            continue;
 
         const short pair = (line_index == active_line)
                                ? Theme::LineNumberActive
                                : Theme::LineNumber;
 
         wattron(window, COLOR_PAIR(pair));
-        mvwprintw(window, row, 0, "%*d", width - 1, line_index + 1);
+        mvwprintw(window, row, 0, "%*d ", width - 1, line_index + 1);
         wattroff(window, COLOR_PAIR(pair));
     }
 }

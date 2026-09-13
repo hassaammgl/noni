@@ -10,6 +10,11 @@ void Buffer::set_buffer_path(const fs::path &path)
     load();
 }
 
+void Buffer::set_save_path(const fs::path &path)
+{
+    buffer_path = path;
+}
+
 fs::path Buffer::get_buffer_path() const
 {
     return buffer_path;
@@ -21,7 +26,10 @@ void Buffer::load()
     content.clear();
 
     if (buffer_path.empty())
+    {
+        content = {""};
         return;
+    }
 
     const auto file_content = fs.read_file(buffer_path);
     if (!file_content.has_value())
@@ -92,6 +100,17 @@ void Buffer::insert_newline(int line, int column)
     dirty = true;
 }
 
+void Buffer::insert_empty_line(int line)
+{
+    if (line < 0)
+        line = 0;
+    if (line > static_cast<int>(content.size()))
+        line = static_cast<int>(content.size());
+
+    content.insert(content.begin() + line, "");
+    dirty = true;
+}
+
 void Buffer::delete_char_before(int line, int column)
 {
     if (content.empty() || line < 0 || line >= static_cast<int>(content.size()))
@@ -114,6 +133,20 @@ void Buffer::delete_char_before(int line, int column)
     dirty = true;
 }
 
+void Buffer::delete_char_at(int line, int column)
+{
+    if (content.empty() || line < 0 || line >= static_cast<int>(content.size()))
+        return;
+
+    std::string &text = content[line];
+
+    if (column >= 0 && column < static_cast<int>(text.size()))
+    {
+        text.erase(static_cast<std::size_t>(column), 1);
+        dirty = true;
+    }
+}
+
 bool Buffer::save()
 {
     if (buffer_path.empty())
@@ -134,4 +167,13 @@ bool Buffer::save()
     }
 
     return ok;
+}
+
+bool Buffer::save_as(const fs::path &path)
+{
+    if (path.empty())
+        return save();
+
+    buffer_path = path;
+    return save();
 }
