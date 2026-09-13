@@ -23,9 +23,11 @@ PtySession::~PtySession()
     stop();
 }
 
-bool PtySession::start(int rows, int cols, const std::string &cwd)
+bool PtySession::start(int rows, int cols, const std::string &cwd, const std::string &shell)
 {
     stop();
+    exit_status_.reset();
+    lifecycle_.store(PtyLifecycle::Idle, std::memory_order_release);
 
     if (rows < 1)
         rows = 1;
@@ -41,29 +43,32 @@ bool PtySession::start(int rows, int cols, const std::string &cwd)
     if (pid < 0)
     {
         Logger::error(std::format("forkpty failed: {}", std::strerror(errno)));
+        lifecycle_.store(PtyLifecycle::Failed, std::memory_order_release);
         return false;
     }
 
     if (pid == 0)
     {
-        // Child: interactive shell
         if (!cwd.empty())
             (void)::chdir(cwd.c_str());
 
         setenv("TERM", "xterm-256color", 1);
         setenv("COLORTERM", "truecolor", 1);
 
-        const char *shell = std::getenv("SHELL");
-        if (!shell || !*shell)
-            shell = "/bin/bash";
+        const char *exec_shell = nullptr;
+        if (!shell.empty())
+            exec_shell = shell.c_str();
+        if (!exec_shell || !*exec_shell)
+            exec_shell = std::getenv("SHELL");
+        if (!exec_shell || !*exec_shell)
+            exec_shell = "/bin/sh";
 
-        execl(shell, shell, "-l", static_cast<char *>(nullptr));
-        execl(shell, shell, static_cast<char *>(nullptr));
+        execl(exec_shell, exec_shell, "-l", static_cast<char *>(nullptr));
+        execl(exec_shell, exec_shell, static_cast<char *>(nullptr));
         execl("/bin/sh", "sh", static_cast<char *>(nullptr));
         _exit(127);
     }
 
-    // Parent
     master_fd = master;
     child_pid = pid;
 
@@ -72,10 +77,32 @@ bool PtySession::start(int rows, int cols, const std::string &cwd)
         fcntl(master_fd, F_SETFL, flags | O_NONBLOCK);
 
     running.store(true, std::memory_order_release);
+    lifecycle_.store(PtyLifecycle::Running, std::memory_order_release);
     reader = std::thread([this]() { reader_loop(); });
 
-    Logger::info(std::format("PTY started pid={} {}x{}", pid, cols, rows));
+    Logger::info(std::format("PTY started pid={} shell={} {}x{}", pid, shell.empty() ? "$SHELL|/bin/sh" : shell, cols, rows));
     return true;
+}
+
+void PtySession::reap_child(bool block)
+{
+    if (child_pid <= 0)
+        return;
+
+    int status = 0;
+    const int flags = block ? 0 : WNOHANG;
+    const pid_t r = waitpid(child_pid, &status, flags);
+    if (r == child_pid)
+    {
+        if (WIFEXITED(status))
+            exit_status_ = WEXITSTATUS(status);
+        else if (WIFSIGNALED(status))
+            exit_status_ = 128 + WTERMSIG(status);
+        else
+            exit_status_ = -1;
+        child_pid = -1;
+        lifecycle_.store(PtyLifecycle::Exited, std::memory_order_release);
+    }
 }
 
 void PtySession::stop()
@@ -96,22 +123,18 @@ void PtySession::stop()
     if (child_pid > 0)
     {
         kill(child_pid, SIGHUP);
-        int status = 0;
-        waitpid(child_pid, &status, WNOHANG);
-        // Best-effort reap
         for (int i = 0; i < 20; ++i)
         {
-            const pid_t r = waitpid(child_pid, &status, WNOHANG);
-            if (r == child_pid || (r < 0 && errno == ECHILD))
+            reap_child(false);
+            if (child_pid <= 0)
                 break;
             usleep(10000);
         }
-        if (waitpid(child_pid, &status, WNOHANG) == 0)
+        if (child_pid > 0)
         {
             kill(child_pid, SIGKILL);
-            waitpid(child_pid, &status, 0);
+            reap_child(true);
         }
-        child_pid = -1;
     }
 
     std::lock_guard lock(out_mu);
@@ -120,7 +143,12 @@ void PtySession::stop()
 
 bool PtySession::alive() const
 {
-    return running.load(std::memory_order_acquire) && child_pid > 0;
+    return lifecycle_.load(std::memory_order_acquire) == PtyLifecycle::Running && child_pid > 0;
+}
+
+std::optional<int> PtySession::exit_status() const
+{
+    return exit_status_;
 }
 
 void PtySession::write_bytes(const char *data, std::size_t n)
@@ -212,7 +240,6 @@ void PtySession::reader_loop()
         {
             std::lock_guard lock(out_mu);
             out_buf.append(buf, static_cast<std::size_t>(n));
-            // Cap memory if consumer is slow.
             constexpr std::size_t kMax = 512 * 1024;
             if (out_buf.size() > kMax)
                 out_buf.erase(0, out_buf.size() - kMax);
@@ -220,4 +247,6 @@ void PtySession::reader_loop()
     }
 
     running.store(false, std::memory_order_release);
+    if (lifecycle_.load(std::memory_order_acquire) == PtyLifecycle::Running)
+        lifecycle_.store(PtyLifecycle::Exited, std::memory_order_release);
 }

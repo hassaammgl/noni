@@ -68,6 +68,8 @@ void Buffer::load()
     {
         content = {""};
         load_state = BufferLoadState::Loaded;
+        if (reload_listener_)
+            reload_listener_(*this);
         return;
     }
 
@@ -95,6 +97,8 @@ void Buffer::load()
         "Buffer loaded: {} ({} lines)",
         buffer_path.string(),
         content.size()));
+    if (reload_listener_)
+        reload_listener_(*this);
 }
 
 const std::vector<std::string> &Buffer::lines() const
@@ -410,6 +414,8 @@ void Buffer::record_change(TextChange change)
                 apply_forward(change);
                 syntax_engine_.notify_edit(change);
                 bump_revision();
+                if (change_listener_)
+                    change_listener_(*this, change);
                 if (auto_wrap)
                     end_edit(change.start_line, change.start_col);
                 return;
@@ -428,6 +434,8 @@ void Buffer::record_change(TextChange change)
             apply_forward(change);
             syntax_engine_.notify_edit(change);
             bump_revision();
+            if (change_listener_)
+                change_listener_(*this, change);
             if (auto_wrap)
                 end_edit(change.start_line, change.start_col);
             return;
@@ -436,6 +444,8 @@ void Buffer::record_change(TextChange change)
 
     apply_forward(change);
     syntax_engine_.notify_edit(change);
+    if (change_listener_)
+        change_listener_(*this, change);
     open_edit.changes.push_back(std::move(change));
     bump_revision();
 
@@ -496,6 +506,8 @@ std::pair<int, int> Buffer::insert_text(int line, int column, std::string_view t
 
     apply_forward(change);
     syntax_engine_.notify_edit(change);
+    if (change_listener_)
+        change_listener_(*this, change);
     open_edit.changes.push_back(std::move(change));
     bump_revision();
 
@@ -678,6 +690,8 @@ UndoResult Buffer::undo()
     result.ok = true;
     result.cursor_line = redo_stack.back().cursor_before_line;
     result.cursor_col = redo_stack.back().cursor_before_col;
+    if (reload_listener_)
+        reload_listener_(*this);
     return result;
 }
 
@@ -698,6 +712,8 @@ UndoResult Buffer::redo()
     result.ok = true;
     result.cursor_line = undo_stack.back().cursor_after_line;
     result.cursor_col = undo_stack.back().cursor_after_col;
+    if (reload_listener_)
+        reload_listener_(*this);
     return result;
 }
 

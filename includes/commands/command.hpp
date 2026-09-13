@@ -49,6 +49,23 @@ namespace Commands
     inline constexpr const char *SearchPrevious = "editor.action.previousMatchFindAction";
     inline constexpr const char *SearchReplace = "editor.action.replaceOne";
     inline constexpr const char *SearchReplaceAll = "editor.action.replaceAll";
+
+    // P12 SCM
+    inline constexpr const char *ScmRefresh = "git.refresh";
+    inline constexpr const char *ScmShowStatus = "git.showStatus";
+
+    // P13 LSP
+    inline constexpr const char *LspRestart = "lsp.restart";
+    inline constexpr const char *LspShowStatus = "lsp.showStatus";
+
+    // P14 completion
+    inline constexpr const char *TriggerSuggest = "editor.action.triggerSuggest";
+
+    // P15 terminal
+    inline constexpr const char *TerminalClear = "workbench.action.terminal.clear";
+    inline constexpr const char *TerminalScrollUp = "workbench.action.terminal.scrollUp";
+    inline constexpr const char *TerminalScrollDown = "workbench.action.terminal.scrollDown";
+    inline constexpr const char *TerminalKill = "workbench.action.terminal.kill";
 }
 
 enum class InputContext

@@ -1,34 +1,72 @@
 #include <utils/git.hpp>
-#include <utils/logger.hpp>
-#include <cstdio>
-#include <format>
 
-Git::Git(fs::path repo_root) : repo_root(std::move(repo_root))
+#include <array>
+#include <cstdio>
+#include <sstream>
+#include <system_error>
+
+namespace
 {
+    std::string shell_quote(const std::string &s)
+    {
+        std::string out = "'";
+        for (char c : s)
+        {
+            if (c == '\'')
+                out += "'\\''";
+            else
+                out += c;
+        }
+        out += "'";
+        return out;
+    }
+}
+
+Git::Git(fs::path repo_root) : repo_root_(std::move(repo_root))
+{
+}
+
+void Git::set_repo_root(const fs::path &root)
+{
+    repo_root_ = root;
 }
 
 bool Git::is_repo() const
 {
-    return fs::exists(repo_root / ".git");
+    if (repo_root_.empty())
+        return false;
+    std::error_code ec;
+    return fs::exists(repo_root_ / ".git", ec);
 }
 
-std::optional<std::string> Git::run_git(const std::string &args) const
+std::optional<std::string> Git::run_git(const std::vector<std::string> &args) const
 {
-    if (!is_repo())
+    return run(args);
+}
+
+std::optional<std::string> Git::run(const std::vector<std::string> &args) const
+{
+    if (repo_root_.empty())
         return std::nullopt;
-    std::string cmd = std::format(
-        "git -C {} {}",
-        repo_root.string(),
-        args);
-    FILE *pipe = popen(cmd.c_str(), "r");
+
+    std::ostringstream cmd;
+    cmd << "git -C " << shell_quote(repo_root_.string());
+    for (const auto &a : args)
+        cmd << ' ' << shell_quote(a);
+
+    FILE *pipe = popen(cmd.str().c_str(), "r");
     if (!pipe)
         return std::nullopt;
+
     std::string out;
-    char buf[256];
-    while (fgets(buf, sizeof(buf), pipe))
-        out += buf;
-    pclose(pipe);
-    // trim trailing newline
+    std::array<char, 512> buf{};
+    while (fgets(buf.data(), static_cast<int>(buf.size()), pipe))
+        out += buf.data();
+
+    const int rc = pclose(pipe);
+    if (rc != 0 && out.empty())
+        return std::nullopt;
+
     while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
         out.pop_back();
     return out;
@@ -36,19 +74,41 @@ std::optional<std::string> Git::run_git(const std::string &args) const
 
 std::optional<std::string> Git::current_branch() const
 {
-    return run_git("rev-parse --abbrev-ref HEAD");
+    if (!is_repo())
+        return std::nullopt;
+    return run({"rev-parse", "--abbrev-ref", "HEAD"});
 }
 
-std::vector<std::string> Git::status_porcelain() const
+std::optional<std::string> Git::status_porcelain_z() const
 {
-    std::vector<std::string> lines;
-    auto out = run_git("status --porcelain");
-    if (!out)
-        return lines;
-    return lines;
+    if (!is_repo())
+        return std::nullopt;
+    // Keep trailing NULs; do not trim.
+    std::ostringstream cmd;
+    cmd << "git -C " << shell_quote(repo_root_.string())
+        << " status --porcelain -z";
+    FILE *pipe = popen(cmd.str().c_str(), "r");
+    if (!pipe)
+        return std::nullopt;
+    std::string out;
+    std::array<char, 512> buf{};
+    while (true)
+    {
+        const size_t n = fread(buf.data(), 1, buf.size(), pipe);
+        if (n == 0)
+            break;
+        out.append(buf.data(), n);
+    }
+    pclose(pipe);
+    return out;
 }
 
-void Git::set_repo_root(const fs::path &root)
+std::optional<std::string> Git::ahead_behind() const
 {
-    repo_root = root;
+    if (!is_repo())
+        return std::nullopt;
+    // "A\tB" left=behind upstream, right=ahead of upstream for @{upstream}...HEAD
+    // rev-list --left-right --count A...B : left = commits reachable from A not B
+    auto out = run({"rev-list", "--left-right", "--count", "@{upstream}...HEAD"});
+    return out;
 }

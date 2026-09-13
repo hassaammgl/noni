@@ -2,13 +2,37 @@
 #include <ui/theme.hpp>
 
 #include <algorithm>
-#include <cctype>
+#include <ncurses.h>
+#include <vector>
 
 namespace
 {
-    bool is_csi_final(char c)
+    void encode_utf8(char32_t cp, char out[8], int &len)
     {
-        return c >= 0x40 && c <= 0x7e;
+        len = 0;
+        if (cp <= 0x7F)
+        {
+            out[len++] = static_cast<char>(cp);
+        }
+        else if (cp <= 0x7FF)
+        {
+            out[len++] = static_cast<char>(0xC0 | (cp >> 6));
+            out[len++] = static_cast<char>(0x80 | (cp & 0x3F));
+        }
+        else if (cp <= 0xFFFF)
+        {
+            out[len++] = static_cast<char>(0xE0 | (cp >> 12));
+            out[len++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            out[len++] = static_cast<char>(0x80 | (cp & 0x3F));
+        }
+        else
+        {
+            out[len++] = static_cast<char>(0xF0 | (cp >> 18));
+            out[len++] = static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+            out[len++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            out[len++] = static_cast<char>(0x80 | (cp & 0x3F));
+        }
+        out[len] = 0;
     }
 }
 
@@ -17,247 +41,248 @@ int TerminalPanel::view_rows() const
     return std::max(0, height - 1);
 }
 
-void TerminalPanel::ensure_line()
+short TerminalPanel::color_for_cell(const TerminalCell &cell) const
 {
-    if (lines.empty())
-        lines.push_back("");
+    TerminalAttrs a = cell.attrs;
+    if (a.inverse)
+        std::swap(a.fg, a.bg);
+
+    auto map_fg = [](std::uint8_t fg) -> short {
+        switch (fg)
+        {
+        case 0:
+            return Theme::Dim;
+        case 1:
+            return Theme::Error;
+        case 2:
+            return Theme::GitAdded;
+        case 3:
+            return Theme::Warning;
+        case 4:
+            return Theme::Info;
+        case 5:
+            return Theme::Macro;
+        case 6:
+            return Theme::Constant;
+        case 7:
+            return Theme::Editor;
+        case 8:
+            return Theme::Dim;
+        case 9:
+            return Theme::Error;
+        case 10:
+            return Theme::GitAdded;
+        case 11:
+            return Theme::Warning;
+        case 12:
+            return Theme::Info;
+        case 13:
+            return Theme::Macro;
+        case 14:
+            return Theme::String;
+        case 15:
+            return Theme::Editor;
+        default:
+            return Theme::Editor;
+        }
+    };
+
+    short pair = Theme::Editor;
+    if (a.fg != 255)
+        pair = map_fg(a.fg);
+    else if (a.bold)
+        pair = Theme::Keyword;
+    else if (a.dim)
+        pair = Theme::Dim;
+    if (a.underline)
+        pair = Theme::MarkupLink;
+    return pair;
 }
 
-void TerminalPanel::newline()
+void TerminalPanel::draw_cell(int row, int col, const TerminalCell &cell)
 {
-    lines.push_back("");
-    cursor_col = 0;
-    while (static_cast<int>(lines.size()) > kMaxLines)
-        lines.erase(lines.begin());
-}
-
-void TerminalPanel::put_char(char ch)
-{
-    ensure_line();
-    auto &line = lines.back();
-    if (cursor_col < 0)
-        cursor_col = 0;
-    if (cursor_col > static_cast<int>(line.size()))
-        cursor_col = static_cast<int>(line.size());
-
-    if (cursor_col == static_cast<int>(line.size()))
-        line.push_back(ch);
-    else
-        line[static_cast<std::size_t>(cursor_col)] = ch;
-    ++cursor_col;
-
-    // Soft wrap against panel width (if known).
-    if (width > 2 && cursor_col >= width)
-        newline();
-}
-
-void TerminalPanel::strip_and_put(const std::string &chunk)
-{
-    for (std::size_t i = 0; i < chunk.size(); ++i)
-    {
-        const unsigned char c = static_cast<unsigned char>(chunk[i]);
-
-        if (c == '\n')
-        {
-            newline();
-            continue;
-        }
-        if (c == '\r')
-        {
-            cursor_col = 0;
-            continue;
-        }
-        if (c == '\b')
-        {
-            if (cursor_col > 0)
-                --cursor_col;
-            continue;
-        }
-        if (c == '\t')
-        {
-            const int next = ((cursor_col / 8) + 1) * 8;
-            while (cursor_col < next)
-                put_char(' ');
-            continue;
-        }
-        if (c == 0x1b)
-        {
-            // ESC [ ... final  or ESC ] ... BEL  or ESC single-char
-            if (i + 1 >= chunk.size())
-                break;
-            const char next = chunk[i + 1];
-            if (next == '[')
-            {
-                i += 2;
-                while (i < chunk.size() && !is_csi_final(chunk[i]))
-                    ++i;
-                continue;
-            }
-            if (next == ']')
-            {
-                i += 2;
-                while (i < chunk.size() && chunk[i] != '\a' && chunk[i] != 0x1b)
-                    ++i;
-                continue;
-            }
-            // Skip ESC + one char
-            ++i;
-            continue;
-        }
-        if (c < 32)
-            continue;
-
-        put_char(static_cast<char>(c));
-    }
-}
-
-void TerminalPanel::ingest(const std::string &chunk)
-{
-    if (chunk.empty())
+    if (!window || cell.width == 0)
         return;
-    const bool follow = (scroll_back == 0);
-    strip_and_put(chunk);
-    if (follow)
-        scroll_back = 0;
+    if (col < 0 || col >= width || row < 0 || row >= height)
+        return;
+
+    const short pair = color_for_cell(cell);
+    wattron(window, COLOR_PAIR(pair));
+    if (cell.attrs.bold)
+        wattron(window, A_BOLD);
+    if (cell.attrs.underline)
+        wattron(window, A_UNDERLINE);
+
+    if (cell.ch == 0 || cell.ch == U' ')
+    {
+        mvwaddch(window, row, col, ' ');
+    }
+    else
+    {
+        char buf[8];
+        int len = 0;
+        encode_utf8(cell.ch, buf, len);
+        mvwaddnstr(window, row, col, buf, len);
+    }
+
+    if (cell.attrs.underline)
+        wattroff(window, A_UNDERLINE);
+    if (cell.attrs.bold)
+        wattroff(window, A_BOLD);
+    wattroff(window, COLOR_PAIR(pair));
 }
 
 void TerminalPanel::draw()
 {
-    if (!window || !visible || height <= 0 || width <= 0)
+    if (!window || !visible_ || height <= 0 || width <= 0)
         return;
 
     werase(window);
     leaveok(window, TRUE);
     wbkgd(window, COLOR_PAIR(Theme::Editor));
 
-    // Title
-    const short title = focused ? Theme::SidebarSelected : Theme::SidebarTitle;
+    const short title = focused_ ? Theme::SidebarSelected : Theme::SidebarTitle;
     wattron(window, COLOR_PAIR(title));
     mvwhline(window, 0, 0, ' ', width);
     mvwprintw(window, 0, 1, " TERMINAL ");
-    if (focused)
+    if (focused_)
         mvwprintw(window, 0, 12, "FOCUS");
-    if (!pty.alive())
+
+    const auto st = session_.state();
+    if (st == TerminalSessionState::Exited)
         mvwprintw(window, 0, std::max(1, width - 10), "exited");
+    else if (st == TerminalSessionState::Failed)
+        mvwprintw(window, 0, std::max(1, width - 10), "failed");
+    else if (session_.view_scroll() > 0)
+        mvwprintw(window, 0, std::max(1, width - 12), "[scroll]");
+
+    if (!session_.screen().title().empty() && width > 24)
+    {
+        std::string t = session_.screen().title();
+        if (static_cast<int>(t.size()) > width - 24)
+            t.resize(static_cast<std::size_t>(std::max(0, width - 24)));
+        mvwprintw(window, 0, 20, "%s", t.c_str());
+    }
     wattroff(window, COLOR_PAIR(title));
 
     const int rows = view_rows();
     if (rows <= 0)
         return;
 
-    const int total = static_cast<int>(lines.size());
-    int start = std::max(0, total - rows - scroll_back);
+    const auto &screen = session_.screen();
+    const int total = screen.total_history_rows();
+    const int scroll = session_.view_scroll();
+    int start = std::max(0, total - rows - scroll);
     if (start + rows > total)
         start = std::max(0, total - rows);
 
-    wattron(window, COLOR_PAIR(Theme::Editor));
+    std::vector<TerminalCell> line;
     for (int r = 0; r < rows; ++r)
     {
-        const int idx = start + r;
+        const int hist = start + r;
+        screen.snapshot_view_line(hist, line);
         mvwhline(window, r + 1, 0, ' ', width);
-        if (idx < 0 || idx >= total)
-            continue;
-        const std::string &line = lines[static_cast<std::size_t>(idx)];
-        mvwprintw(window, r + 1, 0, "%.*s", width, line.c_str());
+        for (int c = 0; c < width && c < static_cast<int>(line.size()); ++c)
+            draw_cell(r + 1, c, line[static_cast<std::size_t>(c)]);
     }
-    wattroff(window, COLOR_PAIR(Theme::Editor));
 
-    if (focused && scroll_back == 0 && !lines.empty())
+    if (focused_ && scroll == 0 && session_.alive())
     {
-        const int cy = height - 1;
-        const int cx = std::min(width - 1, std::max(0, cursor_col));
-        wmove(window, cy, cx);
-        leaveok(window, FALSE);
+        const int cy = 1 + screen.cursor_row();
+        const int cx = std::min(width - 1, std::max(0, screen.cursor_col()));
+        if (cy >= 1 && cy < height)
+        {
+            wmove(window, cy, cx);
+            leaveok(window, FALSE);
+        }
     }
 }
 
-void TerminalPanel::set_visible(bool v)
-{
-    visible = v;
-}
+void TerminalPanel::set_visible(bool v) { visible_ = v; }
+bool TerminalPanel::is_visible() const { return visible_; }
+void TerminalPanel::set_focused(bool v) { focused_ = v; }
+bool TerminalPanel::is_focused() const { return focused_; }
 
-bool TerminalPanel::is_visible() const
+void TerminalPanel::apply_config(const TerminalSessionConfig &cfg)
 {
-    return visible;
-}
-
-void TerminalPanel::set_focused(bool v)
-{
-    focused = v;
-}
-
-bool TerminalPanel::is_focused() const
-{
-    return focused;
+    session_.set_config(cfg);
 }
 
 void TerminalPanel::set_cwd(const std::string &path)
 {
-    cwd = path;
+    auto cfg = session_.config();
+    cfg.cwd = path;
+    session_.set_config(cfg);
 }
 
 void TerminalPanel::ensure_started()
 {
-    if (pty.alive())
+    if (session_.alive())
         return;
     const int rows = std::max(1, view_rows());
     const int cols = std::max(1, width > 0 ? width : 80);
-    lines.assign(1, "");
-    cursor_col = 0;
-    scroll_back = 0;
-    pty.start(rows, cols, cwd);
+    session_.start(rows, cols);
 }
 
 void TerminalPanel::stop()
 {
-    pty.stop();
+    session_.stop();
 }
 
 bool TerminalPanel::poll()
 {
-    if (!visible)
+    if (!visible_)
         return false;
-    const std::string chunk = pty.take_output();
-    if (chunk.empty())
-        return false;
-    ingest(chunk);
-    return true;
+    return session_.pump();
 }
 
 void TerminalPanel::on_resized()
 {
-    if (!visible || !pty.alive())
+    if (!visible_)
         return;
-    pty.resize(std::max(1, view_rows()), std::max(1, width));
+    const int rows = std::max(1, view_rows());
+    const int cols = std::max(1, width);
+    session_.resize(rows, cols);
+}
+
+void TerminalPanel::clear_screen()
+{
+    session_.clear_screen();
+}
+
+void TerminalPanel::scroll_up()
+{
+    session_.scroll_view(std::max(1, view_rows()));
+}
+
+void TerminalPanel::scroll_down()
+{
+    session_.scroll_view(-std::max(1, view_rows()));
 }
 
 void TerminalPanel::handle_input(int key)
 {
-    if (!visible)
+    if (!visible_)
         return;
 
-    if (!pty.alive())
+    if (!session_.alive())
         ensure_started();
 
-    // Scrollback navigation (doesn't go to shell)
     if (key == KEY_PPAGE)
     {
-        scroll_back = std::min(
-            std::max(0, static_cast<int>(lines.size()) - view_rows()),
-            scroll_back + std::max(1, view_rows()));
+        scroll_up();
         return;
     }
     if (key == KEY_NPAGE)
     {
-        scroll_back = std::max(0, scroll_back - std::max(1, view_rows()));
+        scroll_down();
         return;
     }
 
-    // Typing jumps back to live edge
-    scroll_back = 0;
+    session_.follow_live();
 
-    auto send = [&](const char *s, std::size_t n) { pty.write_bytes(s, n); };
-    auto send1 = [&](char c) { pty.write_byte(c); };
+    auto send = [&](const char *s, std::size_t n) { session_.write_bytes(s, n); };
+    auto send1 = [&](char c) { session_.write_byte(c); };
 
     switch (key)
     {
@@ -294,10 +319,12 @@ void TerminalPanel::handle_input(int key)
     case '\t':
         send1('\t');
         break;
+    case 27:
+        send1('\033');
+        break;
     default:
         if (key >= 1 && key <= 26)
         {
-            // Ctrl+A .. Ctrl+Z → shell
             send1(static_cast<char>(key));
             break;
         }

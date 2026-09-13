@@ -177,6 +177,14 @@ KeyToken KeybindingEngine::from_raw(int raw_key)
         return t;
     }
 
+    // Many terminals send NUL for Ctrl+Space (and Ctrl+@).
+    if (raw_key == 0)
+    {
+        t.ctrl = true;
+        t.code = ' ';
+        return t;
+    }
+
     if (raw_key >= 'A' && raw_key <= 'Z')
     {
         t.shift = true;

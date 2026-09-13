@@ -3,6 +3,7 @@
 #include <editor/editor_core.hpp>
 #include <editor/editor_tab.hpp>
 #include <editor/motion.hpp>
+#include <lsp/completion.hpp>
 #include <ui/UIComponent.hpp>
 
 #include <functional>
@@ -75,6 +76,7 @@ private:
     void draw_window_pane(Window &w, int ox, int oy, int pw, int ph, bool is_active);
     void draw_selection_overlay(Window &w, int ox, int oy, int pw, int ph);
     void draw_search_highlight(Window &w, int ox, int oy, int pw, int ph);
+    void draw_diagnostics_overlay(Window &w, int ox, int oy, int pw, int ph);
 
 public:
     void bind_core(EditorCore *core);
@@ -91,6 +93,7 @@ public:
     void enter_normal_mode();
 
     bool paste_clipboard();
+    bool apply_completion(const CompletionItem &item);
     bool undo();
     bool redo();
 

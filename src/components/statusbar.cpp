@@ -35,7 +35,10 @@ void Statusbar::draw()
     wattron(window, COLOR_PAIR(Theme::Statusbar));
     mvwprintw(window, 0, 15, "Ln %d, Chr %d, Col %d", line_, char_, display_col_);
 
-    mvwprintw(window, 0, 42, "UTF-8");
+    if (!scm_badge_.empty())
+        mvwprintw(window, 0, 42, "Git %s", scm_badge_.c_str());
+    else
+        mvwprintw(window, 0, 42, "UTF-8");
 
     int filename_x =
         width - static_cast<int>(this->filename.length()) - 2;
@@ -66,4 +69,9 @@ void Statusbar::set_cursor_position(int line, int char_pos, int display_col)
     line_ = line;
     char_ = char_pos;
     display_col_ = display_col;
+}
+
+void Statusbar::set_scm_badge(std::string badge)
+{
+    scm_badge_ = std::move(badge);
 }

@@ -2,6 +2,7 @@
 
 #include <ncurses.h>
 #include <components/commandline.hpp>
+#include <components/completion_picker.hpp>
 #include <components/confirm_prompt.hpp>
 #include <components/editor.hpp>
 #include <components/file_picker.hpp>
@@ -20,6 +21,7 @@
 #include <editor/editor_core.hpp>
 #include <commands/command_registry.hpp>
 #include <filesystem>
+#include <cstdint>
 
 namespace fs = std::filesystem;
 
@@ -40,6 +42,7 @@ enum class Focus
     Prompt,
     Terminal,
     Search,
+    Completion,
 };
 
 enum class SideView
@@ -75,6 +78,7 @@ private:
     Editor editor;
     MessagesPanel messages_panel;
     FilePicker file_picker;
+    CompletionPicker completion_picker;
     Statusbar statusbar;
     CommandLine command_line;
     ConfirmPrompt confirm_prompt;
@@ -133,8 +137,15 @@ private:
     void close_sidebar();
     void open_file_search();
     void close_file_search(bool open_selected);
+    void trigger_completion();
+    void close_completion(bool accept);
+    void poll_completion_result();
+    void sync_scm_ui();
+    void refresh_scm(const fs::path &hint);
     fs::path project_root() const;
     fs::path find_workspace_root(const fs::path &hint) const;
+
+    std::uint64_t scm_gen_seen_ = 0;
 
 public:
     Focus focus = Focus::Editor;

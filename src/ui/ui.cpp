@@ -4,6 +4,8 @@
 #include <editor/ex_commands.hpp>
 #include <editor/buffer_search.hpp>
 #include <commands/command.hpp>
+#include <scm/scm_git.hpp>
+#include <lsp/lsp_service.hpp>
 #include <syntax/grammar_installer.hpp>
 #include <utils/logger.hpp>
 #include <utils/messages.hpp>
@@ -33,6 +35,7 @@ namespace
         case Focus::Prompt:
             return InputContext::PromptInput;
         case Focus::FileSearch:
+        case Focus::Completion:
             return InputContext::Picker;
         case Focus::Terminal:
             return InputContext::Terminal;
@@ -76,7 +79,7 @@ UI::UI(const fs::path file_path = "")
     // Always root the explorer at the project (nearest folder with .git).
     sidebar.set_project_path(workspace);
     search_panel.set_root(workspace);
-    header.refresh_git(workspace);
+    refresh_scm(workspace);
     file_picker.warm(workspace);
 
     tab_bar.set_manager(&core.buffers());
@@ -105,6 +108,9 @@ UI::UI(const fs::path file_path = "")
         });
     sync_active_tab();
     load_config();
+    // Config may have enabled LSP servers after first attach attempt.
+    if (core.buffers().has_tabs())
+        core.attach_lsp_document(core.buffers().active().buffer());
     init();
     register_actions();
 }
@@ -112,6 +118,7 @@ UI::UI(const fs::path file_path = "")
 UI::~UI()
 {
     terminal.stop();
+    core.lsp().shutdown_all();
     Background::instance().stop();
     endwin();
     Logger::debug("UI destructor called");
@@ -157,6 +164,25 @@ void UI::load_config()
     config = AppConfig::load("config.json");
     keys.load(config);
     GrammarInstaller::set_auto_install(config.syntax_auto_install);
+
+    std::vector<LspServerConfig> servers;
+    servers.reserve(config.lsp_servers.size());
+    for (const auto &s : config.lsp_servers)
+    {
+        LspServerConfig c;
+        c.language = s.language;
+        c.command = s.command;
+        c.root_markers = s.root_markers;
+        servers.push_back(std::move(c));
+    }
+    core.lsp().set_server_configs(std::move(servers));
+
+    terminal_height = std::max(5, config.terminal.height);
+    TerminalSessionConfig tcfg;
+    tcfg.shell = config.terminal.shell;
+    tcfg.scrollback = std::max(0, config.terminal.scrollback);
+    tcfg.cwd = project_root().string();
+    terminal.apply_config(tcfg);
 }
 
 void UI::register_actions()
@@ -261,6 +287,29 @@ void UI::register_actions()
         open_terminal(true);
     });
 
+    commands.register_command(Commands::TerminalClear, [this]() {
+        if (!terminal_visible)
+            open_terminal(false);
+        terminal.clear_screen();
+    });
+
+    commands.register_command(Commands::TerminalScrollUp, [this]() {
+        if (!terminal_visible)
+            return;
+        terminal.scroll_up();
+    });
+
+    commands.register_command(Commands::TerminalScrollDown, [this]() {
+        if (!terminal_visible)
+            return;
+        terminal.scroll_down();
+    });
+
+    commands.register_command(Commands::TerminalKill, [this]() {
+        terminal.stop();
+        Messages::info("Terminal process killed");
+    });
+
     commands.register_command("editor.action.clipboardPasteAction", [this]() {
         if (focus != Focus::Editor || !core.buffers().has_tabs())
             return;
@@ -337,6 +386,49 @@ void UI::register_actions()
             Messages::info("Replaced all matches in buffer");
     });
 
+    commands.register_command(Commands::ScmRefresh, [this]() {
+        refresh_scm(project_root());
+        Messages::info("SCM refresh requested");
+    });
+
+    commands.register_command(Commands::ScmShowStatus, [this]() {
+        sync_scm_ui();
+        const auto snap = core.scm().snapshot();
+        if (!snap.is_repo)
+        {
+            Messages::info("Not a git repository");
+            return;
+        }
+        std::string msg = std::format("Git {} · {} files", snap.branch, snap.files.size());
+        if (snap.ahead >= 0 || snap.behind >= 0)
+            msg += std::format(" · ↑{} ↓{}", std::max(0, snap.ahead), std::max(0, snap.behind));
+        if (Buffer *b = core.active_buffer())
+        {
+            if (auto st = core.scm().status_for(b->get_buffer_path()))
+                msg += std::format(" · [{}{}]", st->xy[0], st->xy[1]);
+            else
+                msg += " · [clean]";
+        }
+        Messages::info(msg);
+    });
+
+    commands.register_command(Commands::LspShowStatus, [this]() {
+        core.lsp().pump();
+        Messages::info(core.lsp().status_summary());
+    });
+
+    commands.register_command(Commands::LspRestart, [this]() {
+        core.lsp().shutdown_all();
+        core.lsp().set_workspace_root(project_root());
+        if (Buffer *b = core.active_buffer())
+            core.attach_lsp_document(*b);
+        Messages::info("LSP restarted");
+    });
+
+    commands.register_command(Commands::TriggerSuggest, [this]() {
+        trigger_completion();
+    });
+
     // Binding diagnostics
     std::vector<CommandId> unbound;
     std::vector<CommandId> unknown;
@@ -362,6 +454,8 @@ std::string UI::when_context() const
         ctx += "messagesFocus ";
     if (focus == Focus::FileSearch)
         ctx += "fileSearchFocus ";
+    if (focus == Focus::Completion)
+        ctx += "completionFocus ";
     if (focus == Focus::Confirm)
         ctx += "confirmFocus ";
     if (focus == Focus::Prompt)
@@ -610,8 +704,63 @@ fs::path UI::project_root() const
     return fs::current_path();
 }
 
+void UI::refresh_scm(const fs::path &hint)
+{
+    const fs::path root = find_workspace_root(hint);
+    core.scm().set_workspace_root(root);
+    // set_workspace_root already requests refresh when root changes; force when same.
+    core.scm().request_refresh();
+    scm_gen_seen_ = 0; // force header/badge update when snapshot arrives
+    core.lsp().set_workspace_root(root);
+}
+
+void UI::sync_scm_ui()
+{
+    const std::uint64_t gen = core.scm().generation();
+    if (gen == scm_gen_seen_)
+    {
+        // Still refresh per-buffer badge cheaply from cache (no Git).
+        if (Buffer *b = core.active_buffer())
+        {
+            if (auto st = core.scm().status_for(b->get_buffer_path()))
+                statusbar.set_scm_badge(std::format("{}{}", st->xy[0], st->xy[1]));
+            else if (core.scm().snapshot().is_repo && !b->get_buffer_path().empty())
+                statusbar.set_scm_badge("");
+        }
+        return;
+    }
+    scm_gen_seen_ = gen;
+
+    const auto snap = core.scm().snapshot();
+    std::string label = snap.branch;
+    if (snap.is_repo && (snap.ahead > 0 || snap.behind > 0))
+    {
+        if (snap.ahead > 0)
+            label += std::format(" ↑{}", snap.ahead);
+        if (snap.behind > 0)
+            label += std::format(" ↓{}", snap.behind);
+    }
+    header.set_branch(std::move(label));
+
+    if (Buffer *b = core.active_buffer())
+    {
+        if (auto st = core.scm().status_for(b->get_buffer_path()))
+            statusbar.set_scm_badge(std::format("{}{}", st->xy[0], st->xy[1]));
+        else
+            statusbar.set_scm_badge("");
+    }
+    else
+    {
+        statusbar.set_scm_badge("");
+    }
+}
+
 fs::path UI::find_workspace_root(const fs::path &hint) const
 {
+    const fs::path git_root = ScmGit::find_repository_root(hint);
+    if (!git_root.empty())
+        return git_root;
+
     std::error_code ec;
     fs::path cur = hint.empty() ? fs::current_path() : hint;
     if (fs::is_regular_file(cur, ec))
@@ -711,8 +860,73 @@ void UI::close_file_search(bool open_selected)
     core.buffers().open_file(path);
     sync_active_tab();
     editor.enter_normal_mode();
-    header.refresh_git(path.parent_path());
+    refresh_scm(path);
     Messages::info(std::format("\"{}\"", core.buffers().active().display_name()));
+}
+
+void UI::trigger_completion()
+{
+    if (!core.buffers().has_tabs())
+        return;
+    if (completion_picker.is_active())
+        close_completion(false);
+
+    Buffer &buf = editor.get_buffer();
+    const Cursor c = editor.get_cursor();
+    core.lsp().cancel_completion();
+    const int id = core.lsp().request_completion(buf, c.line, c.column);
+    if (id <= 0)
+    {
+        Messages::info("Completion unavailable (no LSP for this buffer)");
+        return;
+    }
+    Messages::info("Completing…");
+}
+
+void UI::close_completion(bool accept)
+{
+    CompletionItem item;
+    const bool took = accept && completion_picker.take_selection(item);
+    if (!took)
+        completion_picker.close();
+    core.lsp().cancel_completion();
+    focus = Focus::Editor;
+    keys.clear_chord();
+    resize();
+
+    if (took)
+    {
+        if (editor.apply_completion(item))
+            Messages::info(std::format("Inserted {}", item.label));
+        else
+            Messages::warning("Failed to insert completion");
+    }
+}
+
+void UI::poll_completion_result()
+{
+    auto result = core.lsp().take_completion_result();
+    if (!result)
+        return;
+
+    if (result->items.empty())
+    {
+        Messages::info("No completions");
+        return;
+    }
+
+    if (file_picker.is_active())
+        file_picker.close();
+    if (command_line.is_active())
+    {
+        command_line.clear_input();
+        command_line.close();
+    }
+
+    completion_picker.open(std::move(*result));
+    focus = Focus::Completion;
+    keys.clear_chord();
+    resize();
 }
 
 void UI::sync_active_tab()
@@ -722,6 +936,7 @@ void UI::sync_active_tab()
 
     editor.bind(&core.buffers().active());
     statusbar.set_filename(core.buffers().active().display_name());
+    core.attach_lsp_document(core.buffers().active().buffer());
 
     const fs::path path = core.buffers().active().buffer().get_buffer_path();
     sidebar.set_active_file(path);
@@ -744,6 +959,10 @@ void UI::return_to_normal()
 
     if (file_picker.is_active())
         file_picker.close();
+
+    if (completion_picker.is_active())
+        completion_picker.close();
+    core.lsp().cancel_completion();
 
     if (confirm_prompt.is_active())
     {
@@ -776,6 +995,7 @@ bool UI::close_active_tab(bool force)
     }
 
     Buffer *closed = &core.buffers().active().buffer();
+    core.lsp().notify_close(*closed);
     const bool was_last = core.buffers().size() == 1;
     core.buffers().close_active(true);
     core.on_buffer_closed(closed);
@@ -835,6 +1055,8 @@ bool UI::save_active_buffer()
 
     statusbar.set_filename(core.buffers().active().display_name());
     Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
+    core.scm().request_refresh();
+    core.lsp().notify_save(editor.get_buffer());
     return true;
 }
 
@@ -1078,6 +1300,9 @@ void UI::update_statusbar_mode()
     case Focus::FileSearch:
         statusbar.set_mode("FILES");
         break;
+    case Focus::Completion:
+        statusbar.set_mode("COMPLETE");
+        break;
     case Focus::Confirm:
         statusbar.set_mode("CONFIRM");
         break;
@@ -1096,7 +1321,7 @@ void UI::update_statusbar_mode()
 void UI::update_cursor_visibility()
 {
     if (focus == Focus::Command || focus == Focus::FileSearch ||
-        focus == Focus::Confirm || focus == Focus::Prompt ||
+        focus == Focus::Completion || focus == Focus::Confirm || focus == Focus::Prompt ||
         focus == Focus::Terminal || focus == Focus::Search)
         curs_set(1);
     else if (focus == Focus::Editor)
@@ -1177,6 +1402,22 @@ void UI::resize()
     const int picker_x = sb + std::max(1, (editor_pane_width - picker_w) / 2);
     file_picker.resize(picker_h, picker_w, picker_y, picker_x);
 
+    // Completion popup near the active cursor inside the editor pane.
+    {
+        const Cursor c = editor.get_cursor();
+        const int sy = editor.get_scroll_y();
+        const int items = completion_picker.is_active()
+                              ? static_cast<int>(completion_picker.list().items.size())
+                              : 8;
+        const int comp_h = std::clamp(items + 2, 4, std::min(14, std::max(4, editor_height)));
+        const int comp_w = std::min(48, std::max(24, editor_width - 2));
+        int comp_y = editor_y + std::clamp(c.line - sy + 1, 0, std::max(0, editor_height - comp_h));
+        int comp_x = editor_x + 2;
+        if (comp_x + comp_w > sb + editor_pane_width)
+            comp_x = std::max(sb, sb + editor_pane_width - comp_w);
+        completion_picker.resize(comp_h, comp_w, comp_y, comp_x);
+    }
+
     const int status_y = height - bottom_rows;
     if (cmd_open || confirm_open || prompt_open)
     {
@@ -1213,6 +1454,10 @@ void UI::render()
     if (!core.buffers().has_tabs())
         return;
 
+    sync_scm_ui();
+    core.lsp().pump();
+    poll_completion_result();
+
     Cursor c = editor.get_cursor();
     int chr = 1;
     int dcol = 1;
@@ -1230,7 +1475,8 @@ void UI::render()
     line_number.sync(
         editor.get_scroll_y(),
         c.line,
-        static_cast<int>(editor.get_buffer().lines().size()));
+        static_cast<int>(editor.get_buffer().lines().size()),
+        &editor.get_buffer().diagnostics());
 
     wbkgd(stdscr, COLOR_PAIR(Theme::Editor));
     werase(stdscr);
@@ -1259,6 +1505,8 @@ void UI::render()
 
     if (file_picker.is_active())
         file_picker.draw();
+    if (completion_picker.is_active())
+        completion_picker.draw();
 
     statusbar.draw();
 
@@ -1313,6 +1561,11 @@ void UI::render()
     {
         wnoutrefresh(editor.get_window());
         wnoutrefresh(file_picker.get_window());
+    }
+    else if (completion_picker.is_active())
+    {
+        wnoutrefresh(editor.get_window());
+        wnoutrefresh(completion_picker.get_window());
     }
     else if (focus == Focus::Terminal && terminal_visible)
     {
@@ -1414,6 +1667,8 @@ void UI::ex_write(bool bang, const std::string &path)
         }
         statusbar.set_filename(core.buffers().active().display_name());
         Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
+        core.scm().request_refresh();
+        core.lsp().notify_save(editor.get_buffer());
         return;
     }
 
@@ -1435,6 +1690,8 @@ void UI::ex_write(bool bang, const std::string &path)
     {
         statusbar.set_filename(core.buffers().active().display_name());
         Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
+        core.scm().request_refresh();
+        core.lsp().notify_save(editor.get_buffer());
     }
     else
     {
@@ -1512,7 +1769,7 @@ void UI::ex_edit(bool bang, const std::string &path)
     core.buffers().open_file(path);
     sync_active_tab();
     editor.enter_normal_mode();
-    header.refresh_git(fs::path(path).parent_path());
+    refresh_scm(fs::path(path));
     focus = Focus::Editor;
     Messages::info(std::format("\"{}\"", core.buffers().active().display_name()));
 }
@@ -1600,6 +1857,12 @@ void UI::open_terminal(bool focus_terminal)
 {
     terminal_visible = true;
     terminal.set_visible(true);
+    auto tcfg = terminal.session().config();
+    tcfg.cwd = project_root().string();
+    if (tcfg.shell.empty())
+        tcfg.shell = config.terminal.shell;
+    tcfg.scrollback = config.terminal.scrollback;
+    terminal.apply_config(tcfg);
     terminal.set_cwd(project_root().string());
     keys.clear_chord();
     editor.enter_normal_mode();
@@ -1642,7 +1905,20 @@ void UI::ex_terminal(const std::string &arg)
         close_terminal();
         return;
     }
-    Messages::error("Usage: :terminal [open|close|toggle]");
+    if (a == "kill")
+    {
+        terminal.stop();
+        Messages::info("Terminal process killed");
+        return;
+    }
+    if (a == "clear")
+    {
+        if (!terminal_visible)
+            open_terminal(false);
+        terminal.clear_screen();
+        return;
+    }
+    Messages::error("Usage: :terminal [open|close|toggle|kill|clear]");
 }
 
 CommandLine &UI::get_command_line()
@@ -1733,6 +2009,22 @@ void UI::handle_inputs()
             return;
         }
         file_picker.handle_input(ch);
+        return;
+    }
+
+    if (focus == Focus::Completion)
+    {
+        if (ch == 27 || ch == 3)
+        {
+            close_completion(false);
+            return;
+        }
+        if (ch == '\n' || ch == KEY_ENTER || ch == '\t')
+        {
+            close_completion(true);
+            return;
+        }
+        completion_picker.handle_input(ch);
         return;
     }
 
@@ -1846,7 +2138,7 @@ void UI::handle_inputs()
                 core.buffers().open_file(path);
                 sync_active_tab();
                 editor.enter_normal_mode();
-                header.refresh_git(find_workspace_root(path));
+                refresh_scm(path);
                 focus = Focus::Editor;
                 keys.clear_chord();
             }

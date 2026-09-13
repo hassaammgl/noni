@@ -37,4 +37,7 @@ namespace MiniJson
     };
 
     Value parse(const std::string &text);
+
+    // Serialize a Value to JSON text (for JSON-RPC). Escapes strings.
+    std::string stringify(const Value &v);
 }

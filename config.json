@@ -4,6 +4,25 @@
   "lineNumberWidth": 5,
   "escDelayMs": 25,
   "syntaxAutoInstall": true,
+  "terminal": {
+    "shell": "",
+    "height": 12,
+    "scrollback": 5000
+  },
+  "lsp": {
+    "servers": [
+      {
+        "language": "cpp",
+        "command": ["clangd"],
+        "rootMarkers": ["compile_commands.json", ".git"]
+      },
+      {
+        "language": "python",
+        "command": ["pylsp"],
+        "rootMarkers": ["pyproject.toml", ".git"]
+      }
+    ]
+  },
   "keybindings": [
     {
       "key": "escape",
@@ -139,6 +158,36 @@
       "key": "ctrl+w +",
       "command": "workbench.action.increaseViewHeight",
       "when": "editorFocus"
+    },
+    {
+      "key": "space g r",
+      "command": "git.refresh",
+      "when": "editorFocus && normalMode || sidebarFocus"
+    },
+    {
+      "key": "space g s",
+      "command": "git.showStatus",
+      "when": "editorFocus && normalMode || sidebarFocus"
+    },
+    {
+      "key": "space l s",
+      "command": "lsp.showStatus",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "space l r",
+      "command": "lsp.restart",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+space",
+      "command": "editor.action.triggerSuggest",
+      "when": "editorFocus"
+    },
+    {
+      "key": "space l c",
+      "command": "editor.action.triggerSuggest",
+      "when": "editorFocus && normalMode"
     }
   ]
 }

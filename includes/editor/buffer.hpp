@@ -1,11 +1,13 @@
 #pragma once
 
 #include <editor/undo.hpp>
+#include <lsp/diagnostics.hpp>
 #include <syntax/tree_highlighter.hpp>
 #include <utils/fs.hpp>
 #include <utils/str.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -42,6 +44,11 @@ private:
 
     // Shared across all Windows viewing this Buffer.
     TreeHighlighter syntax_engine_;
+    DiagnosticSnapshot diagnostics_;
+
+    // Optional document observers (e.g. LSP). Not owned.
+    std::function<void(Buffer &, const TextChange &)> change_listener_;
+    std::function<void(Buffer &)> reload_listener_;
 
     void ensure_line_exists(int line);
     int clamp_column(int line, int column) const;
@@ -88,8 +95,29 @@ public:
     TreeHighlighter &syntax() { return syntax_engine_; }
     const TreeHighlighter &syntax() const { return syntax_engine_; }
 
+    DiagnosticSnapshot &diagnostics() { return diagnostics_; }
+    const DiagnosticSnapshot &diagnostics() const { return diagnostics_; }
+    void set_diagnostics(DiagnosticSnapshot snap)
+    {
+        // Version safety: ignore older LSP snapshots when version is present.
+        if (snap.lsp_version >= 0 && diagnostics_.lsp_version >= 0 &&
+            snap.lsp_version < diagnostics_.lsp_version)
+            return;
+        snap.generation = diagnostics_.generation + 1;
+        diagnostics_ = std::move(snap);
+    }
+
     // Sync syntax cache for rendering (idempotent / cheap when clean).
     void sync_syntax();
+
+    void set_change_listener(std::function<void(Buffer &, const TextChange &)> listener)
+    {
+        change_listener_ = std::move(listener);
+    }
+    void set_reload_listener(std::function<void(Buffer &)> listener)
+    {
+        reload_listener_ = std::move(listener);
+    }
 
     // Undo transaction boundaries (cursor is Window-owned; passed in explicitly).
     void begin_edit(int cursor_line, int cursor_col);

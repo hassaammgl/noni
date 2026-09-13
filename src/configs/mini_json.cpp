@@ -2,6 +2,7 @@
 
 #include <cctype>
 #include <stdexcept>
+#include <string>
 
 namespace MiniJson
 {
@@ -257,5 +258,119 @@ namespace MiniJson
         if (p.i != text.size())
             throw std::runtime_error("Trailing JSON content");
         return v;
+    }
+
+    namespace
+    {
+        void append_escaped(std::string &out, const std::string &s)
+        {
+            out.push_back('"');
+            for (unsigned char c : s)
+            {
+                switch (c)
+                {
+                case '"':
+                    out += "\\\"";
+                    break;
+                case '\\':
+                    out += "\\\\";
+                    break;
+                case '\b':
+                    out += "\\b";
+                    break;
+                case '\f':
+                    out += "\\f";
+                    break;
+                case '\n':
+                    out += "\\n";
+                    break;
+                case '\r':
+                    out += "\\r";
+                    break;
+                case '\t':
+                    out += "\\t";
+                    break;
+                default:
+                    if (c < 0x20)
+                    {
+                        static const char *hex = "0123456789abcdef";
+                        out += "\\u00";
+                        out.push_back(hex[c >> 4]);
+                        out.push_back(hex[c & 0xF]);
+                    }
+                    else
+                    {
+                        out.push_back(static_cast<char>(c));
+                    }
+                    break;
+                }
+            }
+            out.push_back('"');
+        }
+
+        void stringify_into(std::string &out, const Value &v)
+        {
+            if (v.is_null())
+            {
+                out += "null";
+                return;
+            }
+            if (v.is_bool())
+            {
+                out += v.as_bool() ? "true" : "false";
+                return;
+            }
+            if (v.is_number())
+            {
+                const double n = v.as_number();
+                if (n == static_cast<double>(static_cast<long long>(n)))
+                    out += std::to_string(static_cast<long long>(n));
+                else
+                    out += std::to_string(n);
+                return;
+            }
+            if (v.is_string())
+            {
+                append_escaped(out, v.as_string());
+                return;
+            }
+            if (v.is_array())
+            {
+                out.push_back('[');
+                bool first = true;
+                for (const auto &el : v.as_array())
+                {
+                    if (!first)
+                        out.push_back(',');
+                    first = false;
+                    stringify_into(out, el);
+                }
+                out.push_back(']');
+                return;
+            }
+            if (v.is_object())
+            {
+                out.push_back('{');
+                bool first = true;
+                for (const auto &[k, val] : v.as_object())
+                {
+                    if (!first)
+                        out.push_back(',');
+                    first = false;
+                    append_escaped(out, k);
+                    out.push_back(':');
+                    stringify_into(out, val);
+                }
+                out.push_back('}');
+            }
+        }
+    }
+
+    std::string stringify(const Value &v)
+    {
+        std::string out;
+        out.reserve(256);
+        stringify_into(out, v);
+        return out;
     }
 }

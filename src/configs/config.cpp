@@ -80,10 +80,51 @@ AppConfig AppConfig::load(const std::string &path)
             }
         }
 
+        if (const MiniJson::Value *lsp = root.get("lsp"); lsp && lsp->is_object())
+        {
+            if (const MiniJson::Value *servers = lsp->get("servers"); servers && servers->is_array())
+            {
+                cfg.lsp_servers.clear();
+                for (const auto &item : servers->as_array())
+                {
+                    if (!item.is_object())
+                        continue;
+                    LspServerConfigFile sc;
+                    sc.language = item.get_string("language", "");
+                    if (const MiniJson::Value *cmd = item.get("command"); cmd && cmd->is_array())
+                    {
+                        for (const auto &c : cmd->as_array())
+                        {
+                            if (c.is_string())
+                                sc.command.push_back(c.as_string());
+                        }
+                    }
+                    if (const MiniJson::Value *markers = item.get("rootMarkers"); markers && markers->is_array())
+                    {
+                        for (const auto &m : markers->as_array())
+                        {
+                            if (m.is_string())
+                                sc.root_markers.push_back(m.as_string());
+                        }
+                    }
+                    if (!sc.language.empty() && !sc.command.empty())
+                        cfg.lsp_servers.push_back(std::move(sc));
+                }
+            }
+        }
+
+        if (const MiniJson::Value *term = root.get("terminal"); term && term->is_object())
+        {
+            cfg.terminal.shell = term->get_string("shell", cfg.terminal.shell);
+            cfg.terminal.height = term->get_int("height", cfg.terminal.height);
+            cfg.terminal.scrollback = term->get_int("scrollback", cfg.terminal.scrollback);
+        }
+
         Logger::info(std::format(
-            "Config loaded: {} ({} keybindings)",
+            "Config loaded: {} ({} keybindings, {} lsp servers)",
             path,
-            cfg.keybindings.size()));
+            cfg.keybindings.size(),
+            cfg.lsp_servers.size()));
     }
     catch (const std::exception &e)
     {

@@ -1,4 +1,5 @@
 #include <components/editor.hpp>
+#include <lsp/diagnostics.hpp>
 #include <syntax/syntax.hpp>
 #include <ui/theme.hpp>
 #include <utils/clipboard.hpp>
@@ -690,6 +691,77 @@ void Editor::draw_search_highlight(Window &w, int ox, int oy, int pw, int ph)
     }
 }
 
+void Editor::draw_diagnostics_overlay(Window &w, int ox, int oy, int pw, int ph)
+{
+    if (!window || !w.has_buffer() || pw <= 0 || ph <= 0)
+        return;
+
+    const auto &diags = w.buffer().diagnostics().items;
+    if (diags.empty())
+        return;
+
+    const auto &content = w.buffer().lines();
+    const int sx = w.scroll_x();
+    const int sy = w.scroll_y();
+
+    auto theme_for = [](DiagnosticSeverity s) -> short {
+        switch (s)
+        {
+        case DiagnosticSeverity::Error:
+            return Theme::Error;
+        case DiagnosticSeverity::Warning:
+            return Theme::Warning;
+        case DiagnosticSeverity::Information:
+            return Theme::Info;
+        case DiagnosticSeverity::Hint:
+            return Theme::Hint;
+        }
+        return Theme::Error;
+    };
+
+    for (const auto &d : diags)
+    {
+        const short pair = theme_for(d.severity);
+        Cursor a = d.start;
+        Cursor b = d.end;
+        if (b.line < a.line || (b.line == a.line && b.column < a.column))
+            std::swap(a, b);
+
+        for (int line = a.line; line <= b.line; ++line)
+        {
+            if (line < sy || line >= sy + ph)
+                continue;
+            if (line < 0 || line >= static_cast<int>(content.size()))
+                continue;
+
+            const std::string &row = content[static_cast<std::size_t>(line)];
+            const int line_len = static_cast<int>(row.size());
+            int lo = (line == a.line) ? a.column : 0;
+            int hi = (line == b.line) ? b.column : line_len;
+            lo = std::clamp(lo, 0, line_len);
+            hi = std::clamp(hi, 0, line_len);
+            if (lo >= hi)
+            {
+                if (lo < line_len)
+                {
+                    const auto [cp, n] = TextMetrics::decode(row, static_cast<std::size_t>(lo));
+                    (void)cp;
+                    hi = lo + std::max(1, static_cast<int>(n));
+                }
+                else if (line_len > 0)
+                {
+                    lo = line_len - 1;
+                    hi = line_len;
+                }
+                else
+                    continue;
+            }
+            paint_byte_range(
+                window, oy + (line - sy), ox, row, lo, hi, sx, pw, pair);
+        }
+    }
+}
+
 void Editor::draw_window_pane(Window &w, int ox, int oy, int pw, int ph, bool is_active)
 {
     if (!window || !w.has_buffer() || pw <= 0 || ph <= 0)
@@ -745,9 +817,10 @@ void Editor::draw_window_pane(Window &w, int ox, int oy, int pw, int ph, bool is
         }
     }
 
-    // Precedence: base syntax → search → selection → cursor.
+    // Precedence: base syntax → search → selection → diagnostics → cursor.
     draw_search_highlight(w, ox, oy, pw, ph);
     draw_selection_overlay(w, ox, oy, pw, ph);
+    draw_diagnostics_overlay(w, ox, oy, pw, ph);
 
     if (is_active)
     {
@@ -905,6 +978,47 @@ void Editor::split_insert_edit()
         return;
     end_buffer_edit();
     begin_buffer_edit();
+}
+
+bool Editor::apply_completion(const CompletionItem &item)
+{
+    if (!tab || !tab->active_window().has_buffer())
+        return false;
+
+    std::string text = item.new_text;
+    if (text.empty())
+        text = !item.insert_text.empty() ? item.insert_text : item.label;
+    if (text.empty())
+        return false;
+
+    Cursor start = tab->cursor();
+    Cursor end = start;
+    if (item.has_text_edit)
+    {
+        start = item.edit_start;
+        end = item.edit_end;
+        if (end.line < start.line || (end.line == start.line && end.column < start.column))
+            std::swap(start, end);
+    }
+
+    const bool nested = tab->buffer().is_edit_active();
+    if (!nested)
+        begin_buffer_edit();
+
+    if (start.line != end.line || start.column != end.column)
+        tab->buffer().delete_range(start.line, start.column, end.line, end.column);
+
+    const auto [el, ec] = tab->buffer().insert_text(start.line, start.column, text);
+    tab->cursor().line = el;
+    tab->cursor().column = ec;
+    leave_visual();
+    clamp_cursor();
+    sync_preferred_display(tab->active_window());
+    update_scroll();
+
+    if (!nested)
+        end_buffer_edit();
+    return true;
 }
 
 bool Editor::paste_clipboard()

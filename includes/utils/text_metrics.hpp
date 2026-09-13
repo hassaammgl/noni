@@ -57,4 +57,8 @@ namespace TextMetrics
 
     // Codepoint index → byte offset.
     std::size_t codepoint_index_to_byte(std::string_view line, int index);
+
+    // LSP uses UTF-16 code units for Position.character (not display columns).
+    int byte_to_utf16(std::string_view line, std::size_t byte);
+    std::size_t utf16_to_byte(std::string_view line, int utf16_col);
 }

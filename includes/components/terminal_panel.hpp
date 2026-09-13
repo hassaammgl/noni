@@ -1,29 +1,21 @@
 #pragma once
 
-#include <terminal/pty_session.hpp>
+#include <terminal/terminal_session.hpp>
 #include <ui/UIComponent.hpp>
 
 #include <string>
-#include <vector>
 
+// ncurses view over a TerminalSession. Does not parse VT or own the shell.
 class TerminalPanel : public UIComponent
 {
 private:
-    PtySession pty;
-    std::vector<std::string> lines{""};
-    int cursor_col = 0;
-    int scroll_back = 0; // 0 = follow bottom
-    bool focused = false;
-    bool visible = false;
-    std::string cwd;
-    static constexpr int kMaxLines = 5000;
+    TerminalSession session_;
+    bool focused_ = false;
+    bool visible_ = false;
 
-    void ingest(const std::string &chunk);
-    void ensure_line();
-    void newline();
-    void put_char(char ch);
-    void strip_and_put(const std::string &chunk);
     int view_rows() const;
+    short color_for_cell(const TerminalCell &cell) const;
+    void draw_cell(int row, int col, const TerminalCell &cell);
 
 public:
     void draw() override;
@@ -33,11 +25,20 @@ public:
     void set_focused(bool v);
     bool is_focused() const;
 
+    void apply_config(const TerminalSessionConfig &cfg);
     void set_cwd(const std::string &path);
+
     void ensure_started();
     void stop();
-    bool poll(); // drain pty output; true if content changed
+    bool poll();
 
     void on_resized();
     void handle_input(int key);
+
+    void clear_screen();
+    void scroll_up();
+    void scroll_down();
+
+    TerminalSession &session() { return session_; }
+    const TerminalSession &session() const { return session_; }
 };

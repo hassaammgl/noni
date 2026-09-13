@@ -6,11 +6,17 @@
 #include <editor/marks.hpp>
 #include <editor/registers.hpp>
 #include <editor/window_layout.hpp>
+#include <lsp/lsp_service.hpp>
+#include <scm/scm_service.hpp>
 
 #include <algorithm>
 #include <cstdint>
+#include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
+
+namespace fs = std::filesystem;
 
 // Editor engine state — no ncurses dependency.
 class EditorCore
@@ -21,6 +27,8 @@ private:
     MarkTable marks_;
     JumpList jumps_;
     BufferSearchState search_;
+    ScmService scm_;
+    LspService lsp_;
     int editor_area_w_ = 80;
     int editor_area_h_ = 24;
 
@@ -39,6 +47,30 @@ public:
 
     BufferSearchState &search() { return search_; }
     const BufferSearchState &search() const { return search_; }
+
+    ScmService &scm() { return scm_; }
+    const ScmService &scm() const { return scm_; }
+
+    LspService &lsp() { return lsp_; }
+    const LspService &lsp() const { return lsp_; }
+
+    // Bind Buffer edit hooks to LSP and open the document if applicable.
+    void attach_lsp_document(Buffer &buffer)
+    {
+        buffer.set_change_listener([this](Buffer &b, const TextChange &ch) {
+            lsp_.notify_change(b, ch);
+        });
+        buffer.set_reload_listener([this](Buffer &b) {
+            lsp_.notify_reload(b);
+        });
+        lsp_.notify_open(buffer);
+    }
+
+    // Lookup SCM status for a document path (shared across Windows).
+    std::optional<ScmFileStatus> scm_status_for_path(const fs::path &path) const
+    {
+        return scm_.status_for(path);
+    }
 
     void set_editor_area(int w, int h)
     {
@@ -100,6 +132,7 @@ public:
     {
         if (!b)
             return;
+        // LSP document close must be requested before Buffer destruction.
         const auto id = buffer_id(b);
         marks_.invalidate_buffer(id);
         jumps_.invalidate_buffer(id);

@@ -1,7 +1,6 @@
 #include <components/header.hpp>
 #include <ui/theme.hpp>
 #include <ui/icons.hpp>
-#include <utils/async.hpp>
 
 void Header::draw()
 {
@@ -10,8 +9,8 @@ void Header::draw()
 
     std::string branch;
     {
-        std::lock_guard lock(branch_mu);
-        branch = branch_name;
+        std::lock_guard lock(mu_);
+        branch = branch_name_;
     }
 
     werase(window);
@@ -31,40 +30,14 @@ void Header::draw()
     wattroff(window, COLOR_PAIR(Theme::Header));
 }
 
-std::string Header::get_project_git_branch()
+void Header::set_branch(std::string branch)
 {
-    std::lock_guard lock(branch_mu);
-    return branch_name;
+    std::lock_guard lock(mu_);
+    branch_name_ = std::move(branch);
 }
 
-void Header::refresh_git(const fs::path &project_root)
+std::string Header::branch() const
 {
-    {
-        std::lock_guard lock(branch_mu);
-        branch_name = "…";
-    }
-
-    const std::uint64_t token = Background::instance().next_token();
-    git_token.store(token, std::memory_order_relaxed);
-
-    Background::instance().post([this, project_root, token]() {
-        if (git_token.load(std::memory_order_relaxed) != token)
-            return;
-
-        Git local(project_root);
-        std::string name = "[no git]";
-        if (auto branch = local.current_branch())
-            name = *branch;
-
-        if (git_token.load(std::memory_order_relaxed) != token)
-            return;
-
-        std::lock_guard lock(branch_mu);
-        branch_name = std::move(name);
-    });
-}
-
-bool Header::poll()
-{
-    return false;
+    std::lock_guard lock(mu_);
+    return branch_name_;
 }
