@@ -6,6 +6,9 @@
 #include <commands/command.hpp>
 #include <scm/scm_git.hpp>
 #include <lsp/lsp_service.hpp>
+#include <extensions/builtin_hello.hpp>
+#include <help/help_docs.hpp>
+#include <workspace/workspace.hpp>
 #include <syntax/grammar_installer.hpp>
 #include <utils/logger.hpp>
 #include <utils/messages.hpp>
@@ -35,6 +38,7 @@ namespace
         case Focus::Prompt:
             return InputContext::PromptInput;
         case Focus::FileSearch:
+        case Focus::BufferSearch:
         case Focus::Completion:
             return InputContext::Picker;
         case Focus::Terminal:
@@ -63,9 +67,16 @@ UI::UI(const fs::path file_path = "")
     Background::instance().start(2);
 
     const fs::path hint = file_path.empty() ? fs::current_path() : file_path;
-    const fs::path workspace = find_workspace_root(hint);
+    core.workspace().open(hint);
+    const fs::path workspace = core.workspace().root();
 
-    if (file_path.empty())
+    std::error_code ec;
+    if (!file_path.empty() && fs::is_directory(file_path, ec))
+    {
+        Logger::info(std::format("Opening workspace folder: {}", file_path.string()));
+        core.buffers().open_untitled();
+    }
+    else if (file_path.empty())
     {
         Logger::info("No file path provided");
         core.buffers().open_untitled();
@@ -74,13 +85,15 @@ UI::UI(const fs::path file_path = "")
     {
         Logger::info(std::format("Opening file: {}", file_path.string()));
         core.buffers().open_file(file_path);
+        note_opened_file(file_path);
     }
 
-    // Always root the explorer at the project (nearest folder with .git).
+    // Always root the explorer at the project (nearest folder with .git / markers).
     sidebar.set_project_path(workspace);
     search_panel.set_root(workspace);
     refresh_scm(workspace);
     file_picker.warm(workspace);
+    buffer_picker.bind(&core.buffers());
 
     tab_bar.set_manager(&core.buffers());
     editor.bind_core(&core);
@@ -113,10 +126,23 @@ UI::UI(const fs::path file_path = "")
         core.attach_lsp_document(core.buffers().active().buffer());
     init();
     register_actions();
+
+    extensions.add(make_hello_extension());
+    extensions.activate_all(commands, keys, core, config);
+    Logger::info(extensions.status_summary());
+
+    std::vector<CommandId> unbound;
+    std::vector<CommandId> unknown;
+    commands.diagnose(keys.bound_commands(), &unbound, &unknown);
+    for (const auto &id : unknown)
+        Logger::warning(std::format("keybinding references unknown command: {}", id));
+    for (const auto &id : unbound)
+        Logger::debug(std::format("command registered but unbound: {}", id));
 }
 
 UI::~UI()
 {
+    extensions.deactivate_all();
     terminal.stop();
     core.lsp().shutdown_all();
     Background::instance().stop();
@@ -279,6 +305,27 @@ void UI::register_actions()
         open_file_search();
     });
 
+    commands.register_command(Commands::ShowAllEditors, [this]() {
+        open_buffer_search();
+    });
+
+    commands.register_command(Commands::OpenWorkspace, [this]() {
+        open_workspace_prompt();
+    });
+
+    commands.register_command(Commands::RevealInExplorer, [this]() {
+        if (!core.buffers().has_tabs())
+            return;
+        const fs::path path = editor.get_buffer().get_buffer_path();
+        if (path.empty())
+        {
+            Messages::info("No file path to reveal");
+            return;
+        }
+        open_explorer_view(true);
+        sidebar.reveal_path(path);
+    });
+
     commands.register_command("workbench.action.terminal.toggle", [this]() {
         toggle_terminal();
     });
@@ -429,14 +476,9 @@ void UI::register_actions()
         trigger_completion();
     });
 
-    // Binding diagnostics
-    std::vector<CommandId> unbound;
-    std::vector<CommandId> unknown;
-    commands.diagnose(keys.bound_commands(), &unbound, &unknown);
-    for (const auto &id : unknown)
-        Logger::warning(std::format("keybinding references unknown command: {}", id));
-    for (const auto &id : unbound)
-        Logger::debug(std::format("command registered but unbound: {}", id));
+    commands.register_command("extension.showStatus", [this]() {
+        Messages::info(extensions.status_summary());
+    });
 }
 
 std::string UI::when_context() const
@@ -454,6 +496,8 @@ std::string UI::when_context() const
         ctx += "messagesFocus ";
     if (focus == Focus::FileSearch)
         ctx += "fileSearchFocus ";
+    if (focus == Focus::BufferSearch)
+        ctx += "bufferSearchFocus ";
     if (focus == Focus::Completion)
         ctx += "completionFocus ";
     if (focus == Focus::Confirm)
@@ -692,6 +736,8 @@ void UI::close_sidebar()
 
 fs::path UI::project_root() const
 {
+    if (core.workspace().has_root())
+        return core.workspace().root();
     fs::path root = sidebar.get_project_path();
     if (!root.empty())
         return root;
@@ -706,12 +752,83 @@ fs::path UI::project_root() const
 
 void UI::refresh_scm(const fs::path &hint)
 {
-    const fs::path root = find_workspace_root(hint);
+    const fs::path root = Workspace::detect_root(hint.empty() ? project_root() : hint);
+    if (!core.workspace().has_root() || core.workspace().root() != root)
+        core.workspace().set_root(root);
     core.scm().set_workspace_root(root);
-    // set_workspace_root already requests refresh when root changes; force when same.
     core.scm().request_refresh();
-    scm_gen_seen_ = 0; // force header/badge update when snapshot arrives
+    scm_gen_seen_ = 0;
     core.lsp().set_workspace_root(root);
+}
+
+fs::path UI::find_workspace_root(const fs::path &hint) const
+{
+    return Workspace::detect_root(hint);
+}
+
+void UI::note_opened_file(const fs::path &path)
+{
+    if (path.empty())
+        return;
+    core.recent().touch(path);
+}
+
+void UI::remap_buffer_path(const fs::path &from, const fs::path &to)
+{
+    if (from.empty() || to.empty())
+        return;
+    if (Buffer *b = core.buffers().find_buffer_by_path(from))
+        b->set_save_path(to);
+}
+
+void UI::close_buffers_under(const fs::path &path)
+{
+    if (path.empty() || !core.buffers().has_tabs())
+        return;
+    // Close matching tabs from the end to keep indices stable enough.
+    for (int guard = 0; guard < 64 && core.buffers().has_tabs(); ++guard)
+    {
+        bool closed_any = false;
+        const auto &tabs = core.buffers().get_tabs();
+        for (int i = static_cast<int>(tabs.size()) - 1; i >= 0; --i)
+        {
+            const auto p = tabs[static_cast<std::size_t>(i)].buffer().get_buffer_path();
+            if (p.empty())
+                continue;
+            std::error_code ec;
+            const bool match = (p == path) ||
+                               (fs::is_directory(path, ec) &&
+                                p.string().rfind(path.string(), 0) == 0);
+            if (!match)
+                continue;
+            core.buffers().switch_to(i);
+            Buffer *b = &core.buffers().active().buffer();
+            core.lsp().notify_close(*b);
+            core.on_buffer_closed(b);
+            core.buffers().close_active(true);
+            closed_any = true;
+            break;
+        }
+        if (!closed_any)
+            break;
+    }
+    if (!core.buffers().has_tabs())
+        core.buffers().open_untitled();
+    sync_active_tab();
+}
+
+void UI::apply_workspace_root(const fs::path &hint, bool announce)
+{
+    core.workspace().open(hint);
+    const fs::path root = core.workspace().root();
+    sidebar.set_project_path(root);
+    search_panel.set_root(root);
+    file_picker.warm(root);
+    file_picker.reindex();
+    refresh_scm(root);
+    terminal.set_cwd(root.string());
+    if (announce)
+        Messages::info(std::format("Workspace: {}", root.string()));
 }
 
 void UI::sync_scm_ui()
@@ -755,77 +872,6 @@ void UI::sync_scm_ui()
     }
 }
 
-fs::path UI::find_workspace_root(const fs::path &hint) const
-{
-    const fs::path git_root = ScmGit::find_repository_root(hint);
-    if (!git_root.empty())
-        return git_root;
-
-    std::error_code ec;
-    fs::path cur = hint.empty() ? fs::current_path() : hint;
-    if (fs::is_regular_file(cur, ec))
-        cur = cur.parent_path();
-    cur = fs::weakly_canonical(cur, ec);
-    if (ec)
-        cur = hint.empty() ? fs::current_path() : hint;
-
-    auto is_project_root = [&](const fs::path &dir) -> bool {
-        static const char *markers[] = {
-            // VCS / noni
-            ".git", ".hg", ".svn", ".noni",
-            // C / C++
-            "CMakeLists.txt", "Makefile", "meson.build", "configure.ac",
-            "compile_commands.json", "vcpkg.json", "conanfile.txt", "conanfile.py",
-            // Rust / Go / Zig / Swift
-            "Cargo.toml", "go.mod", "build.zig", "Package.swift",
-            // Python
-            "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt",
-            "Pipfile", "poetry.lock", "tox.ini",
-            // Java / JVM
-            "pom.xml", "build.gradle", "build.gradle.kts",
-            "settings.gradle", "settings.gradle.kts", "build.sbt",
-            "project.clj", "deps.edn",
-            // JS / TS
-            "package.json", "pnpm-workspace.yaml", "lerna.json",
-            // Lua
-            ".luarc.json", "selene.toml",
-            // PHP / Ruby / Elixir / Dart
-            "composer.json", "Gemfile", "mix.exs", "pubspec.yaml",
-        };
-        for (const char *m : markers)
-        {
-            if (fs::exists(dir / m, ec))
-                return true;
-        }
-
-        // .NET solutions/projects and Lua rockspecs (extension-based)
-        for (const auto &entry : fs::directory_iterator(dir, ec))
-        {
-            if (ec || !entry.is_regular_file(ec))
-                continue;
-            const std::string ext = entry.path().extension().string();
-            if (ext == ".sln" || ext == ".csproj" || ext == ".fsproj" ||
-                ext == ".vbproj" || ext == ".rockspec")
-                return true;
-        }
-        return false;
-    };
-
-    fs::path walk = cur;
-    while (!walk.empty())
-    {
-        if (is_project_root(walk))
-            return walk;
-        const fs::path parent = walk.parent_path();
-        if (parent == walk)
-            break;
-        walk = parent;
-    }
-
-    // No markers: use the opened file's directory (or cwd).
-    return cur.empty() ? fs::current_path() : cur;
-}
-
 void UI::open_file_search()
 {
     keys.clear_chord();
@@ -833,6 +879,8 @@ void UI::open_file_search()
         command_line.close();
     if (messages_panel.is_active())
         messages_panel.close();
+    if (buffer_picker.is_active())
+        buffer_picker.close();
     if (confirm_prompt.is_active())
     {
         confirm_prompt.close();
@@ -840,6 +888,7 @@ void UI::open_file_search()
     }
 
     editor.enter_normal_mode();
+    file_picker.set_recent(core.recent().list());
     file_picker.open(project_root());
     focus = Focus::FileSearch;
     resize();
@@ -858,10 +907,66 @@ void UI::close_file_search(bool open_selected)
         return;
 
     core.buffers().open_file(path);
+    note_opened_file(path);
     sync_active_tab();
     editor.enter_normal_mode();
     refresh_scm(path);
     Messages::info(std::format("\"{}\"", core.buffers().active().display_name()));
+}
+
+void UI::open_buffer_search()
+{
+    keys.clear_chord();
+    if (command_line.is_active())
+        command_line.close();
+    if (messages_panel.is_active())
+        messages_panel.close();
+    if (file_picker.is_active())
+        file_picker.close();
+    if (completion_picker.is_active())
+        completion_picker.close();
+
+    editor.enter_normal_mode();
+    buffer_picker.bind(&core.buffers());
+    buffer_picker.open();
+    focus = Focus::BufferSearch;
+    resize();
+}
+
+void UI::close_buffer_search(bool open_selected)
+{
+    int idx = -1;
+    const bool has_sel = open_selected && buffer_picker.take_selection(idx);
+    buffer_picker.close();
+    focus = Focus::Editor;
+    keys.clear_chord();
+    resize();
+
+    if (!has_sel || idx < 0)
+        return;
+    if (idx >= static_cast<int>(core.buffers().size()))
+        return;
+    core.buffers().switch_to(idx);
+    sync_active_tab();
+    editor.enter_normal_mode();
+}
+
+void UI::open_workspace_prompt()
+{
+    if (command_line.is_active())
+        command_line.close();
+    if (confirm_prompt.is_active())
+        confirm_prompt.close();
+    if (file_picker.is_active())
+        file_picker.close();
+    if (buffer_picker.is_active())
+        buffer_picker.close();
+
+    keys.clear_chord();
+    prompt_intent = PromptIntent::OpenWorkspace;
+    input_prompt.open("Open workspace: ", project_root().string());
+    focus = Focus::Prompt;
+    resize();
 }
 
 void UI::trigger_completion()
@@ -960,6 +1065,9 @@ void UI::return_to_normal()
     if (file_picker.is_active())
         file_picker.close();
 
+    if (buffer_picker.is_active())
+        buffer_picker.close();
+
     if (completion_picker.is_active())
         completion_picker.close();
     core.lsp().cancel_completion();
@@ -996,9 +1104,9 @@ bool UI::close_active_tab(bool force)
 
     Buffer *closed = &core.buffers().active().buffer();
     core.lsp().notify_close(*closed);
+    core.on_buffer_closed(closed);
     const bool was_last = core.buffers().size() == 1;
     core.buffers().close_active(true);
-    core.on_buffer_closed(closed);
 
     if (was_last)
     {
@@ -1057,6 +1165,7 @@ bool UI::save_active_buffer()
     Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
     core.scm().request_refresh();
     core.lsp().notify_save(editor.get_buffer());
+    core.notify_buffer_saved(editor.get_buffer());
     return true;
 }
 
@@ -1150,6 +1259,9 @@ void UI::open_sidebar_prompt(PromptIntent intent)
         input_prompt.open("Rename: ", sel.filename().string());
         break;
     }
+    case PromptIntent::OpenWorkspace:
+        input_prompt.open("Open workspace: ", project_root().string());
+        break;
     case PromptIntent::None:
         return;
     }
@@ -1164,6 +1276,27 @@ void UI::resolve_sidebar_prompt()
     const std::string name = StrUtils::trim(input_prompt.get_input());
     input_prompt.close();
     prompt_intent = PromptIntent::None;
+
+    if (intent == PromptIntent::OpenWorkspace)
+    {
+        focus = Focus::Editor;
+        resize();
+        if (name.empty())
+        {
+            Messages::info("Cancelled");
+            return;
+        }
+        std::error_code ec;
+        fs::path path = name;
+        if (!fs::exists(path, ec))
+        {
+            Messages::error(std::format("Path not found: {}", name));
+            return;
+        }
+        apply_workspace_root(path, true);
+        return;
+    }
+
     focus = Focus::Sidebar;
     resize();
 
@@ -1186,6 +1319,7 @@ void UI::resolve_sidebar_prompt()
             if (!path.empty() && fs::is_regular_file(path))
             {
                 core.buffers().open_file(path);
+                note_opened_file(path);
                 sync_active_tab();
             }
         }
@@ -1210,18 +1344,15 @@ void UI::resolve_sidebar_prompt()
         {
             const fs::path after = sidebar.get_selected_path();
             Messages::info(std::format("Renamed to {}", name));
-            if (!before.empty() && !after.empty() && core.buffers().has_tabs() &&
-                core.buffers().active().buffer().get_buffer_path() == before)
-            {
-                core.buffers().active().buffer().set_buffer_path(after);
-                sync_active_tab();
-            }
+            remap_buffer_path(before, after);
             file_picker.reindex();
+            sync_active_tab();
         }
         else
             Messages::error(std::format("Could not rename to {}", name));
         break;
     }
+    case PromptIntent::OpenWorkspace:
     case PromptIntent::None:
         break;
     }
@@ -1267,16 +1398,13 @@ void UI::resolve_delete_confirm(ConfirmChoice choice)
         return;
     }
 
-    // Close tab if this file is open.
-    if (core.buffers().has_tabs() && core.buffers().active().buffer().get_buffer_path() == path)
-        close_active_tab(true);
-
     if (!sidebar.delete_path(path))
     {
         Messages::error(std::format("Could not delete {}", path.filename().string()));
         return;
     }
 
+    close_buffers_under(path);
     Messages::info(std::format("Deleted {}", path.filename().string()));
     file_picker.reindex();
 }
@@ -1300,6 +1428,9 @@ void UI::update_statusbar_mode()
     case Focus::FileSearch:
         statusbar.set_mode("FILES");
         break;
+    case Focus::BufferSearch:
+        statusbar.set_mode("BUFFERS");
+        break;
     case Focus::Completion:
         statusbar.set_mode("COMPLETE");
         break;
@@ -1321,8 +1452,8 @@ void UI::update_statusbar_mode()
 void UI::update_cursor_visibility()
 {
     if (focus == Focus::Command || focus == Focus::FileSearch ||
-        focus == Focus::Completion || focus == Focus::Confirm || focus == Focus::Prompt ||
-        focus == Focus::Terminal || focus == Focus::Search)
+        focus == Focus::BufferSearch || focus == Focus::Completion || focus == Focus::Confirm ||
+        focus == Focus::Prompt || focus == Focus::Terminal || focus == Focus::Search)
         curs_set(1);
     else if (focus == Focus::Editor)
         curs_set(editor.get_mode() == EditorMode::Insert ? 2 : 1);
@@ -1401,6 +1532,7 @@ void UI::resize()
     const int picker_y = top_y + std::max(1, (pane_height - picker_h) / 2);
     const int picker_x = sb + std::max(1, (editor_pane_width - picker_w) / 2);
     file_picker.resize(picker_h, picker_w, picker_y, picker_x);
+    buffer_picker.resize(picker_h, picker_w, picker_y, picker_x);
 
     // Completion popup near the active cursor inside the editor pane.
     {
@@ -1505,6 +1637,8 @@ void UI::render()
 
     if (file_picker.is_active())
         file_picker.draw();
+    if (buffer_picker.is_active())
+        buffer_picker.draw();
     if (completion_picker.is_active())
         completion_picker.draw();
 
@@ -1534,9 +1668,6 @@ void UI::render()
     }
     wnoutrefresh(line_number.get_window());
 
-    if (messages_panel.is_active())
-        wnoutrefresh(messages_panel.get_window());
-
     if (terminal_visible)
         wnoutrefresh(terminal.get_window());
 
@@ -1562,10 +1693,21 @@ void UI::render()
         wnoutrefresh(editor.get_window());
         wnoutrefresh(file_picker.get_window());
     }
+    else if (buffer_picker.is_active())
+    {
+        wnoutrefresh(editor.get_window());
+        wnoutrefresh(buffer_picker.get_window());
+    }
     else if (completion_picker.is_active())
     {
         wnoutrefresh(editor.get_window());
         wnoutrefresh(completion_picker.get_window());
+    }
+    else if (messages_panel.is_active())
+    {
+        // Editor underneath, help/messages on top (must not be covered).
+        wnoutrefresh(editor.get_window());
+        wnoutrefresh(messages_panel.get_window());
     }
     else if (focus == Focus::Terminal && terminal_visible)
     {
@@ -1669,6 +1811,7 @@ void UI::ex_write(bool bang, const std::string &path)
         Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
         core.scm().request_refresh();
         core.lsp().notify_save(editor.get_buffer());
+        core.notify_buffer_saved(editor.get_buffer());
         return;
     }
 
@@ -1692,6 +1835,7 @@ void UI::ex_write(bool bang, const std::string &path)
         Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
         core.scm().request_refresh();
         core.lsp().notify_save(editor.get_buffer());
+        core.notify_buffer_saved(editor.get_buffer());
     }
     else
     {
@@ -1767,6 +1911,7 @@ void UI::ex_edit(bool bang, const std::string &path)
     }
 
     core.buffers().open_file(path);
+    note_opened_file(path);
     sync_active_tab();
     editor.enter_normal_mode();
     refresh_scm(fs::path(path));
@@ -1793,8 +1938,24 @@ void UI::ex_bdelete(bool bang)
 
 void UI::ex_messages()
 {
-    messages_panel.open();
+    messages_panel.open("Messages");
     focus = Focus::Messages;
+}
+
+void UI::ex_help(const std::string &topic)
+{
+    ExCommands::instance().ensure_registered();
+    std::vector<std::string> lines;
+    std::string err;
+    if (!HelpDocs::build(topic, config, ExCommands::instance().all(), lines, err))
+    {
+        Messages::error(err.empty() ? "E149: No help for topic" : err);
+        return;
+    }
+    Messages::set_lines(std::move(lines));
+    messages_panel.open(topic.empty() || topic == "index" ? "Help" : std::format("Help: {}", topic));
+    focus = Focus::Messages;
+    keys.clear_chord();
 }
 
 void UI::ex_sidebar(const std::string &arg)
@@ -1813,6 +1974,25 @@ void UI::ex_sidebar(const std::string &arg)
 void UI::ex_find()
 {
     open_file_search();
+}
+
+void UI::ex_buffers()
+{
+    open_buffer_search();
+}
+
+void UI::ex_workspace(const std::string &arg)
+{
+    const std::string a = StrUtils::trim(arg);
+    if (a.empty())
+    {
+        if (core.workspace().has_root())
+            Messages::info(std::format("Workspace: {}", core.workspace().root().string()));
+        else
+            Messages::info("No workspace root");
+        return;
+    }
+    apply_workspace_root(fs::path(a), true);
 }
 
 void UI::ex_search()
@@ -2012,6 +2192,22 @@ void UI::handle_inputs()
         return;
     }
 
+    if (focus == Focus::BufferSearch)
+    {
+        if (ch == 27 || ch == 3)
+        {
+            close_buffer_search(false);
+            return;
+        }
+        if (ch == '\n' || ch == KEY_ENTER)
+        {
+            close_buffer_search(true);
+            return;
+        }
+        buffer_picker.handle_input(ch);
+        return;
+    }
+
     if (focus == Focus::Completion)
     {
         if (ch == 27 || ch == 3)
@@ -2136,6 +2332,7 @@ void UI::handle_inputs()
             if (!path.empty() && fs::is_regular_file(path))
             {
                 core.buffers().open_file(path);
+                note_opened_file(path);
                 sync_active_tab();
                 editor.enter_normal_mode();
                 refresh_scm(path);

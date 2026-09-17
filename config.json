@@ -9,6 +9,11 @@
     "height": 12,
     "scrollback": 5000
   },
+  "extensions": {
+    "noni.hello": {
+      "greet": ""
+    }
+  },
   "lsp": {
     "servers": [
       {
@@ -43,6 +48,21 @@
       "key": "space f",
       "command": "noni.search.files",
       "when": "editorFocus && normalMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space ;",
+      "command": "workbench.action.showAllEditors",
+      "when": "editorFocus && normalMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space o",
+      "command": "workbench.action.openWorkspace",
+      "when": "editorFocus && normalMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space .",
+      "command": "noni.explorer.revealActive",
+      "when": "editorFocus && normalMode"
     },
     {
       "key": "space b",
@@ -177,6 +197,11 @@
     {
       "key": "space l r",
       "command": "lsp.restart",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "space h",
+      "command": "extension.hello.ping",
       "when": "editorFocus && normalMode"
     },
     {

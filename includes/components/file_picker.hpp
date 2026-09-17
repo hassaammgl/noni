@@ -19,6 +19,7 @@ private:
     int scroll_y = 0;
     FileIndex index;
     std::vector<FuzzyMatch> matches;
+    std::vector<fs::path> recent_;
     std::uint64_t seen_version = 0;
 
     void refilter();
@@ -30,6 +31,8 @@ public:
     void open(const fs::path &project_root);
     void close();
     bool is_active() const;
+
+    void set_recent(std::vector<fs::path> recent);
 
     // Kick off indexing early (non-blocking).
     void warm(const fs::path &project_root);

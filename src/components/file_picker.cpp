@@ -6,12 +6,65 @@
 
 void FilePicker::refilter()
 {
-    matches = Fuzzy::filter(index.files(), index.root(), query, 300);
+    matches.clear();
+
+    if (query.empty() && !recent_.empty())
+    {
+        const fs::path root = index.root();
+        for (const auto &p : recent_)
+        {
+            FuzzyMatch m;
+            m.path = p;
+            m.score = 10000;
+            try
+            {
+                m.display = "[recent] " + (root.empty() ? p.string() : fs::relative(p, root).string());
+            }
+            catch (...)
+            {
+                m.display = "[recent] " + p.string();
+            }
+            if (m.display.empty() || m.display == "[recent] ")
+                m.display = "[recent] " + p.string();
+            matches.push_back(std::move(m));
+            if (matches.size() >= 12)
+                break;
+        }
+    }
+
+    auto fuzzy = Fuzzy::filter(index.files(), index.root(), query, 300);
+    for (auto &m : fuzzy)
+    {
+        // Skip duplicates already shown as recent when query empty.
+        if (query.empty())
+        {
+            bool dup = false;
+            for (const auto &r : matches)
+            {
+                if (r.path == m.path)
+                {
+                    dup = true;
+                    break;
+                }
+            }
+            if (dup)
+                continue;
+        }
+        matches.push_back(std::move(m));
+    }
+
     if (selected >= static_cast<int>(matches.size()))
         selected = matches.empty() ? 0 : static_cast<int>(matches.size()) - 1;
     if (selected < 0)
         selected = 0;
     ensure_selection_visible();
+}
+
+void FilePicker::set_recent(std::vector<fs::path> recent)
+{
+    recent_ = std::move(recent);
+    if (active)
+        refilter();
 }
 
 void FilePicker::ensure_selection_visible()

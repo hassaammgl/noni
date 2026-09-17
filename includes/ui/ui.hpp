@@ -1,6 +1,7 @@
 #pragma once
 
 #include <ncurses.h>
+#include <components/buffer_picker.hpp>
 #include <components/commandline.hpp>
 #include <components/completion_picker.hpp>
 #include <components/confirm_prompt.hpp>
@@ -20,6 +21,7 @@
 #include <editor/buffer_manager.hpp>
 #include <editor/editor_core.hpp>
 #include <commands/command_registry.hpp>
+#include <extensions/extension_manager.hpp>
 #include <filesystem>
 #include <cstdint>
 
@@ -38,6 +40,7 @@ enum class Focus
     Command,
     Messages,
     FileSearch,
+    BufferSearch,
     Confirm,
     Prompt,
     Terminal,
@@ -65,6 +68,7 @@ enum class PromptIntent
     AddFile,
     AddFolder,
     Rename,
+    OpenWorkspace,
 };
 
 class UI
@@ -78,6 +82,7 @@ private:
     Editor editor;
     MessagesPanel messages_panel;
     FilePicker file_picker;
+    BufferPicker buffer_picker;
     CompletionPicker completion_picker;
     Statusbar statusbar;
     CommandLine command_line;
@@ -86,6 +91,7 @@ private:
     TerminalPanel terminal;
     EditorCore core;
     CommandRegistry commands;
+    ExtensionManager extensions;
     AppConfig config;
     KeybindingEngine keys;
 
@@ -137,12 +143,20 @@ private:
     void close_sidebar();
     void open_file_search();
     void close_file_search(bool open_selected);
+    void open_buffer_search();
+    void close_buffer_search(bool open_selected);
+    void apply_workspace_root(const fs::path &hint, bool announce = true);
+    void open_workspace_prompt();
+    void remap_buffer_path(const fs::path &from, const fs::path &to);
+    void close_buffers_under(const fs::path &path);
+    void note_opened_file(const fs::path &path);
     void trigger_completion();
     void close_completion(bool accept);
     void poll_completion_result();
     void sync_scm_ui();
     void refresh_scm(const fs::path &hint);
     fs::path project_root() const;
+    // Prefer Workspace::detect_root; kept for call sites.
     fs::path find_workspace_root(const fs::path &hint) const;
 
     std::uint64_t scm_gen_seen_ = 0;
@@ -164,8 +178,11 @@ public:
     void ex_bprevious();
     void ex_bdelete(bool bang);
     void ex_messages();
+    void ex_help(const std::string &topic);
     void ex_sidebar(const std::string &arg);
     void ex_find();
+    void ex_buffers();
+    void ex_workspace(const std::string &arg);
     void ex_terminal(const std::string &arg);
     void ex_search();
     void ex_undo();

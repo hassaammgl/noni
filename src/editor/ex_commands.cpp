@@ -322,6 +322,36 @@ void ExCommands::register_builtins()
     });
 
     add({
+        .name = "buffers",
+        .aliases = {"ls", "filesopen"},
+        .bang_allowed = false,
+        .min_args = 0,
+        .max_args = 0,
+        .usage = ":buffers",
+        .description = "Fuzzy switch among open buffers/tabs",
+        .run =
+            [](UI &ui, const ParsedEx &)
+        {
+            ui.ex_buffers();
+        },
+    });
+
+    add({
+        .name = "workspace",
+        .aliases = {"ws", "cd"},
+        .bang_allowed = false,
+        .min_args = 0,
+        .max_args = 1,
+        .usage = ":workspace [path]",
+        .description = "Show or open a workspace/project root",
+        .run =
+            [](UI &ui, const ParsedEx &cmd)
+        {
+            ui.ex_workspace(cmd.args.empty() ? "" : cmd.args[0]);
+        },
+    });
+
+    add({
         .name = "sidebar",
         .aliases = {"sb"},
         .bang_allowed = false,
@@ -357,8 +387,8 @@ void ExCommands::register_builtins()
         .bang_allowed = false,
         .min_args = 0,
         .max_args = 1,
-        .usage = ":term[inal] [open|close|toggle]",
-        .description = "Integrated terminal panel",
+        .usage = ":term[inal] [open|close|toggle|kill|clear]",
+        .description = "Integrated terminal panel (PTY)",
         .run =
             [](UI &ui, const ParsedEx &cmd)
         {
@@ -403,14 +433,11 @@ void ExCommands::register_builtins()
         .min_args = 0,
         .max_args = 0,
         .usage = ":com[mands]",
-        .description = "List available ex commands",
+        .description = "Open help for all ex commands",
         .run =
-            [](UI &, const ParsedEx &)
+            [](UI &ui, const ParsedEx &)
         {
-            for (const auto &c : ExCommands::instance().all())
-            {
-                Messages::info(std::format("{}  —  {}", c.usage, c.description));
-            }
+            ui.ex_help("ex");
         },
     });
 
@@ -420,25 +447,12 @@ void ExCommands::register_builtins()
         .bang_allowed = false,
         .min_args = 0,
         .max_args = 1,
-        .usage = ":h[elp] [command]",
-        .description = "Show command usage template",
+        .usage = ":h[elp] [topic|command|all]",
+        .description = "Full documentation (topics, keys, ex, LSP, terminal, …)",
         .run =
-            [](UI &, const ParsedEx &cmd)
+            [](UI &ui, const ParsedEx &cmd)
         {
-            if (cmd.args.empty())
-            {
-                Messages::info("Usage: :h[elp] {command}  |  :com[mands]");
-                return;
-            }
-
-            const ExCommand *found = ExCommands::instance().resolve(cmd.args[0]);
-            if (!found)
-            {
-                Messages::error(std::format("E149: No help for {}", cmd.args[0]));
-                return;
-            }
-
-            Messages::info(std::format("{}  —  {}", found->usage, found->description));
+            ui.ex_help(cmd.args.empty() ? "" : cmd.args[0]);
         },
     });
 }

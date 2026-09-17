@@ -66,6 +66,11 @@ namespace Commands
     inline constexpr const char *TerminalScrollUp = "workbench.action.terminal.scrollUp";
     inline constexpr const char *TerminalScrollDown = "workbench.action.terminal.scrollDown";
     inline constexpr const char *TerminalKill = "workbench.action.terminal.kill";
+
+    // P17 workspace / navigation
+    inline constexpr const char *OpenWorkspace = "workbench.action.openWorkspace";
+    inline constexpr const char *ShowAllEditors = "workbench.action.showAllEditors";
+    inline constexpr const char *RevealInExplorer = "noni.explorer.revealActive";
 }
 
 enum class InputContext

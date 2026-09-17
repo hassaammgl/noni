@@ -6,8 +6,11 @@
 #include <editor/marks.hpp>
 #include <editor/registers.hpp>
 #include <editor/window_layout.hpp>
+#include <extensions/editor_events.hpp>
 #include <lsp/lsp_service.hpp>
 #include <scm/scm_service.hpp>
+#include <workspace/recent_files.hpp>
+#include <workspace/workspace.hpp>
 
 #include <algorithm>
 #include <cstdint>
@@ -29,6 +32,9 @@ private:
     BufferSearchState search_;
     ScmService scm_;
     LspService lsp_;
+    EditorEvents events_;
+    Workspace workspace_;
+    RecentFiles recent_;
     int editor_area_w_ = 80;
     int editor_area_h_ = 24;
 
@@ -54,19 +60,30 @@ public:
     LspService &lsp() { return lsp_; }
     const LspService &lsp() const { return lsp_; }
 
-    // Bind Buffer edit hooks to LSP and open the document if applicable.
+    EditorEvents &events() { return events_; }
+    const EditorEvents &events() const { return events_; }
+
+    Workspace &workspace() { return workspace_; }
+    const Workspace &workspace() const { return workspace_; }
+
+    RecentFiles &recent() { return recent_; }
+    const RecentFiles &recent() const { return recent_; }
+
+    // Bind Buffer edit hooks to LSP + extension event fan-out; open LSP doc if applicable.
     void attach_lsp_document(Buffer &buffer)
     {
         buffer.set_change_listener([this](Buffer &b, const TextChange &ch) {
             lsp_.notify_change(b, ch);
+            events_.emit_buffer_changed(b, ch);
         });
         buffer.set_reload_listener([this](Buffer &b) {
             lsp_.notify_reload(b);
+            events_.emit_buffer_changed(b, TextChange{});
         });
         lsp_.notify_open(buffer);
+        events_.emit_buffer_opened(buffer);
     }
 
-    // Lookup SCM status for a document path (shared across Windows).
     std::optional<ScmFileStatus> scm_status_for_path(const fs::path &path) const
     {
         return scm_.status_for(path);
@@ -132,7 +149,7 @@ public:
     {
         if (!b)
             return;
-        // LSP document close must be requested before Buffer destruction.
+        events_.emit_buffer_closed(*b);
         const auto id = buffer_id(b);
         marks_.invalidate_buffer(id);
         jumps_.invalidate_buffer(id);
@@ -140,7 +157,11 @@ public:
             search_.clear();
     }
 
-    // Buffer search / replace (P9). Empty string = success.
+    void notify_buffer_saved(Buffer &b)
+    {
+        events_.emit_buffer_saved(b);
+    }
+
     std::string search_start(std::string pattern, SearchDirection dir);
     std::string search_next(bool reverse);
     std::string replace_current(std::string_view replacement);

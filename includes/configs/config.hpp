@@ -2,6 +2,7 @@
 
 #include <configs/mini_json.hpp>
 #include <string>
+#include <map>
 #include <vector>
 
 struct Keybinding
@@ -35,6 +36,8 @@ struct AppConfig
     std::vector<Keybinding> keybindings;
     std::vector<LspServerConfigFile> lsp_servers;
     TerminalConfig terminal;
+    // Namespaced extension settings: extensions.<id> → JSON object
+    std::map<std::string, MiniJson::Value> extensions;
 
     static AppConfig defaults();
     static AppConfig load(const std::string &path = "config.json");

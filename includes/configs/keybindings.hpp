@@ -25,6 +25,7 @@ struct ResolvedBinding
     CommandId command;
     std::string when;
     bool leader = false; // first key is Space
+    std::string owner;   // empty or "noni.core" = config; extension id for runtime
 };
 
 // Resolves KeySequence → CommandId. Does not execute.
@@ -32,6 +33,15 @@ class KeybindingEngine
 {
 public:
     void load(const AppConfig &config);
+
+    // Append a runtime binding owned by `owner` (extensions). Returns false if key invalid.
+    bool add_binding(
+        const std::string &key,
+        const CommandId &command,
+        const std::string &when = "",
+        const std::string &owner = "");
+
+    void remove_bindings_owned_by(const std::string &owner);
 
     ResolveResult resolve(int raw_key, const std::string &when_context, InputContext input_ctx);
 

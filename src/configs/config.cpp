@@ -120,11 +120,19 @@ AppConfig AppConfig::load(const std::string &path)
             cfg.terminal.scrollback = term->get_int("scrollback", cfg.terminal.scrollback);
         }
 
+        if (const MiniJson::Value *exts = root.get("extensions"); exts && exts->is_object())
+        {
+            cfg.extensions.clear();
+            for (const auto &[k, v] : exts->as_object())
+                cfg.extensions.emplace(k, v);
+        }
+
         Logger::info(std::format(
-            "Config loaded: {} ({} keybindings, {} lsp servers)",
+            "Config loaded: {} ({} keybindings, {} lsp servers, {} extension configs)",
             path,
             cfg.keybindings.size(),
-            cfg.lsp_servers.size()));
+            cfg.lsp_servers.size(),
+            cfg.extensions.size()));
     }
     catch (const std::exception &e)
     {
