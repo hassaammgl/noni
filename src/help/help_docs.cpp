@@ -176,6 +176,19 @@ namespace
         line(out, "Tab ● = unsaved buffer; sidebar • = currently open file (not git).");
     }
 
+    void page_session(std::vector<std::string> &out)
+    {
+        section(out, "SESSION / RECOVERY");
+        bullet(out, "Space s s", "saveSession — write .noni/session.json");
+        bullet(out, "Space s r", "restoreSession — reopen tabs from session");
+        blank(out);
+        line(out, "On quit: session (workspace, tabs, cursors, recent, UI flags) is saved.");
+        line(out, "On start (no file arg): session tabs are restored if present.");
+        line(out, "Dirty buffers: snapshots under .noni/recovery/ (never overwrite sources).");
+        line(out, "Crash → next launch prompts Recover? for each snapshot.");
+        line(out, "Successful :w / save clears that file's recovery snapshot.");
+    }
+
     void page_lsp(std::vector<std::string> &out)
     {
         section(out, "LSP");
@@ -303,6 +316,7 @@ std::vector<std::string> HelpDocs::topic_ids()
         "workspace",
         "sidebar",
         "git",
+        "session",
         "lsp",
         "terminal",
         "extensions",
@@ -344,6 +358,7 @@ bool HelpDocs::build(
         page_workspace(out_lines);
         page_sidebar(out_lines);
         page_git(out_lines);
+        page_session(out_lines);
         page_lsp(out_lines);
         page_terminal(out_lines);
         page_extensions(out_lines);
@@ -398,6 +413,11 @@ bool HelpDocs::build(
     if (t == "git" || t == "scm")
     {
         page_git(out_lines);
+        return true;
+    }
+    if (t == "session" || t == "recovery" || t == "persist" || t == "persistence")
+    {
+        page_session(out_lines);
         return true;
     }
     if (t == "lsp" || t == "completion" || t == "diagnostics")

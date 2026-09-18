@@ -215,6 +215,16 @@
       "when": "editorFocus && normalMode"
     },
     {
+      "key": "space s s",
+      "command": "workbench.action.saveSession",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "space s r",
+      "command": "workbench.action.restoreSession",
+      "when": "editorFocus && normalMode"
+    },
+    {
       "key": "space l s",
       "command": "lsp.showStatus",
       "when": "editorFocus && normalMode"

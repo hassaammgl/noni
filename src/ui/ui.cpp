@@ -10,6 +10,8 @@
 #include <help/help_docs.hpp>
 #include <lsp/lsp_edits.hpp>
 #include <workspace/workspace.hpp>
+#include <workspace/session.hpp>
+#include <workspace/recovery.hpp>
 #include <utils/fs_watcher.hpp>
 #include <syntax/grammar_installer.hpp>
 #include <utils/logger.hpp>
@@ -78,18 +80,22 @@ UI::UI(const fs::path file_path = "")
     if (!file_path.empty() && fs::is_directory(file_path, ec))
     {
         Logger::info(std::format("Opening workspace folder: {}", file_path.string()));
-        core.buffers().open_untitled();
+        if (!restore_session_if_available(true))
+            core.buffers().open_untitled();
     }
     else if (file_path.empty())
     {
         Logger::info("No file path provided");
-        core.buffers().open_untitled();
+        if (!restore_session_if_available(true))
+            core.buffers().open_untitled();
     }
     else
     {
         Logger::info(std::format("Opening file: {}", file_path.string()));
         core.buffers().open_file(file_path);
         note_opened_file(file_path);
+        // Still hydrate recent list / UI flags from session without replacing tabs.
+        (void)restore_session_if_available(false);
     }
 
     apply_workspace_root(workspace, false);
@@ -138,10 +144,13 @@ UI::UI(const fs::path file_path = "")
         Logger::warning(std::format("keybinding references unknown command: {}", id));
     for (const auto &id : unbound)
         Logger::debug(std::format("command registered but unbound: {}", id));
+
+    queue_recovery_prompts();
 }
 
 UI::~UI()
 {
+    save_session();
     extensions.deactivate_all();
     fs_watcher_.stop();
     terminal.stop();
@@ -499,6 +508,20 @@ void UI::register_actions()
     });
     commands.register_command(Commands::RenameSymbol, [this]() { request_lsp_rename_prompt(); });
     commands.register_command(Commands::CodeAction, [this]() { request_lsp_code_actions(); });
+
+    commands.register_command(Commands::SessionSave, [this]() {
+        save_session();
+        Messages::info("Session saved");
+    });
+    commands.register_command(Commands::SessionRestore, [this]() {
+        if (restore_session_if_available(true))
+        {
+            sync_active_tab();
+            Messages::info("Session restored");
+        }
+        else
+            Messages::warning("No session to restore");
+    });
 
     commands.register_command("extension.showStatus", [this]() {
         Messages::info(extensions.status_summary());
@@ -976,6 +999,208 @@ void UI::note_opened_file(const fs::path &path)
     if (path.empty())
         return;
     core.recent().touch(path);
+}
+
+SessionState UI::capture_session_state() const
+{
+    SessionState st;
+    st.workspace_root = core.workspace().root().string();
+    st.active_index = core.buffers().get_active_index();
+    st.sidebar_visible = sidebar_visible;
+    st.terminal_visible = terminal_visible;
+    for (const auto &tab : core.buffers().get_tabs())
+    {
+        const fs::path p = tab.buffer().get_buffer_path();
+        if (p.empty())
+            continue;
+        SessionTabState t;
+        t.path = p.string();
+        t.cursor_line = tab.cursor().line;
+        t.cursor_column = tab.cursor().column;
+        t.scroll_y = tab.scroll_y();
+        t.scroll_x = tab.scroll_x();
+        st.tabs.push_back(std::move(t));
+    }
+    for (const auto &r : core.recent().list())
+        st.recent.push_back(r.string());
+    return st;
+}
+
+void UI::save_session()
+{
+    const fs::path root = core.workspace().root();
+    if (root.empty())
+        return;
+    std::string err;
+    if (!SessionStore::save(root, capture_session_state(), &err))
+        Logger::warning(err.empty() ? "session save failed" : err);
+}
+
+bool UI::restore_session_if_available(bool allow_replace_tabs)
+{
+    const fs::path root = core.workspace().root();
+    if (root.empty())
+        return false;
+
+    std::string err;
+    auto st = SessionStore::load(root, &err);
+    if (!st)
+        return false;
+
+    for (const auto &r : st->recent)
+    {
+        if (!r.empty())
+            core.recent().touch(r);
+    }
+
+    sidebar_visible = st->sidebar_visible;
+    terminal_visible = st->terminal_visible;
+
+    if (!allow_replace_tabs || st->tabs.empty())
+        return false;
+
+    // Close current tabs (untitled only expected at startup).
+    while (core.buffers().has_tabs())
+    {
+        if (!core.buffers().close_active(true))
+            break;
+        if (!core.buffers().has_tabs())
+            break;
+    }
+
+    int opened = 0;
+    for (const auto &t : st->tabs)
+    {
+        std::error_code ec;
+        if (t.path.empty() || !fs::exists(t.path, ec))
+            continue;
+        core.buffers().open_file(t.path);
+        note_opened_file(t.path);
+        EditorTab &tab = core.buffers().active();
+        tab.cursor().line = std::max(0, t.cursor_line);
+        tab.cursor().column = std::max(0, t.cursor_column);
+        tab.scroll_y() = std::max(0, t.scroll_y);
+        tab.scroll_x() = std::max(0, t.scroll_x);
+        ++opened;
+    }
+
+    if (opened == 0)
+    {
+        core.buffers().open_untitled();
+        return false;
+    }
+
+    const int idx = std::clamp(st->active_index, 0, static_cast<int>(core.buffers().size()) - 1);
+    core.buffers().switch_to(idx);
+    session_restored_ = true;
+    Logger::info(std::format("Session restored ({} tabs)", opened));
+    return true;
+}
+
+void UI::queue_recovery_prompts()
+{
+    pending_recovery_ = RecoveryStore::list(core.workspace().root());
+    if (!pending_recovery_.empty())
+        open_recovery_confirm();
+}
+
+void UI::open_recovery_confirm()
+{
+    if (pending_recovery_.empty())
+        return;
+    if (command_line.is_active())
+        command_line.close();
+    if (input_prompt.is_active())
+        input_prompt.close();
+
+    const auto &e = pending_recovery_.front();
+    confirm_intent = ConfirmIntent::RecoverBuffer;
+    confirm_prompt.open(std::format(
+        "Recover unsaved changes for {}? [y/n/esc]",
+        e.original_path.filename().string()));
+    focus = Focus::Confirm;
+    resize();
+}
+
+void UI::resolve_recovery_confirm(ConfirmChoice choice)
+{
+    confirm_prompt.close();
+    confirm_intent = ConfirmIntent::None;
+    focus = Focus::Editor;
+    resize();
+
+    if (pending_recovery_.empty())
+        return;
+
+    RecoveryEntry entry = pending_recovery_.front();
+    pending_recovery_.erase(pending_recovery_.begin());
+
+    if (choice == ConfirmChoice::Yes)
+    {
+        std::string err;
+        auto lines = RecoveryStore::read_lines(entry, &err);
+        if (!lines)
+        {
+            Messages::error(err.empty() ? "Recovery read failed" : err);
+        }
+        else
+        {
+            core.buffers().open_file(entry.original_path);
+            note_opened_file(entry.original_path);
+            Buffer &b = core.buffers().active().buffer();
+            b.apply_recovered_content(std::move(*lines));
+            core.attach_lsp_document(b);
+            sync_active_tab();
+            Messages::info(std::format(
+                "Recovered {} — save to keep",
+                entry.original_path.filename().string()));
+        }
+        // Keep snapshot until user saves successfully.
+    }
+    else
+    {
+        RecoveryStore::clear_snapshot(core.workspace().root(), entry.original_path);
+        Messages::info(std::format(
+            "Discarded recovery for {}",
+            entry.original_path.filename().string()));
+    }
+
+    if (!pending_recovery_.empty())
+        open_recovery_confirm();
+}
+
+void UI::tick_recovery_snapshots()
+{
+    const auto now = std::chrono::steady_clock::now();
+    if (now - last_recovery_tick_ < std::chrono::seconds(2))
+        return;
+    last_recovery_tick_ = now;
+
+    const fs::path root = core.workspace().root();
+    if (root.empty())
+        return;
+
+    for (const auto &tab : core.buffers().get_tabs())
+    {
+        const Buffer &b = tab.buffer();
+        const fs::path path = b.get_buffer_path();
+        if (path.empty())
+            continue;
+        if (!b.is_dirty())
+        {
+            RecoveryStore::clear_snapshot(root, path);
+            continue;
+        }
+        (void)RecoveryStore::write_snapshot(root, path, b.lines(), nullptr);
+    }
+}
+
+void UI::clear_recovery_for_buffer(const Buffer &buffer)
+{
+    const fs::path path = buffer.get_buffer_path();
+    if (path.empty())
+        return;
+    RecoveryStore::clear_snapshot(core.workspace().root(), path);
 }
 
 void UI::remap_buffer_path(const fs::path &from, const fs::path &to)
@@ -1757,6 +1982,7 @@ bool UI::save_active_buffer()
 
     statusbar.set_filename(core.buffers().active().display_name());
     Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
+    clear_recovery_for_buffer(editor.get_buffer());
     core.scm().request_refresh();
     core.lsp().notify_save(editor.get_buffer());
     core.notify_buffer_saved(editor.get_buffer());
@@ -1796,6 +2022,11 @@ void UI::resolve_save_confirm(ConfirmChoice choice)
     if (confirm_intent == ConfirmIntent::DiscardGit)
     {
         resolve_discard_confirm(choice);
+        return;
+    }
+    if (confirm_intent == ConfirmIntent::RecoverBuffer)
+    {
+        resolve_recovery_confirm(choice);
         return;
     }
 
@@ -2234,6 +2465,7 @@ void UI::render()
 
     sync_scm_ui();
     sync_scm_diff();
+    tick_recovery_snapshots();
     core.lsp().pump();
     poll_completion_result();
     poll_lsp_results();
@@ -2254,12 +2486,24 @@ void UI::render()
     sync_messages_echo();
 
     const ScmFileDiff *diff_ptr = nullptr;
-    std::optional<ScmFileDiff> diff_hold;
     if (Buffer *b = core.active_buffer(); b && !b->get_buffer_path().empty())
     {
-        diff_hold = core.scm().file_diff(b->get_buffer_path());
-        if (diff_hold)
-            diff_ptr = &*diff_hold;
+        const fs::path path = b->get_buffer_path();
+        const std::uint64_t gen = core.scm().diff_generation();
+        if (!scm_diff_cache_ || path != scm_diff_cache_path_ || gen != scm_diff_cache_gen_)
+        {
+            scm_diff_cache_ = core.scm().file_diff(path);
+            scm_diff_cache_path_ = path;
+            scm_diff_cache_gen_ = gen;
+        }
+        if (scm_diff_cache_)
+            diff_ptr = &*scm_diff_cache_;
+    }
+    else
+    {
+        scm_diff_cache_.reset();
+        scm_diff_cache_path_.clear();
+        scm_diff_cache_gen_ = 0;
     }
 
     line_number.sync(
@@ -2412,6 +2656,7 @@ void UI::run()
 
 void UI::request_quit()
 {
+    save_session();
     running = false;
 }
 
@@ -2477,6 +2722,7 @@ void UI::ex_write(bool bang, const std::string &path)
         }
         statusbar.set_filename(core.buffers().active().display_name());
         Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
+        clear_recovery_for_buffer(editor.get_buffer());
         core.scm().request_refresh();
         core.lsp().notify_save(editor.get_buffer());
         core.notify_buffer_saved(editor.get_buffer());
@@ -2501,6 +2747,7 @@ void UI::ex_write(bool bang, const std::string &path)
     {
         statusbar.set_filename(core.buffers().active().display_name());
         Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
+        clear_recovery_for_buffer(editor.get_buffer());
         core.scm().request_refresh();
         core.lsp().notify_save(editor.get_buffer());
         core.notify_buffer_saved(editor.get_buffer());
@@ -2542,6 +2789,7 @@ void UI::ex_write_quit(bool bang, const std::string &path)
         return;
     }
 
+    clear_recovery_for_buffer(editor.get_buffer());
     if (core.buffers().size() > 1)
         close_active_tab(true);
     else

@@ -25,9 +25,13 @@
 #include <extensions/extension_manager.hpp>
 #include <lsp/lsp_models.hpp>
 #include <utils/fs_watcher.hpp>
+#include <workspace/recovery.hpp>
+#include <workspace/session.hpp>
 #include <filesystem>
 #include <chrono>
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -66,6 +70,7 @@ enum class ConfirmIntent
     Quit,
     DeletePath,
     DiscardGit,
+    RecoverBuffer,
 };
 
 enum class PromptIntent
@@ -178,6 +183,16 @@ private:
     void sync_fs_watches();
     void poll_fs_events();
     void sync_messages_echo();
+
+    SessionState capture_session_state() const;
+    void save_session();
+    bool restore_session_if_available(bool allow_replace_tabs);
+    void queue_recovery_prompts();
+    void open_recovery_confirm();
+    void resolve_recovery_confirm(ConfirmChoice choice);
+    void tick_recovery_snapshots();
+    void clear_recovery_for_buffer(const Buffer &buffer);
+
     void goto_lsp_location(const LspLocation &loc);
     void apply_lsp_workspace_edit(LspWorkspaceEdit edit);
     void open_lsp_locations(std::string title, std::vector<LspLocation> locs);
@@ -201,6 +216,14 @@ private:
     std::uint64_t scm_diff_gen_seen_ = 0;
     fs::path scm_diff_path_;
     int scm_diff_lines_ = -1;
+    // Cached gutter diff — avoid copying ScmFileDiff every frame.
+    std::optional<ScmFileDiff> scm_diff_cache_;
+    fs::path scm_diff_cache_path_;
+    std::uint64_t scm_diff_cache_gen_ = 0;
+
+    std::vector<RecoveryEntry> pending_recovery_;
+    std::chrono::steady_clock::time_point last_recovery_tick_{};
+    bool session_restored_ = false;
 
 public:
     Focus focus = Focus::Editor;

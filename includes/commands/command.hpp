@@ -88,6 +88,10 @@ namespace Commands
     inline constexpr const char *WorkspaceSymbols = "workbench.action.showAllSymbols";
     inline constexpr const char *RenameSymbol = "editor.action.rename";
     inline constexpr const char *CodeAction = "editor.action.quickFix";
+
+    // P20 session
+    inline constexpr const char *SessionSave = "workbench.action.saveSession";
+    inline constexpr const char *SessionRestore = "workbench.action.restoreSession";
 }
 
 enum class InputContext

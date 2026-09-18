@@ -22,28 +22,22 @@
 *.dylib
 *.dll
 *.so.*
-
-
 # Fortran module files
 *.mod
 *.smod
-
 # Compiled Static libraries
 *.lai
 *.la
 *.a
 *.lib
-
 # Executables
 *.exe
 *.out
 *.app
-
 # Build directories
 build/
 Build/
 build-*/
-
 # CMake generated files
 CMakeFiles/
 CMakeCache.txt
@@ -51,22 +45,21 @@ cmake_install.cmake
 Makefile
 install_manifest.txt
 compile_commands.json
-
 # Temporary files
 *.tmp
 *.log
 logs/
 *.bak
 *.swp
-
 # vcpkg
 vcpkg_installed/
-
 # debug information files
 *.dwo
-
 # test output & cache
 Testing/
 .cache/
-
 test/
+
+# Noni workspace state
+.noni/session.json
+.noni/recovery/

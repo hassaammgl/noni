@@ -150,6 +150,9 @@ public:
     bool save();
     bool save_as(const fs::path &path);
 
+    // Replace buffer text from a recovery snapshot. Leaves dirty vs disk (P0 save unchanged).
+    void apply_recovered_content(std::vector<std::string> lines);
+
     // True when the file on disk differs from the mtime captured at last load/save.
     bool disk_changed() const;
     void clear_external_change_flag();

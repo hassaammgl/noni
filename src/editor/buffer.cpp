@@ -822,3 +822,28 @@ bool Buffer::save_as(const fs::path &path)
     Logger::info(std::format("Buffer saved as: {}", path.string()));
     return true;
 }
+
+void Buffer::apply_recovered_content(std::vector<std::string> lines)
+{
+    if (edit_active)
+        end_edit(open_edit.cursor_before_line, open_edit.cursor_before_col);
+
+    content = std::move(lines);
+    if (content.empty())
+        content.push_back("");
+
+    // Keep saved_content_id from last disk load/save so buffer stays dirty
+    // until the user explicitly saves (never auto-overwrite source files).
+    content_id = next_content_id++;
+    load_state = BufferLoadState::Loaded;
+    load_error.clear();
+    clear_history();
+    bump_revision();
+    sync_syntax();
+    if (reload_listener_)
+        reload_listener_(*this);
+    Logger::info(std::format(
+        "Buffer recovered from snapshot: {} ({} lines)",
+        buffer_path.empty() ? "(untitled)" : buffer_path.string(),
+        content.size()));
+}
