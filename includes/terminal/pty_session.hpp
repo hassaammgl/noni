@@ -43,7 +43,7 @@ private:
     void reader_loop();
     void reap_child(bool block);
 
-    int master_fd = -1;
+    std::atomic<int> master_fd{-1};
     pid_t child_pid = -1;
     std::thread reader;
     std::atomic<bool> running{false};

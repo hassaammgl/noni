@@ -30,4 +30,7 @@ public:
 
     // Raw multiline stdout for custom commands.
     std::optional<std::string> run(const std::vector<std::string> &args) const;
+
+    // Like run(), but returns whether git exited 0 (stdout may be empty).
+    bool run_ok(const std::vector<std::string> &args, std::string *stdout_out = nullptr) const;
 };

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <format>
+#include <system_error>
 
 namespace
 {
@@ -29,6 +30,34 @@ namespace
     }
 }
 
+void Buffer::capture_disk_mtime()
+{
+    disk_mtime_.reset();
+    external_change_notified_ = false;
+    if (buffer_path.empty())
+        return;
+    std::error_code ec;
+    const auto mt = fs::last_write_time(buffer_path, ec);
+    if (!ec)
+        disk_mtime_ = mt;
+}
+
+bool Buffer::disk_changed() const
+{
+    if (buffer_path.empty() || !disk_mtime_)
+        return false;
+    std::error_code ec;
+    const auto mt = fs::last_write_time(buffer_path, ec);
+    if (ec)
+        return false;
+    return mt != *disk_mtime_;
+}
+
+void Buffer::clear_external_change_flag()
+{
+    external_change_notified_ = false;
+}
+
 void Buffer::set_buffer_path(const fs::path &path)
 {
     buffer_path = path;
@@ -38,6 +67,7 @@ void Buffer::set_buffer_path(const fs::path &path)
 void Buffer::set_save_path(const fs::path &path)
 {
     buffer_path = path;
+    capture_disk_mtime();
 }
 
 fs::path Buffer::get_buffer_path() const
@@ -68,6 +98,8 @@ void Buffer::load()
     {
         content = {""};
         load_state = BufferLoadState::Loaded;
+        disk_mtime_.reset();
+        external_change_notified_ = false;
         if (reload_listener_)
             reload_listener_(*this);
         return;
@@ -79,6 +111,8 @@ void Buffer::load()
         content = {""};
         load_state = BufferLoadState::LoadError;
         load_error = result.error.empty() ? "read failed" : result.error;
+        disk_mtime_.reset();
+        external_change_notified_ = false;
         Logger::warning(std::format(
             "Buffer load failed: {} ({})",
             buffer_path.string(),
@@ -92,6 +126,7 @@ void Buffer::load()
 
     load_state = BufferLoadState::Loaded;
     load_error.clear();
+    capture_disk_mtime();
 
     Logger::info(std::format(
         "Buffer loaded: {} ({} lines)",
@@ -753,6 +788,7 @@ bool Buffer::save()
         saved_content_id = content_id;
         load_state = BufferLoadState::Loaded;
         load_error.clear();
+        capture_disk_mtime();
         Logger::info(std::format("Buffer saved: {}", buffer_path.string()));
     }
     else
@@ -782,6 +818,7 @@ bool Buffer::save_as(const fs::path &path)
     saved_content_id = content_id;
     load_state = BufferLoadState::Loaded;
     load_error.clear();
+    capture_disk_mtime();
     Logger::info(std::format("Buffer saved as: {}", path.string()));
     return true;
 }

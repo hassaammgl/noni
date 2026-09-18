@@ -3,9 +3,13 @@
 #include <utils/logger.hpp>
 #include <utils/messages.hpp>
 
+#include <array>
+#include <cctype>
 #include <cstdlib>
+#include <cstring>
 #include <format>
 #include <mutex>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -18,29 +22,32 @@ namespace
     std::unordered_map<std::string, GrammarInstaller::Status> g_status;
     std::unordered_set<std::string> g_queued;
 
+    // Mirrors classic nvim-treesitter install_info (url + location + branch).
     struct InstallSpec
     {
         const char *so_name;
-        const char *git_url;
-        const char *src_rel; // relative to clone root, directory containing parser.c
+        const char *git_url;   // https://github.com/.../tree-sitter-foo  (no .git)
+        const char *src_rel;   // directory containing parser.c relative to repo root
+        const char *revision;  // preferred branch/tag (nvim: branch / revision)
     };
 
     const InstallSpec *install_spec(const std::string &so_name)
     {
         static const InstallSpec specs[] = {
-            {"c.so", "https://github.com/tree-sitter/tree-sitter-c", "src"},
-            {"cpp.so", "https://github.com/tree-sitter/tree-sitter-cpp", "src"},
-            {"python.so", "https://github.com/tree-sitter/tree-sitter-python", "src"},
-            {"javascript.so", "https://github.com/tree-sitter/tree-sitter-javascript", "src"},
-            {"rust.so", "https://github.com/tree-sitter/tree-sitter-rust", "src"},
-            {"bash.so", "https://github.com/tree-sitter/tree-sitter-bash", "src"},
-            {"json.so", "https://github.com/tree-sitter/tree-sitter-json", "src"},
-            {"lua.so", "https://github.com/tree-sitter-grammars/tree-sitter-lua", "src"},
+            {"c.so", "https://github.com/tree-sitter/tree-sitter-c", "src", "master"},
+            {"cpp.so", "https://github.com/tree-sitter/tree-sitter-cpp", "src", "master"},
+            {"python.so", "https://github.com/tree-sitter/tree-sitter-python", "src", "master"},
+            {"javascript.so", "https://github.com/tree-sitter/tree-sitter-javascript", "src", "master"},
+            {"rust.so", "https://github.com/tree-sitter/tree-sitter-rust", "src", "master"},
+            {"bash.so", "https://github.com/tree-sitter/tree-sitter-bash", "src", "master"},
+            {"json.so", "https://github.com/tree-sitter/tree-sitter-json", "src", "master"},
+            {"lua.so", "https://github.com/tree-sitter-grammars/tree-sitter-lua", "src", "main"},
             {"markdown.so",
              "https://github.com/tree-sitter-grammars/tree-sitter-markdown",
-             "tree-sitter-markdown/src"},
-            {"go.so", "https://github.com/tree-sitter/tree-sitter-go", "src"},
-            {"java.so", "https://github.com/tree-sitter/tree-sitter-java", "src"},
+             "tree-sitter-markdown/src",
+             "split_parser"},
+            {"go.so", "https://github.com/tree-sitter/tree-sitter-go", "src", "master"},
+            {"java.so", "https://github.com/tree-sitter/tree-sitter-java", "src", "master"},
         };
         for (const auto &s : specs)
         {
@@ -82,12 +89,239 @@ namespace
         }
     }
 
+    bool exe_ok(const char *name)
+    {
+        // PATH lookup without spawning a shell login profile.
+        const char *path = std::getenv("PATH");
+        if (!path || !*path)
+            return false;
+        std::string paths = path;
+        std::size_t start = 0;
+        while (start <= paths.size())
+        {
+            const std::size_t end = paths.find(':', start);
+            const std::string dir =
+                paths.substr(start, end == std::string::npos ? std::string::npos : end - start);
+            if (!dir.empty())
+            {
+                const fs::path cand = fs::path(dir) / name;
+                std::error_code ec;
+                if (fs::is_regular_file(cand, ec) && !ec)
+                {
+                    const auto perms = fs::status(cand, ec).permissions();
+                    if (!ec && (perms & fs::perms::owner_exec) != fs::perms::none)
+                        return true;
+                    // Also accept if any execute bit is set.
+                    if (!ec && ((perms & fs::perms::group_exec) != fs::perms::none ||
+                                (perms & fs::perms::others_exec) != fs::perms::none))
+                        return true;
+                }
+            }
+            if (end == std::string::npos)
+                break;
+            start = end + 1;
+        }
+        // Fallback: let the shell resolve (handles wrappers / different permission models).
+        return std::system(std::format("command -v {} >/dev/null 2>&1", name).c_str()) == 0;
+    }
+
     int run_cmd(const std::string &cmd)
     {
         Logger::debug(std::format("grammar-install: {}", cmd));
         return std::system(cmd.c_str());
     }
 
+    std::string repo_basename(const std::string &url)
+    {
+        std::string name = url;
+        while (!name.empty() && name.back() == '/')
+            name.pop_back();
+        if (name.size() > 4 && name.substr(name.size() - 4) == ".git")
+            name = name.substr(0, name.size() - 4);
+        const auto pos = name.find_last_of('/');
+        if (pos != std::string::npos)
+            name = name.substr(pos + 1);
+        return name;
+    }
+
+    // nvim-treesitter: prefer curl+tar of GitHub/GitLab archive; git is fallback.
+    bool download_tarball(const InstallSpec &spec, const fs::path &cache_folder, const fs::path &repo_dir)
+    {
+        if (!exe_ok("curl") || !exe_ok("tar"))
+            return false;
+
+        const std::string project = repo_basename(spec.git_url);
+        std::string url = spec.git_url;
+        if (url.size() > 4 && url.substr(url.size() - 4) == ".git")
+            url = url.substr(0, url.size() - 4);
+
+        const bool github = url.find("github.com") != std::string::npos;
+        const bool gitlab = url.find("gitlab.com") != std::string::npos;
+        if (!github && !gitlab)
+            return false;
+
+        // Try preferred revision, then common defaults (repos migrated master→main).
+        const std::array<const char *, 3> revisions = {
+            spec.revision,
+            "master",
+            "main",
+        };
+
+        const fs::path tar_path = cache_folder / (project + ".tar.gz");
+        const fs::path tmp_dir = cache_folder / (project + "-tmp");
+
+        for (const char *rev : revisions)
+        {
+            if (!rev || !*rev)
+                continue;
+
+            std::error_code ec;
+            fs::remove_all(tmp_dir, ec);
+            fs::remove(tar_path, ec);
+            fs::remove_all(repo_dir, ec);
+            fs::create_directories(tmp_dir, ec);
+
+            std::string archive_url;
+            if (github)
+                archive_url = std::format("{}/archive/{}.tar.gz", url, rev);
+            else
+                archive_url = std::format(
+                    "{}/-/archive/{}/{}-{}.tar.gz",
+                    url,
+                    rev,
+                    project,
+                    rev);
+
+            const std::string curl_cmd = std::format(
+                "curl --silent --show-error -L \"{}\" --output \"{}\"",
+                archive_url,
+                tar_path.string());
+            if (run_cmd(curl_cmd) != 0 || !fs::exists(tar_path))
+                continue;
+
+            const std::string tar_cmd = std::format(
+                "tar -xzf \"{}\" -C \"{}\"",
+                tar_path.string(),
+                tmp_dir.string());
+            if (run_cmd(tar_cmd) != 0)
+                continue;
+
+            // Extracted dir is typically "<repo>-<rev>" (tags like v0.1 → strip leading v like nvim).
+            std::string folder_rev = rev;
+            if (github && folder_rev.size() >= 2 && folder_rev[0] == 'v' &&
+                std::isdigit(static_cast<unsigned char>(folder_rev[1])))
+                folder_rev = folder_rev.substr(1);
+
+            const fs::path extracted = tmp_dir / (project + "-" + folder_rev);
+            fs::path chosen = extracted;
+            if (!fs::exists(chosen))
+            {
+                // Pick the single top-level directory tar produced.
+                chosen.clear();
+                for (const auto &entry : fs::directory_iterator(tmp_dir, ec))
+                {
+                    if (entry.is_directory(ec))
+                    {
+                        chosen = entry.path();
+                        break;
+                    }
+                }
+            }
+
+            if (chosen.empty() || !fs::exists(chosen))
+                continue;
+
+            fs::rename(chosen, repo_dir, ec);
+            if (ec)
+            {
+                fs::remove_all(repo_dir, ec);
+                fs::rename(chosen, repo_dir, ec);
+            }
+
+            fs::remove(tar_path, ec);
+            fs::remove_all(tmp_dir, ec);
+
+            if (fs::exists(repo_dir / spec.src_rel / "parser.c") ||
+                fs::exists(repo_dir / "src" / "parser.c"))
+            {
+                Logger::info(std::format(
+                    "grammar-install: downloaded {} @ {} (curl+tar)",
+                    project,
+                    rev));
+                return true;
+            }
+        }
+
+        std::error_code ec;
+        fs::remove(tar_path, ec);
+        fs::remove_all(tmp_dir, ec);
+        fs::remove_all(repo_dir, ec);
+        return false;
+    }
+
+    bool download_git(const InstallSpec &spec, const fs::path &cache_folder, const fs::path &repo_dir)
+    {
+        if (!exe_ok("git"))
+            return false;
+
+        // Avoid corrupting an active git session (same guard as nvim-treesitter).
+        static const char *git_env[] = {
+            "GIT_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_WORK_TREE",
+            "GIT_PREFIX",
+            "GIT_OBJECT_DIRECTORY",
+            nullptr,
+        };
+        for (const char **e = git_env; *e; ++e)
+        {
+            if (std::getenv(*e))
+            {
+                Logger::warning(
+                    "grammar-install: skipping git clone inside active git session env");
+                return false;
+            }
+        }
+
+        std::error_code ec;
+        fs::remove_all(repo_dir, ec);
+        fs::create_directories(cache_folder, ec);
+
+        // nvim classic: git clone --filter=blob:none then checkout revision.
+        const std::string clone_cmd = std::format(
+            "git -C \"{}\" clone --filter=blob:none \"{}\" \"{}\"",
+            cache_folder.string(),
+            spec.git_url,
+            repo_dir.filename().string());
+        if (run_cmd(clone_cmd) != 0 || !fs::exists(repo_dir))
+        {
+            // Fallback shallow clone (older git without filter).
+            const std::string shallow = std::format(
+                "git clone --depth 1 --single-branch --branch \"{}\" \"{}\" \"{}\"",
+                spec.revision && *spec.revision ? spec.revision : "master",
+                spec.git_url,
+                repo_dir.string());
+            if (run_cmd(shallow) != 0)
+                return false;
+            return fs::exists(repo_dir);
+        }
+
+        if (spec.revision && *spec.revision)
+        {
+            const std::string co = std::format(
+                "git -C \"{}\" checkout \"{}\"",
+                repo_dir.string(),
+                spec.revision);
+            (void)run_cmd(co); // best-effort; tip of default branch still usable
+        }
+
+        Logger::info(std::format(
+            "grammar-install: cloned {} (git)",
+            repo_basename(spec.git_url)));
+        return true;
+    }
+
+    // Compile flags aligned with nvim-treesitter shell_command_selectors (unix path).
     bool compile_parser(const fs::path &src_dir, const fs::path &out_so)
     {
         const fs::path parser = src_dir / "parser.c";
@@ -106,22 +340,56 @@ namespace
             sources.push_back(src_dir / "scanner.cc");
             cxx = true;
         }
+        if (fs::exists(src_dir / "scanner.cpp"))
+        {
+            sources.push_back(src_dir / "scanner.cpp");
+            cxx = true;
+        }
+
+        const char *cc = nullptr;
+        if (cxx)
+        {
+            if (exe_ok("c++"))
+                cc = "c++";
+            else if (exe_ok("g++"))
+                cc = "g++";
+            else if (exe_ok("clang++"))
+                cc = "clang++";
+        }
+        else
+        {
+            if (exe_ok("cc"))
+                cc = "cc";
+            else if (exe_ok("gcc"))
+                cc = "gcc";
+            else if (exe_ok("clang"))
+                cc = "clang";
+        }
+        if (!cc)
+        {
+            Logger::error("grammar-install: no C/C++ compiler found (cc/gcc/clang)");
+            return false;
+        }
 
         fs::create_directories(out_so.parent_path());
         const fs::path tmp = out_so.string() + ".tmp";
 
-        std::string cmd = cxx ? "g++" : "cc";
-        cmd += " -shared -fPIC -O2";
-        cmd += " -I" + src_dir.string();
+        // nvim: -o parser.so -I./src files -Os -std=c11 -shared -fPIC [-lstdc++]
+        std::string cmd = cc;
+        cmd += " -o \"";
+        cmd += tmp.string();
+        cmd += "\" -I\"";
+        cmd += src_dir.string();
+        cmd += "\"";
         for (const auto &s : sources)
         {
             cmd += " \"";
             cmd += s.string();
             cmd += "\"";
         }
-        cmd += " -o \"";
-        cmd += tmp.string();
-        cmd += "\"";
+        cmd += " -Os -std=c11 -shared -fPIC";
+        if (cxx)
+            cmd += " -lstdc++";
 
         if (run_cmd(cmd) != 0)
         {
@@ -142,31 +410,33 @@ namespace
     bool install_one(const InstallSpec &spec)
     {
         const fs::path root = GrammarInstaller::user_dir();
-        const fs::path src_root = root / "src";
-        // Use full repo folder name from URL
-        std::string repo_name = spec.git_url;
-        if (const auto pos = repo_name.find_last_of('/'); pos != std::string::npos)
-            repo_name = repo_name.substr(pos + 1);
-        const fs::path repo_dir = src_root / repo_name;
+        const fs::path cache_folder = root / "src";
+        const std::string project = repo_basename(spec.git_url);
+        const fs::path repo_dir = cache_folder / project;
         const fs::path out_so = root / spec.so_name;
 
-        fs::create_directories(src_root);
+        fs::create_directories(cache_folder);
 
-        if (!fs::exists(repo_dir / "src") && !fs::exists(repo_dir / spec.src_rel))
+        const bool have_src =
+            fs::exists(repo_dir / spec.src_rel / "parser.c") ||
+            fs::exists(repo_dir / "src" / "parser.c");
+
+        if (!have_src)
         {
-            // Fresh shallow clone
-            const std::string cmd = std::format(
-                "git clone --depth 1 --single-branch \"{}\" \"{}\"",
-                spec.git_url,
-                repo_dir.string());
-            if (run_cmd(cmd) != 0)
+            // nvim order: curl+tar first, then git.
+            if (!download_tarball(spec, cache_folder, repo_dir) &&
+                !download_git(spec, cache_folder, repo_dir))
             {
-                Logger::error(std::format("grammar-install: clone failed for {}", spec.so_name));
+                Logger::error(std::format(
+                    "grammar-install: download failed for {} (need curl+tar or git)",
+                    spec.so_name));
                 return false;
             }
         }
 
-        const fs::path src_dir = repo_dir / spec.src_rel;
+        fs::path src_dir = repo_dir / spec.src_rel;
+        if (!fs::exists(src_dir / "parser.c"))
+            src_dir = repo_dir / "src";
         if (!compile_parser(src_dir, out_so))
         {
             Logger::error(std::format("grammar-install: compile failed for {}", spec.so_name));
@@ -201,6 +471,7 @@ fs::path GrammarInstaller::user_dir()
     const char *home = std::getenv("HOME");
     if (!home || !*home)
         return fs::path("/tmp/noni-tree-sitter");
+    // Same shape as nvim stdpath('data')/... — under XDG data home.
     return fs::path(home) / ".local" / "share" / "noni" / "tree-sitter";
 }
 
@@ -257,6 +528,7 @@ void GrammarInstaller::request(Language lang)
         std::lock_guard lock(g_mu);
         if (!g_auto_install)
             return;
+        // Don't spam the job queue every frame after a failure (restart clears status).
         if (g_queued.count(so) || g_status[so] == Status::Installing ||
             g_status[so] == Status::Failed)
             return;
@@ -265,9 +537,7 @@ void GrammarInstaller::request(Language lang)
     }
 
     Messages::info(std::format("Installing tree-sitter grammar: {}…", so));
-    Logger::info(std::format("grammar-install: queued {}", so));
-
-    // Cpp also benefits from C if cpp fails later; queue cpp only here.
+    Logger::info(std::format("grammar-install: queued {} (nvim-style curl/tar|git)", so));
 
     const std::string so_name = so;
     InstallSpec spec_copy = *spec;

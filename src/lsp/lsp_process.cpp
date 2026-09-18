@@ -22,9 +22,20 @@ bool LspProcess::start(const std::vector<std::string> &argv, const std::string &
 
     int in_pipe[2]{-1, -1};
     int out_pipe[2]{-1, -1};
-    if (pipe(in_pipe) != 0 || pipe(out_pipe) != 0)
+    if (pipe(in_pipe) != 0)
     {
         Logger::error("LSP: pipe() failed");
+        close(in_pipe[0]);
+        close(in_pipe[1]);
+        return false;
+    }
+    if (pipe(out_pipe) != 0)
+    {
+        Logger::error("LSP: pipe() failed");
+        close(in_pipe[0]);
+        close(in_pipe[1]);
+        close(out_pipe[0]);
+        close(out_pipe[1]);
         return false;
     }
 
@@ -77,26 +88,46 @@ bool LspProcess::start(const std::vector<std::string> &argv, const std::string &
 void LspProcess::stop()
 {
     running_ = false;
+
+    // Terminate the child first: its exit closes the pipe write end, which is
+    // what unblocks the reader thread (close() of the read end from another
+    // thread does not wake a blocked read() on Linux). Bound the grace period
+    // so a server that ignores SIGTERM cannot hang shutdown.
+    if (pid_ > 0)
+    {
+        kill(pid_, SIGTERM);
+        int status = 0;
+        for (int i = 0; i < 20 && pid_ > 0; ++i)
+        {
+            const pid_t r = waitpid(pid_, &status, WNOHANG);
+            if (r == pid_)
+            {
+                pid_ = -1;
+                break;
+            }
+            usleep(50000);
+        }
+        if (pid_ > 0)
+        {
+            kill(pid_, SIGKILL);
+            waitpid(pid_, &status, 0);
+            pid_ = -1;
+        }
+    }
+
     if (stdin_fd_ >= 0)
     {
         close(stdin_fd_);
         stdin_fd_ = -1;
     }
-    if (stdout_fd_ >= 0)
-    {
-        // Wake reader
-        close(stdout_fd_);
-        stdout_fd_ = -1;
-    }
     if (reader_.joinable())
         reader_.join();
-
-    if (pid_ > 0)
+    // Joined reader no longer touches stdout_fd_, so there is no concurrent
+    // access when we reset it here.
+    if (stdout_fd_ >= 0)
     {
-        kill(pid_, SIGTERM);
-        int status = 0;
-        waitpid(pid_, &status, 0);
-        pid_ = -1;
+        close(stdout_fd_);
+        stdout_fd_ = -1;
     }
 }
 

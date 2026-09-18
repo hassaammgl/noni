@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -49,6 +50,12 @@ private:
     // Optional document observers (e.g. LSP). Not owned.
     std::function<void(Buffer &, const TextChange &)> change_listener_;
     std::function<void(Buffer &)> reload_listener_;
+
+    // Last known on-disk mtime after successful load/save (external-change detection).
+    std::optional<fs::file_time_type> disk_mtime_;
+    bool external_change_notified_ = false;
+
+    void capture_disk_mtime();
 
     void ensure_line_exists(int line);
     int clamp_column(int line, int column) const;
@@ -142,4 +149,10 @@ public:
 
     bool save();
     bool save_as(const fs::path &path);
+
+    // True when the file on disk differs from the mtime captured at last load/save.
+    bool disk_changed() const;
+    void clear_external_change_flag();
+    bool external_change_notified() const { return external_change_notified_; }
+    void mark_external_change_notified() { external_change_notified_ = true; }
 };

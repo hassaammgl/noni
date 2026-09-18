@@ -190,6 +190,31 @@
       "when": "editorFocus && normalMode || sidebarFocus"
     },
     {
+      "key": "space g a",
+      "command": "git.stage",
+      "when": "editorFocus && normalMode || sidebarFocus"
+    },
+    {
+      "key": "space g u",
+      "command": "git.unstage",
+      "when": "editorFocus && normalMode || sidebarFocus"
+    },
+    {
+      "key": "space g x",
+      "command": "git.discard",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "space g d",
+      "command": "git.showDiff",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "space g f",
+      "command": "git.refreshDiff",
+      "when": "editorFocus && normalMode"
+    },
+    {
       "key": "space l s",
       "command": "lsp.showStatus",
       "when": "editorFocus && normalMode"
@@ -212,6 +237,46 @@
     {
       "key": "space l c",
       "command": "editor.action.triggerSuggest",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "g d",
+      "command": "editor.action.revealDefinition",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "g shift+d",
+      "command": "editor.action.revealDeclaration",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "g y",
+      "command": "editor.action.goToTypeDefinition",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "g r",
+      "command": "editor.action.goToReferences",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "space l o",
+      "command": "workbench.action.gotoSymbol",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "space l w",
+      "command": "workbench.action.showAllSymbols",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "space l n",
+      "command": "editor.action.rename",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "space l a",
+      "command": "editor.action.quickFix",
       "when": "editorFocus && normalMode"
     }
   ]

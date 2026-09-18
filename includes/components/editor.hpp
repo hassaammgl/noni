@@ -71,7 +71,6 @@ private:
 
     std::uintptr_t current_buffer_id() const;
     void jump_to(std::uintptr_t buffer_id, Cursor pos);
-    void record_jump_from_here();
 
     void draw_window_pane(Window &w, int ox, int oy, int pw, int ph, bool is_active);
     void draw_selection_overlay(Window &w, int ox, int oy, int pw, int ph);
@@ -94,6 +93,7 @@ public:
 
     bool paste_clipboard();
     bool apply_completion(const CompletionItem &item);
+    void record_jump_from_here();
     bool undo();
     bool redo();
 

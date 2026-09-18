@@ -142,7 +142,9 @@ namespace
         line(out, "Workspace root is EditorCore-owned (not Window-local).");
         line(out, "Opening a directory argv sets workspace and an untitled buffer.");
         line(out, "Rename remaps Buffer save path; delete closes matching buffers.");
-        line(out, "No inotify yet — use explorer R / :e to refresh externally.");
+        line(out, "Filesystem watcher (inotify): auto-reloads clean buffers;");
+        line(out, "dirty buffers warn on statusbar. Explorer refreshes on tree changes.");
+        line(out, "Logger output goes only to logs/noni.log (not the UI).");
     }
 
     void page_sidebar(std::vector<std::string> &out)
@@ -160,11 +162,18 @@ namespace
     void page_git(std::vector<std::string> &out)
     {
         section(out, "GIT / SCM");
-        bullet(out, "Space g r / :...", "git.refresh - async status refresh");
+        bullet(out, "Space g r", "git.refresh - async status refresh");
         bullet(out, "Space g s", "git.showStatus - branch, ahead/behind, XY");
+        bullet(out, "Space g a", "git.stage - stage active file");
+        bullet(out, "Space g u", "git.unstage - unstage active file");
+        bullet(out, "Space g x", "git.discard - discard worktree (confirm)");
+        bullet(out, "Space g d", "git.showDiff - line change summary");
+        bullet(out, "Space g f", "git.refreshDiff - refresh gutter diff");
         blank(out);
         line(out, "Header shows branch; statusbar can show file XY badge.");
-        line(out, "Read-only SCM foundation (no commit/push UI yet).");
+        line(out, "Gutter: green=added, blue=modified, red dash=deleted (vs HEAD).");
+        line(out, "Discard refuses if Buffer is dirty (unsaved). No merge/rebase UI.");
+        line(out, "Tab ● = unsaved buffer; sidebar • = currently open file (not git).");
     }
 
     void page_lsp(std::vector<std::string> &out)
@@ -173,10 +182,17 @@ namespace
         bullet(out, "Space l s", "lsp.showStatus");
         bullet(out, "Space l r", "lsp.restart");
         bullet(out, "Ctrl+Space / Space l c", "trigger completion");
+        bullet(out, "g d / g D / g y", "definition / declaration / type definition");
+        bullet(out, "g r", "find references");
+        bullet(out, "Space l o / Space l w", "document / workspace symbols");
+        bullet(out, "Space l n", "rename symbol");
+        bullet(out, "Space l a", "code actions / quick fix");
         blank(out);
         line(out, "Configured in config.json -> lsp.servers (language, command, rootMarkers).");
         line(out, "Diagnostics: gutter markers (! ? i .) + inline highlight.");
         line(out, "Completion picker: ^v, Enter/Tab accept, Esc cancel.");
+        line(out, "Navigation results use the shared LSP picker; jumps recorded.");
+        line(out, "WorkspaceEdit (rename/actions) applies with Buffer undo transactions.");
         line(out, "Tree-sitter remains syntax highlighting authority (not LSP tokens).");
     }
 
@@ -212,7 +228,7 @@ namespace
         bullet(out, "sidebarWidth", "explorer width");
         bullet(out, "lineNumberWidth", "gutter width");
         bullet(out, "escDelayMs", "ncurses ESC delay");
-        bullet(out, "syntaxAutoInstall", "tree-sitter grammar auto install");
+        bullet(out, "syntaxAutoInstall", "tree-sitter: curl+tar (nvim-style) then git");
         bullet(out, "terminal.*", "shell, height, scrollback");
         bullet(out, "lsp.servers[]", "language servers");
         bullet(out, "extensions.*", "per-extension settings");

@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <format>
 #include <fstream>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <vector>
 
@@ -82,6 +83,15 @@ bool FS::write_file(
                 }
             }
         } guard{temp_path, false};
+
+        // New files: mkstemp creates 0600; honor the usual umask-derived default.
+        std::error_code xec;
+        if (!(fs::exists(path, xec) && fs::is_regular_file(path, xec)))
+        {
+            const mode_t mask = ::umask(0);
+            ::umask(mask);
+            (void)::fchmod(fd, static_cast<mode_t>(0666 & ~mask));
+        }
 
         {
             // Close mkstemp fd; rewrite via ofstream for line-oriented write.

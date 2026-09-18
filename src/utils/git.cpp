@@ -46,17 +46,32 @@ std::optional<std::string> Git::run_git(const std::vector<std::string> &args) co
 
 std::optional<std::string> Git::run(const std::vector<std::string> &args) const
 {
-    if (repo_root_.empty())
-        return std::nullopt;
+    std::string out;
+    if (!run_ok(args, &out))
+    {
+        if (out.empty())
+            return std::nullopt;
+    }
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
+        out.pop_back();
+    return out;
+}
 
+bool Git::run_ok(const std::vector<std::string> &args, std::string *stdout_out) const
+{
+    if (repo_root_.empty())
+        return false;
+
+    // Capture stderr too — never leak git chatter onto the ncurses TTY.
     std::ostringstream cmd;
     cmd << "git -C " << shell_quote(repo_root_.string());
     for (const auto &a : args)
         cmd << ' ' << shell_quote(a);
+    cmd << " 2>&1";
 
     FILE *pipe = popen(cmd.str().c_str(), "r");
     if (!pipe)
-        return std::nullopt;
+        return false;
 
     std::string out;
     std::array<char, 512> buf{};
@@ -64,12 +79,9 @@ std::optional<std::string> Git::run(const std::vector<std::string> &args) const
         out += buf.data();
 
     const int rc = pclose(pipe);
-    if (rc != 0 && out.empty())
-        return std::nullopt;
-
-    while (!out.empty() && (out.back() == '\n' || out.back() == '\r'))
-        out.pop_back();
-    return out;
+    if (stdout_out)
+        *stdout_out = std::move(out);
+    return rc == 0;
 }
 
 std::optional<std::string> Git::current_branch() const
@@ -86,7 +98,7 @@ std::optional<std::string> Git::status_porcelain_z() const
     // Keep trailing NULs; do not trim.
     std::ostringstream cmd;
     cmd << "git -C " << shell_quote(repo_root_.string())
-        << " status --porcelain -z";
+        << " status --porcelain -z 2>/dev/null";
     FILE *pipe = popen(cmd.str().c_str(), "r");
     if (!pipe)
         return std::nullopt;

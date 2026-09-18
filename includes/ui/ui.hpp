@@ -10,6 +10,7 @@
 #include <components/header.hpp>
 #include <components/input_prompt.hpp>
 #include <components/line_number.hpp>
+#include <components/lsp_picker.hpp>
 #include <components/messages_panel.hpp>
 #include <components/search_panel.hpp>
 #include <components/sidebar.hpp>
@@ -22,7 +23,10 @@
 #include <editor/editor_core.hpp>
 #include <commands/command_registry.hpp>
 #include <extensions/extension_manager.hpp>
+#include <lsp/lsp_models.hpp>
+#include <utils/fs_watcher.hpp>
 #include <filesystem>
+#include <chrono>
 #include <cstdint>
 
 namespace fs = std::filesystem;
@@ -41,6 +45,7 @@ enum class Focus
     Messages,
     FileSearch,
     BufferSearch,
+    LspPicker,
     Confirm,
     Prompt,
     Terminal,
@@ -60,6 +65,7 @@ enum class ConfirmIntent
     CloseTab,
     Quit,
     DeletePath,
+    DiscardGit,
 };
 
 enum class PromptIntent
@@ -69,6 +75,8 @@ enum class PromptIntent
     AddFolder,
     Rename,
     OpenWorkspace,
+    RenameSymbol,
+    WorkspaceSymbolQuery,
 };
 
 class UI
@@ -83,6 +91,7 @@ private:
     MessagesPanel messages_panel;
     FilePicker file_picker;
     BufferPicker buffer_picker;
+    LspPicker lsp_picker;
     CompletionPicker completion_picker;
     Statusbar statusbar;
     CommandLine command_line;
@@ -94,6 +103,11 @@ private:
     ExtensionManager extensions;
     AppConfig config;
     KeybindingEngine keys;
+    FsWatcher fs_watcher_;
+    std::uint64_t messages_echo_seen_ = 0;
+    bool fs_explorer_dirty_ = false;
+    std::chrono::steady_clock::time_point fs_explorer_refresh_at_{};
+    LspPickerKind lsp_picker_kind_ = LspPickerKind::Locations;
 
     int height;
     int width;
@@ -155,11 +169,38 @@ private:
     void poll_completion_result();
     void sync_scm_ui();
     void refresh_scm(const fs::path &hint);
+    void sync_scm_diff();
+    void scm_stage_active();
+    void scm_unstage_active();
+    void scm_discard_active_confirm();
+    void scm_show_diff_summary();
+    void resolve_discard_confirm(ConfirmChoice choice);
+    void sync_fs_watches();
+    void poll_fs_events();
+    void sync_messages_echo();
+    void goto_lsp_location(const LspLocation &loc);
+    void apply_lsp_workspace_edit(LspWorkspaceEdit edit);
+    void open_lsp_locations(std::string title, std::vector<LspLocation> locs);
+    void open_lsp_symbols(std::string title, std::vector<LspSymbol> syms);
+    void open_lsp_actions(std::vector<LspCodeAction> actions);
+    void close_lsp_picker(bool accept);
+    void poll_lsp_results();
+    void request_lsp_definition();
+    void request_lsp_declaration();
+    void request_lsp_type_definition();
+    void request_lsp_references();
+    void request_lsp_document_symbols();
+    void request_lsp_workspace_symbols_prompt();
+    void request_lsp_rename_prompt();
+    void request_lsp_code_actions();
     fs::path project_root() const;
     // Prefer Workspace::detect_root; kept for call sites.
     fs::path find_workspace_root(const fs::path &hint) const;
 
     std::uint64_t scm_gen_seen_ = 0;
+    std::uint64_t scm_diff_gen_seen_ = 0;
+    fs::path scm_diff_path_;
+    int scm_diff_lines_ = -1;
 
 public:
     Focus focus = Focus::Editor;

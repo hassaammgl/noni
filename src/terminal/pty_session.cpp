@@ -69,12 +69,12 @@ bool PtySession::start(int rows, int cols, const std::string &cwd, const std::st
         _exit(127);
     }
 
-    master_fd = master;
+    master_fd.store(master);
     child_pid = pid;
 
-    const int flags = fcntl(master_fd, F_GETFL, 0);
+    const int flags = fcntl(master_fd.load(), F_GETFL, 0);
     if (flags >= 0)
-        fcntl(master_fd, F_SETFL, flags | O_NONBLOCK);
+        fcntl(master_fd.load(), F_SETFL, flags | O_NONBLOCK);
 
     running.store(true, std::memory_order_release);
     lifecycle_.store(PtyLifecycle::Running, std::memory_order_release);
@@ -108,17 +108,18 @@ void PtySession::reap_child(bool block)
 void PtySession::stop()
 {
     const bool was = running.exchange(false, std::memory_order_acq_rel);
-    if (!was && master_fd < 0 && child_pid < 0)
+    if (!was && master_fd.load() < 0 && child_pid < 0)
         return;
-
-    if (master_fd >= 0)
-    {
-        ::close(master_fd);
-        master_fd = -1;
-    }
 
     if (reader.joinable())
         reader.join();
+
+    // The reader thread closes master_fd itself on exit; exchange keeps close
+    // ownership unique. This fallback only fires when no reader thread ever
+    // started (e.g. std::thread creation threw after a successful forkpty).
+    const int fd = master_fd.exchange(-1);
+    if (fd >= 0)
+        ::close(fd);
 
     if (child_pid > 0)
     {
@@ -153,13 +154,13 @@ std::optional<int> PtySession::exit_status() const
 
 void PtySession::write_bytes(const char *data, std::size_t n)
 {
-    if (master_fd < 0 || !data || n == 0)
+    if (master_fd.load() < 0 || !data || n == 0)
         return;
 
     std::size_t off = 0;
     while (off < n)
     {
-        const ssize_t w = ::write(master_fd, data + off, n - off);
+        const ssize_t w = ::write(master_fd.load(), data + off, n - off);
         if (w < 0)
         {
             if (errno == EAGAIN || errno == EWOULDBLOCK)
@@ -182,7 +183,7 @@ void PtySession::write_byte(char c)
 
 void PtySession::resize(int rows, int cols)
 {
-    if (master_fd < 0)
+    if (master_fd.load() < 0)
         return;
     if (rows < 1)
         rows = 1;
@@ -192,7 +193,7 @@ void PtySession::resize(int rows, int cols)
     winsize ws{};
     ws.ws_row = static_cast<unsigned short>(rows);
     ws.ws_col = static_cast<unsigned short>(cols);
-    ioctl(master_fd, TIOCSWINSZ, &ws);
+    ioctl(master_fd.load(), TIOCSWINSZ, &ws);
 }
 
 std::string PtySession::take_output()
@@ -208,11 +209,11 @@ void PtySession::reader_loop()
     char buf[4096];
     while (running.load(std::memory_order_acquire))
     {
-        if (master_fd < 0)
+        if (master_fd.load() < 0)
             break;
 
         pollfd pfd{};
-        pfd.fd = master_fd;
+        pfd.fd = master_fd.load();
         pfd.events = POLLIN;
         const int pr = poll(&pfd, 1, 50);
         if (pr < 0)
@@ -227,7 +228,7 @@ void PtySession::reader_loop()
         if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
             break;
 
-        const ssize_t n = ::read(master_fd, buf, sizeof(buf));
+        const ssize_t n = ::read(master_fd.load(), buf, sizeof(buf));
         if (n < 0)
         {
             if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
@@ -249,4 +250,11 @@ void PtySession::reader_loop()
     running.store(false, std::memory_order_release);
     if (lifecycle_.load(std::memory_order_acquire) == PtyLifecycle::Running)
         lifecycle_.store(PtyLifecycle::Exited, std::memory_order_release);
+
+    // Sole owner: this thread is the only user of master_fd (O_NONBLOCK means
+    // read() never blocks; poll() times out in ≤50ms), so it also closes it.
+    // No other thread can close or reuse the fd while it is in use here.
+    const int fd = master_fd.exchange(-1);
+    if (fd >= 0)
+        ::close(fd);
 }

@@ -54,6 +54,13 @@ namespace Commands
     inline constexpr const char *ScmRefresh = "git.refresh";
     inline constexpr const char *ScmShowStatus = "git.showStatus";
 
+    // P19 Advanced Git
+    inline constexpr const char *ScmStage = "git.stage";
+    inline constexpr const char *ScmUnstage = "git.unstage";
+    inline constexpr const char *ScmDiscard = "git.discard";
+    inline constexpr const char *ScmShowDiff = "git.showDiff";
+    inline constexpr const char *ScmRefreshDiff = "git.refreshDiff";
+
     // P13 LSP
     inline constexpr const char *LspRestart = "lsp.restart";
     inline constexpr const char *LspShowStatus = "lsp.showStatus";
@@ -71,6 +78,16 @@ namespace Commands
     inline constexpr const char *OpenWorkspace = "workbench.action.openWorkspace";
     inline constexpr const char *ShowAllEditors = "workbench.action.showAllEditors";
     inline constexpr const char *RevealInExplorer = "noni.explorer.revealActive";
+
+    // P18 Advanced LSP
+    inline constexpr const char *GotoDefinition = "editor.action.revealDefinition";
+    inline constexpr const char *GotoDeclaration = "editor.action.revealDeclaration";
+    inline constexpr const char *GotoTypeDefinition = "editor.action.goToTypeDefinition";
+    inline constexpr const char *FindReferences = "editor.action.goToReferences";
+    inline constexpr const char *DocumentSymbols = "workbench.action.gotoSymbol";
+    inline constexpr const char *WorkspaceSymbols = "workbench.action.showAllSymbols";
+    inline constexpr const char *RenameSymbol = "editor.action.rename";
+    inline constexpr const char *CodeAction = "editor.action.quickFix";
 }
 
 enum class InputContext

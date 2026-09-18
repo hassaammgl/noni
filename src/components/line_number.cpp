@@ -20,12 +20,18 @@ std::optional<DiagnosticSeverity> LineNumber::worst_on_line(const DiagnosticSnap
     return worst;
 }
 
-void LineNumber::sync(int scroll, int active, int total, const DiagnosticSnapshot *diagnostics)
+void LineNumber::sync(
+    int scroll,
+    int active,
+    int total,
+    const DiagnosticSnapshot *diagnostics,
+    const ScmFileDiff *scm_diff)
 {
     scroll_y = scroll;
     active_line = active;
     total_lines = total;
     diagnostics_ = diagnostics;
+    scm_diff_ = scm_diff;
 }
 
 void LineNumber::draw()
@@ -41,6 +47,11 @@ void LineNumber::draw()
         mvwhline(window, row, 0, ' ', width);
     wattroff(window, COLOR_PAIR(Theme::LineNumber));
 
+    // Layout: [numbers...][scm][diag]
+    // scm at width-2, diag at width-1 when width >= 3; else diag only.
+    const bool has_scm_col = width >= 3;
+    const int num_width = std::max(1, width - (has_scm_col ? 2 : 1));
+
     for (int row = 0; row < height; ++row)
     {
         const int line_index = scroll_y + row;
@@ -52,9 +63,38 @@ void LineNumber::draw()
                                : Theme::LineNumber;
 
         wattron(window, COLOR_PAIR(pair));
-        const int num_width = std::max(1, width - 2);
         mvwprintw(window, row, 0, "%*d", num_width, line_index + 1);
         wattroff(window, COLOR_PAIR(pair));
+
+        if (has_scm_col && scm_diff_)
+        {
+            const ScmLineChange ch = scm_diff_->line_change(line_index);
+            if (ch != ScmLineChange::None)
+            {
+                short scm_pair = Theme::GutterModified;
+                chtype mark = ACS_VLINE;
+                switch (ch)
+                {
+                case ScmLineChange::Added:
+                    scm_pair = Theme::GutterAdded;
+                    mark = ACS_VLINE;
+                    break;
+                case ScmLineChange::Modified:
+                    scm_pair = Theme::GutterModified;
+                    mark = ACS_VLINE;
+                    break;
+                case ScmLineChange::Deleted:
+                    scm_pair = Theme::GutterDeleted;
+                    mark = ACS_HLINE;
+                    break;
+                default:
+                    break;
+                }
+                wattron(window, COLOR_PAIR(scm_pair));
+                mvwaddch(window, row, width - 2, mark);
+                wattroff(window, COLOR_PAIR(scm_pair));
+            }
+        }
 
         const auto sev = worst_on_line(diagnostics_, line_index);
         if (!sev)

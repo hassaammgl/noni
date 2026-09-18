@@ -9,7 +9,9 @@
 
 namespace fs = std::filesystem;
 
-// nvim-style grammar install: clone + compile into ~/.local/share/noni/tree-sitter/
+// nvim-treesitter-style grammar install:
+// prefer curl+tar of GitHub archive, fall back to git clone, then compile .so
+// into ~/.local/share/noni/tree-sitter/
 class GrammarInstaller
 {
 public:

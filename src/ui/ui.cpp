@@ -8,7 +8,9 @@
 #include <lsp/lsp_service.hpp>
 #include <extensions/builtin_hello.hpp>
 #include <help/help_docs.hpp>
+#include <lsp/lsp_edits.hpp>
 #include <workspace/workspace.hpp>
+#include <utils/fs_watcher.hpp>
 #include <syntax/grammar_installer.hpp>
 #include <utils/logger.hpp>
 #include <utils/messages.hpp>
@@ -17,6 +19,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <csignal>
+#include <chrono>
 #include <fstream>
 #include <locale>
 #include <format>
@@ -39,6 +42,7 @@ namespace
             return InputContext::PromptInput;
         case Focus::FileSearch:
         case Focus::BufferSearch:
+        case Focus::LspPicker:
         case Focus::Completion:
             return InputContext::Picker;
         case Focus::Terminal:
@@ -88,11 +92,7 @@ UI::UI(const fs::path file_path = "")
         note_opened_file(file_path);
     }
 
-    // Always root the explorer at the project (nearest folder with .git / markers).
-    sidebar.set_project_path(workspace);
-    search_panel.set_root(workspace);
-    refresh_scm(workspace);
-    file_picker.warm(workspace);
+    apply_workspace_root(workspace, false);
     buffer_picker.bind(&core.buffers());
 
     tab_bar.set_manager(&core.buffers());
@@ -143,6 +143,7 @@ UI::UI(const fs::path file_path = "")
 UI::~UI()
 {
     extensions.deactivate_all();
+    fs_watcher_.stop();
     terminal.stop();
     core.lsp().shutdown_all();
     Background::instance().stop();
@@ -159,6 +160,7 @@ void UI::init()
     noecho();
     set_escdelay(config.esc_delay_ms > 0 ? config.esc_delay_ms : 25);
     signal(SIGINT, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
 
     termios term{};
     if (tcgetattr(STDIN_FILENO, &term) == 0)
@@ -459,6 +461,17 @@ void UI::register_actions()
         Messages::info(msg);
     });
 
+    commands.register_command(Commands::ScmStage, [this]() { scm_stage_active(); });
+    commands.register_command(Commands::ScmUnstage, [this]() { scm_unstage_active(); });
+    commands.register_command(Commands::ScmDiscard, [this]() { scm_discard_active_confirm(); });
+    commands.register_command(Commands::ScmShowDiff, [this]() { scm_show_diff_summary(); });
+    commands.register_command(Commands::ScmRefreshDiff, [this]() {
+        scm_diff_path_.clear();
+        scm_diff_lines_ = -1;
+        sync_scm_diff();
+        Messages::info("Diff refresh requested");
+    });
+
     commands.register_command(Commands::LspShowStatus, [this]() {
         core.lsp().pump();
         Messages::info(core.lsp().status_summary());
@@ -475,6 +488,17 @@ void UI::register_actions()
     commands.register_command(Commands::TriggerSuggest, [this]() {
         trigger_completion();
     });
+
+    commands.register_command(Commands::GotoDefinition, [this]() { request_lsp_definition(); });
+    commands.register_command(Commands::GotoDeclaration, [this]() { request_lsp_declaration(); });
+    commands.register_command(Commands::GotoTypeDefinition, [this]() { request_lsp_type_definition(); });
+    commands.register_command(Commands::FindReferences, [this]() { request_lsp_references(); });
+    commands.register_command(Commands::DocumentSymbols, [this]() { request_lsp_document_symbols(); });
+    commands.register_command(Commands::WorkspaceSymbols, [this]() {
+        request_lsp_workspace_symbols_prompt();
+    });
+    commands.register_command(Commands::RenameSymbol, [this]() { request_lsp_rename_prompt(); });
+    commands.register_command(Commands::CodeAction, [this]() { request_lsp_code_actions(); });
 
     commands.register_command("extension.showStatus", [this]() {
         Messages::info(extensions.status_summary());
@@ -498,6 +522,8 @@ std::string UI::when_context() const
         ctx += "fileSearchFocus ";
     if (focus == Focus::BufferSearch)
         ctx += "bufferSearchFocus ";
+    if (focus == Focus::LspPicker)
+        ctx += "lspPickerFocus ";
     if (focus == Focus::Completion)
         ctx += "completionFocus ";
     if (focus == Focus::Confirm)
@@ -758,7 +784,186 @@ void UI::refresh_scm(const fs::path &hint)
     core.scm().set_workspace_root(root);
     core.scm().request_refresh();
     scm_gen_seen_ = 0;
+    scm_diff_path_.clear();
+    scm_diff_lines_ = -1;
+    scm_diff_gen_seen_ = 0;
     core.lsp().set_workspace_root(root);
+}
+
+void UI::sync_scm_diff()
+{
+    Buffer *b = core.active_buffer();
+    if (!b)
+        return;
+    const fs::path path = b->get_buffer_path();
+    if (path.empty())
+        return;
+
+    const int lines = static_cast<int>(b->lines().size());
+    if (path != scm_diff_path_ || lines != scm_diff_lines_ ||
+        core.scm().diff_generation() != scm_diff_gen_seen_)
+    {
+        // Request when path/lines changed; generation bump means cache updated.
+        if (path != scm_diff_path_ || lines != scm_diff_lines_)
+        {
+            scm_diff_path_ = path;
+            scm_diff_lines_ = lines;
+            core.scm().request_file_diff(path, lines);
+        }
+        scm_diff_gen_seen_ = core.scm().diff_generation();
+    }
+}
+
+void UI::scm_stage_active()
+{
+    Buffer *b = core.active_buffer();
+    if (!b || b->get_buffer_path().empty())
+    {
+        Messages::warning("No file to stage");
+        return;
+    }
+    std::string err;
+    if (!core.scm().stage(b->get_buffer_path(), &err))
+    {
+        Messages::error(err.empty() ? "Stage failed" : err);
+        return;
+    }
+    scm_diff_path_.clear();
+    sync_scm_diff();
+    Messages::info(std::format("Staged {}", b->get_buffer_path().filename().string()));
+}
+
+void UI::scm_unstage_active()
+{
+    Buffer *b = core.active_buffer();
+    if (!b || b->get_buffer_path().empty())
+    {
+        Messages::warning("No file to unstage");
+        return;
+    }
+    std::string err;
+    if (!core.scm().unstage(b->get_buffer_path(), &err))
+    {
+        Messages::error(err.empty() ? "Unstage failed" : err);
+        return;
+    }
+    scm_diff_path_.clear();
+    sync_scm_diff();
+    Messages::info(std::format("Unstaged {}", b->get_buffer_path().filename().string()));
+}
+
+void UI::scm_discard_active_confirm()
+{
+    Buffer *b = core.active_buffer();
+    if (!b || b->get_buffer_path().empty())
+    {
+        Messages::warning("No file to discard");
+        return;
+    }
+    if (b->is_dirty())
+    {
+        Messages::error("Buffer has unsaved changes — save or discard buffer edits first");
+        return;
+    }
+    if (command_line.is_active())
+        command_line.close();
+    if (input_prompt.is_active())
+        input_prompt.close();
+    confirm_intent = ConfirmIntent::DiscardGit;
+    confirm_prompt.open(std::format(
+        "Discard worktree changes to {}? [y/n/esc]",
+        b->get_buffer_path().filename().string()));
+    focus = Focus::Confirm;
+    resize();
+}
+
+void UI::resolve_discard_confirm(ConfirmChoice choice)
+{
+    confirm_prompt.close();
+    confirm_intent = ConfirmIntent::None;
+    focus = Focus::Editor;
+    resize();
+
+    if (choice != ConfirmChoice::Yes)
+    {
+        Messages::info("Discard cancelled");
+        return;
+    }
+
+    Buffer *b = core.active_buffer();
+    if (!b || b->get_buffer_path().empty())
+        return;
+    if (b->is_dirty())
+    {
+        Messages::error("Buffer became dirty — discard aborted");
+        return;
+    }
+
+    const fs::path path = b->get_buffer_path();
+    std::string err;
+    if (!core.scm().discard_worktree(path, &err))
+    {
+        Messages::error(err.empty() ? "Discard failed" : err);
+        return;
+    }
+
+    // Reload from disk (P0-safe load); preserve undo? load() clears history — OK for discard.
+    b->load();
+    core.attach_lsp_document(*b);
+    scm_diff_path_.clear();
+    sync_active_tab();
+    sync_scm_diff();
+    Messages::info(std::format("Discarded changes: {}", path.filename().string()));
+}
+
+void UI::scm_show_diff_summary()
+{
+    sync_scm_diff();
+    Buffer *b = core.active_buffer();
+    if (!b || b->get_buffer_path().empty())
+    {
+        Messages::info("No file");
+        return;
+    }
+    auto diff = core.scm().file_diff(b->get_buffer_path());
+    if (!diff)
+    {
+        Messages::info("Diff not ready yet — try again");
+        core.scm().request_file_diff(b->get_buffer_path(), static_cast<int>(b->lines().size()));
+        return;
+    }
+    if (!diff->ok)
+    {
+        Messages::warning(diff->error.empty() ? "Diff unavailable" : diff->error);
+        return;
+    }
+    int added = 0, modified = 0, deleted = 0;
+    for (const auto &[line, ch] : diff->lines)
+    {
+        (void)line;
+        switch (ch)
+        {
+        case ScmLineChange::Added:
+            ++added;
+            break;
+        case ScmLineChange::Modified:
+            ++modified;
+            break;
+        case ScmLineChange::Deleted:
+            ++deleted;
+            break;
+        default:
+            break;
+        }
+    }
+    Messages::info(std::format(
+        "Diff {}: +{} ~{} -{} ({} hunks){}",
+        b->get_buffer_path().filename().string(),
+        added,
+        modified,
+        deleted,
+        diff->hunks.size(),
+        diff->is_untracked ? " [untracked]" : ""));
 }
 
 fs::path UI::find_workspace_root(const fs::path &hint) const
@@ -827,8 +1032,391 @@ void UI::apply_workspace_root(const fs::path &hint, bool announce)
     file_picker.reindex();
     refresh_scm(root);
     terminal.set_cwd(root.string());
+    sync_fs_watches();
     if (announce)
         Messages::info(std::format("Workspace: {}", root.string()));
+}
+
+void UI::sync_fs_watches()
+{
+    if (!fs_watcher_.start())
+        return;
+
+    fs_watcher_.set_workspace(project_root());
+
+    // Track open buffer files for external edit detection.
+    if (!core.buffers().has_tabs())
+        return;
+    for (const auto &tab : core.buffers().get_tabs())
+    {
+        const fs::path path = tab.buffer().get_buffer_path();
+        if (!path.empty())
+            fs_watcher_.watch(path);
+    }
+}
+
+void UI::poll_fs_events()
+{
+    const auto events = fs_watcher_.poll();
+    if (events.empty() && !fs_explorer_dirty_)
+        return;
+
+    bool explorer_touch = fs_explorer_dirty_;
+    for (const auto &ev : events)
+    {
+        Logger::debug(std::format(
+            "FsWatcher event: {} ({})",
+            ev.path.string(),
+            ev.is_dir ? "dir" : "file"));
+
+        // Workspace tree changes → debounce explorer + file index refresh.
+        const fs::path root = project_root();
+        if (!root.empty())
+        {
+            std::error_code ec;
+            const fs::path abs = fs::weakly_canonical(ev.path, ec);
+            const std::string rs = root.string();
+            const std::string ps = ec ? ev.path.string() : abs.string();
+            if (ps == rs || (ps.size() > rs.size() && ps.compare(0, rs.size(), rs) == 0 &&
+                             (ps[rs.size()] == '/')))
+                explorer_touch = true;
+        }
+
+        if (ev.is_dir)
+        {
+            if (ev.kind == FsEventKind::Created || ev.kind == FsEventKind::Moved)
+                fs_watcher_.watch(ev.path);
+            continue;
+        }
+
+        Buffer *buf = core.buffers().find_buffer_by_path(ev.path);
+        if (!buf)
+            continue;
+        if (!buf->disk_changed())
+            continue;
+
+        if (buf->is_dirty())
+        {
+            if (!buf->external_change_notified())
+            {
+                buf->mark_external_change_notified();
+                Messages::warning(std::format(
+                    "{} changed on disk (buffer dirty — :e! to reload)",
+                    ev.path.filename().string()));
+            }
+            continue;
+        }
+
+        // Clean buffer: safe auto-reload.
+        buf->load();
+        buf->clear_external_change_flag();
+        Messages::info(std::format("Reloaded {}", ev.path.filename().string()));
+        if (core.active_buffer() == buf)
+            sync_active_tab();
+    }
+
+    if (explorer_touch)
+    {
+        fs_explorer_dirty_ = true;
+        const auto now = std::chrono::steady_clock::now();
+        if (fs_explorer_refresh_at_.time_since_epoch().count() == 0)
+            fs_explorer_refresh_at_ = now + std::chrono::milliseconds(250);
+    }
+
+    if (fs_explorer_dirty_ && std::chrono::steady_clock::now() >= fs_explorer_refresh_at_)
+    {
+        fs_explorer_dirty_ = false;
+        fs_explorer_refresh_at_ = {};
+        sidebar.refresh();
+        file_picker.reindex();
+        Logger::debug("FsWatcher: explorer refreshed");
+    }
+}
+
+void UI::sync_messages_echo()
+{
+    const auto [seq, text] = Messages::echo_snapshot();
+    if (seq == messages_echo_seen_)
+        return;
+    messages_echo_seen_ = seq;
+    if (!text.empty())
+        statusbar.set_echo(text);
+}
+
+void UI::goto_lsp_location(const LspLocation &loc)
+{
+    const fs::path path = LspService::uri_to_path(loc.uri);
+    if (path.empty())
+    {
+        Messages::warning("LSP location has no path");
+        return;
+    }
+
+    editor.record_jump_from_here();
+    core.buffers().open_file(path);
+    sync_active_tab();
+    note_opened_file(path);
+
+    Buffer &buf = editor.get_buffer();
+    const Cursor byte_pos = LspService::lsp_pos_to_cursor(
+        buf.lines(), loc.start.line, loc.start.column);
+    editor.set_cursor_position(byte_pos.line, byte_pos.column);
+    editor.enter_normal_mode();
+    focus = Focus::Editor;
+    Messages::info(std::format("→ {}:{}", path.filename().string(), byte_pos.line + 1));
+}
+
+void UI::apply_lsp_workspace_edit(LspWorkspaceEdit edit)
+{
+    const int n = LspEdits::apply_workspace_edit(
+        core.buffers(),
+        std::move(edit),
+        [this](Buffer &b) { core.attach_lsp_document(b); });
+    sync_active_tab();
+    if (n > 0)
+        Messages::info(std::format("Applied workspace edit ({} buffer(s))", n));
+    else
+        Messages::warning("Workspace edit applied nothing");
+}
+
+void UI::open_lsp_locations(std::string title, std::vector<LspLocation> locs)
+{
+    if (locs.empty())
+    {
+        Messages::info("No locations");
+        return;
+    }
+    if (locs.size() == 1)
+    {
+        goto_lsp_location(locs.front());
+        return;
+    }
+    lsp_picker_kind_ = LspPickerKind::Locations;
+    lsp_picker.open_locations(std::move(title), std::move(locs));
+    focus = Focus::LspPicker;
+    resize();
+}
+
+void UI::open_lsp_symbols(std::string title, std::vector<LspSymbol> syms)
+{
+    if (syms.empty())
+    {
+        Messages::info("No symbols");
+        return;
+    }
+    lsp_picker_kind_ = LspPickerKind::Symbols;
+    lsp_picker.open_symbols(std::move(title), std::move(syms));
+    focus = Focus::LspPicker;
+    resize();
+}
+
+void UI::open_lsp_actions(std::vector<LspCodeAction> actions)
+{
+    if (actions.empty())
+    {
+        Messages::info("No code actions");
+        return;
+    }
+    lsp_picker_kind_ = LspPickerKind::CodeActions;
+    lsp_picker.open_actions("code actions", std::move(actions));
+    focus = Focus::LspPicker;
+    resize();
+}
+
+void UI::close_lsp_picker(bool accept)
+{
+    if (!lsp_picker.is_active())
+    {
+        focus = Focus::Editor;
+        return;
+    }
+
+    if (!accept)
+    {
+        lsp_picker.close();
+        focus = Focus::Editor;
+        resize();
+        return;
+    }
+
+    if (lsp_picker_kind_ == LspPickerKind::Locations)
+    {
+        LspLocation loc;
+        if (lsp_picker.take_location(loc))
+            goto_lsp_location(loc);
+        else
+            lsp_picker.close();
+    }
+    else if (lsp_picker_kind_ == LspPickerKind::Symbols)
+    {
+        LspSymbol sym;
+        if (lsp_picker.take_symbol(sym))
+            goto_lsp_location(sym.location);
+        else
+            lsp_picker.close();
+    }
+    else
+    {
+        LspCodeAction act;
+        if (lsp_picker.take_action(act))
+        {
+            if (act.has_edit)
+                apply_lsp_workspace_edit(std::move(act.edit));
+            else if (act.has_command)
+                Messages::warning(std::format(
+                    "Code action command not executed: {}", act.command));
+            else
+                Messages::info(act.title);
+        }
+        else
+        {
+            lsp_picker.close();
+        }
+    }
+    focus = Focus::Editor;
+    resize();
+}
+
+void UI::poll_lsp_results()
+{
+    if (auto edit = core.lsp().take_server_apply_edit())
+        apply_lsp_workspace_edit(std::move(*edit));
+
+    if (auto locs = core.lsp().take_location_result())
+    {
+        const char *title = "locations";
+        switch (locs->kind)
+        {
+        case LspLocationList::Kind::Declaration:
+            title = "declarations";
+            break;
+        case LspLocationList::Kind::TypeDefinition:
+            title = "type definitions";
+            break;
+        case LspLocationList::Kind::References:
+            title = "references";
+            break;
+        default:
+            title = "definitions";
+            break;
+        }
+        open_lsp_locations(title, std::move(locs->items));
+    }
+
+    if (auto syms = core.lsp().take_symbol_result())
+    {
+        open_lsp_symbols(
+            syms->workspace ? "workspace symbols" : "document symbols",
+            std::move(syms->items));
+    }
+
+    if (auto ren = core.lsp().take_rename_result())
+    {
+        if (ren->edit.changes.empty())
+            Messages::warning("Rename produced no edits");
+        else
+            apply_lsp_workspace_edit(std::move(ren->edit));
+    }
+
+    if (auto acts = core.lsp().take_code_action_result())
+        open_lsp_actions(std::move(acts->items));
+}
+
+void UI::request_lsp_definition()
+{
+    Buffer *b = core.active_buffer();
+    if (!b)
+        return;
+    const Cursor c = editor.get_cursor();
+    if (core.lsp().request_definition(*b, c.line, c.column) <= 0)
+        Messages::info("Definition unavailable (no LSP)");
+    else
+        Messages::info("Finding definition…");
+}
+
+void UI::request_lsp_declaration()
+{
+    Buffer *b = core.active_buffer();
+    if (!b)
+        return;
+    const Cursor c = editor.get_cursor();
+    if (core.lsp().request_declaration(*b, c.line, c.column) <= 0)
+        Messages::info("Declaration unavailable (no LSP)");
+    else
+        Messages::info("Finding declaration…");
+}
+
+void UI::request_lsp_type_definition()
+{
+    Buffer *b = core.active_buffer();
+    if (!b)
+        return;
+    const Cursor c = editor.get_cursor();
+    if (core.lsp().request_type_definition(*b, c.line, c.column) <= 0)
+        Messages::info("Type definition unavailable (no LSP)");
+    else
+        Messages::info("Finding type definition…");
+}
+
+void UI::request_lsp_references()
+{
+    Buffer *b = core.active_buffer();
+    if (!b)
+        return;
+    const Cursor c = editor.get_cursor();
+    if (core.lsp().request_references(*b, c.line, c.column) <= 0)
+        Messages::info("References unavailable (no LSP)");
+    else
+        Messages::info("Finding references…");
+}
+
+void UI::request_lsp_document_symbols()
+{
+    Buffer *b = core.active_buffer();
+    if (!b)
+        return;
+    if (core.lsp().request_document_symbols(*b) <= 0)
+        Messages::info("Document symbols unavailable (no LSP)");
+    else
+        Messages::info("Loading symbols…");
+}
+
+void UI::request_lsp_workspace_symbols_prompt()
+{
+    if (command_line.is_active())
+        command_line.close();
+    if (lsp_picker.is_active())
+        lsp_picker.close();
+    keys.clear_chord();
+    prompt_intent = PromptIntent::WorkspaceSymbolQuery;
+    input_prompt.open("Workspace symbol: ");
+    focus = Focus::Prompt;
+    resize();
+}
+
+void UI::request_lsp_rename_prompt()
+{
+    if (command_line.is_active())
+        command_line.close();
+    if (lsp_picker.is_active())
+        lsp_picker.close();
+    keys.clear_chord();
+    prompt_intent = PromptIntent::RenameSymbol;
+    input_prompt.open("Rename to: ");
+    focus = Focus::Prompt;
+    resize();
+}
+
+void UI::request_lsp_code_actions()
+{
+    Buffer *b = core.active_buffer();
+    if (!b)
+        return;
+    const Cursor c = editor.get_cursor();
+    if (core.lsp().request_code_actions(*b, c, c) <= 0)
+        Messages::info("Code actions unavailable (no LSP)");
+    else
+        Messages::info("Loading code actions…");
 }
 
 void UI::sync_scm_ui()
@@ -1046,7 +1634,10 @@ void UI::sync_active_tab()
     const fs::path path = core.buffers().active().buffer().get_buffer_path();
     sidebar.set_active_file(path);
     if (!path.empty())
+    {
         sidebar.reveal_path(path);
+        fs_watcher_.watch(path);
+    }
 }
 
 void UI::return_to_normal()
@@ -1068,9 +1659,12 @@ void UI::return_to_normal()
     if (buffer_picker.is_active())
         buffer_picker.close();
 
+    if (lsp_picker.is_active())
+        lsp_picker.close();
+
     if (completion_picker.is_active())
         completion_picker.close();
-    core.lsp().cancel_completion();
+    core.lsp().cancel_pending();
 
     if (confirm_prompt.is_active())
     {
@@ -1199,6 +1793,11 @@ void UI::resolve_save_confirm(ConfirmChoice choice)
         resolve_delete_confirm(choice);
         return;
     }
+    if (confirm_intent == ConfirmIntent::DiscardGit)
+    {
+        resolve_discard_confirm(choice);
+        return;
+    }
 
     const ConfirmIntent intent = confirm_intent;
 
@@ -1262,6 +1861,12 @@ void UI::open_sidebar_prompt(PromptIntent intent)
     case PromptIntent::OpenWorkspace:
         input_prompt.open("Open workspace: ", project_root().string());
         break;
+    case PromptIntent::RenameSymbol:
+        input_prompt.open("Rename to: ");
+        break;
+    case PromptIntent::WorkspaceSymbolQuery:
+        input_prompt.open("Workspace symbol: ");
+        break;
     case PromptIntent::None:
         return;
     }
@@ -1294,6 +1899,40 @@ void UI::resolve_sidebar_prompt()
             return;
         }
         apply_workspace_root(path, true);
+        return;
+    }
+
+    if (intent == PromptIntent::RenameSymbol)
+    {
+        focus = Focus::Editor;
+        resize();
+        if (name.empty())
+        {
+            Messages::info("Cancelled");
+            return;
+        }
+        Buffer *b = core.active_buffer();
+        if (!b)
+            return;
+        const Cursor c = editor.get_cursor();
+        if (core.lsp().request_rename(*b, c.line, c.column, name) <= 0)
+            Messages::info("Rename unavailable (no LSP)");
+        else
+            Messages::info(std::format("Renaming to {}…", name));
+        return;
+    }
+
+    if (intent == PromptIntent::WorkspaceSymbolQuery)
+    {
+        focus = Focus::Editor;
+        resize();
+        Buffer *b = core.active_buffer();
+        if (!b)
+            return;
+        if (core.lsp().request_workspace_symbols(*b, name) <= 0)
+            Messages::info("Workspace symbols unavailable (no LSP)");
+        else
+            Messages::info("Searching workspace symbols…");
         return;
     }
 
@@ -1353,6 +1992,8 @@ void UI::resolve_sidebar_prompt()
         break;
     }
     case PromptIntent::OpenWorkspace:
+    case PromptIntent::RenameSymbol:
+    case PromptIntent::WorkspaceSymbolQuery:
     case PromptIntent::None:
         break;
     }
@@ -1431,6 +2072,9 @@ void UI::update_statusbar_mode()
     case Focus::BufferSearch:
         statusbar.set_mode("BUFFERS");
         break;
+    case Focus::LspPicker:
+        statusbar.set_mode("LSP");
+        break;
     case Focus::Completion:
         statusbar.set_mode("COMPLETE");
         break;
@@ -1452,7 +2096,8 @@ void UI::update_statusbar_mode()
 void UI::update_cursor_visibility()
 {
     if (focus == Focus::Command || focus == Focus::FileSearch ||
-        focus == Focus::BufferSearch || focus == Focus::Completion || focus == Focus::Confirm ||
+        focus == Focus::BufferSearch || focus == Focus::LspPicker ||
+        focus == Focus::Completion || focus == Focus::Confirm ||
         focus == Focus::Prompt || focus == Focus::Terminal || focus == Focus::Search)
         curs_set(1);
     else if (focus == Focus::Editor)
@@ -1533,6 +2178,7 @@ void UI::resize()
     const int picker_x = sb + std::max(1, (editor_pane_width - picker_w) / 2);
     file_picker.resize(picker_h, picker_w, picker_y, picker_x);
     buffer_picker.resize(picker_h, picker_w, picker_y, picker_x);
+    lsp_picker.resize(picker_h, picker_w, picker_y, picker_x);
 
     // Completion popup near the active cursor inside the editor pane.
     {
@@ -1587,8 +2233,10 @@ void UI::render()
         return;
 
     sync_scm_ui();
+    sync_scm_diff();
     core.lsp().pump();
     poll_completion_result();
+    poll_lsp_results();
 
     Cursor c = editor.get_cursor();
     int chr = 1;
@@ -1603,16 +2251,27 @@ void UI::render()
     statusbar.set_cursor_position(c.line + 1, chr, dcol);
     update_statusbar_mode();
     update_cursor_visibility();
+    sync_messages_echo();
+
+    const ScmFileDiff *diff_ptr = nullptr;
+    std::optional<ScmFileDiff> diff_hold;
+    if (Buffer *b = core.active_buffer(); b && !b->get_buffer_path().empty())
+    {
+        diff_hold = core.scm().file_diff(b->get_buffer_path());
+        if (diff_hold)
+            diff_ptr = &*diff_hold;
+    }
 
     line_number.sync(
         editor.get_scroll_y(),
         c.line,
         static_cast<int>(editor.get_buffer().lines().size()),
-        &editor.get_buffer().diagnostics());
+        &editor.get_buffer().diagnostics(),
+        diff_ptr);
 
+    // Do NOT werase(stdscr) every frame — that blanks the whole terminal and
+    // causes visible flicker on mode / focus changes. Panels paint their own cells.
     wbkgd(stdscr, COLOR_PAIR(Theme::Editor));
-    werase(stdscr);
-    wnoutrefresh(stdscr);
 
     header.draw();
     tab_bar.draw();
@@ -1639,6 +2298,8 @@ void UI::render()
         file_picker.draw();
     if (buffer_picker.is_active())
         buffer_picker.draw();
+    if (lsp_picker.is_active())
+        lsp_picker.draw();
     if (completion_picker.is_active())
         completion_picker.draw();
 
@@ -1698,6 +2359,11 @@ void UI::render()
         wnoutrefresh(editor.get_window());
         wnoutrefresh(buffer_picker.get_window());
     }
+    else if (lsp_picker.is_active())
+    {
+        wnoutrefresh(editor.get_window());
+        wnoutrefresh(lsp_picker.get_window());
+    }
     else if (completion_picker.is_active())
     {
         wnoutrefresh(editor.get_window());
@@ -1725,11 +2391,13 @@ void UI::render()
 void UI::run()
 {
     Logger::info("UI main loop started");
+    sync_fs_watches();
     while (running)
     {
         file_picker.poll();
         search_panel.poll();
         terminal.poll();
+        poll_fs_events();
         if (sidebar.poll() && core.buffers().has_tabs())
         {
             const fs::path path = core.buffers().active().buffer().get_buffer_path();
@@ -2205,6 +2873,22 @@ void UI::handle_inputs()
             return;
         }
         buffer_picker.handle_input(ch);
+        return;
+    }
+
+    if (focus == Focus::LspPicker)
+    {
+        if (ch == 27 || ch == 3)
+        {
+            close_lsp_picker(false);
+            return;
+        }
+        if (ch == '\n' || ch == KEY_ENTER)
+        {
+            close_lsp_picker(true);
+            return;
+        }
+        lsp_picker.handle_input(ch);
         return;
     }
 
