@@ -85,7 +85,7 @@ namespace
         bullet(out, "y{motion} / yy", "yank");
         bullet(out, "x / X", "delete char under / before cursor");
         bullet(out, "p / P", "paste after / before");
-        bullet(out, "u / Ctrl+r", "undo / redo");
+        bullet(out, "u / Ctrl+y", "undo / redo");
         bullet(out, "i a o O", "insert / append / open line");
         bullet(out, "\"{reg}", "select register before yank/paste");
         bullet(out, "m{a-z}", "set mark");
@@ -100,7 +100,8 @@ namespace
         bullet(out, "/pattern  ?pattern", "forward / backward search in buffer");
         bullet(out, "n  N", "next / previous match");
         bullet(out, ":search", "project find-in-files sidebar");
-        bullet(out, "Space s", "same as :search");
+        bullet(out, "Ctrl+Shift+f / Space Shift+f", "find in files");
+        bullet(out, "Ctrl+p", "quick open files");
         blank(out);
         line(out, "In-buffer search state is per EditorCore; highlights paint under syntax.");
     }
@@ -108,11 +109,11 @@ namespace
     void page_windows(std::vector<std::string> &out)
     {
         section(out, "WINDOWS / SPLITS");
-        bullet(out, "Ctrl+w v", "split vertical");
-        bullet(out, "Ctrl+w s", "split horizontal");
-        bullet(out, "Ctrl+w q", "close active split");
-        bullet(out, "Ctrl+w h/j/k/l", "focus left/down/up/right");
-        bullet(out, "Ctrl+w </>/-/+", "resize width / height");
+        bullet(out, "Ctrl+\\", "split vertical");
+        bullet(out, "Ctrl+k s", "split horizontal");
+        bullet(out, "Ctrl+k q", "close active split");
+        bullet(out, "Ctrl+k h/j/k/l", "focus left/down/up/right");
+        bullet(out, "Ctrl+k [ ] _ =", "resize width / height");
         blank(out);
         line(out, "Splits share Buffers; each Window has its own cursor/scroll/selection.");
     }
@@ -126,7 +127,8 @@ namespace
         bullet(out, "g t / g T", "next / previous tab");
         bullet(out, "Space ; / :buffers / :ls", "fuzzy open-buffer picker");
         bullet(out, "Space x", "close active editor");
-        bullet(out, "Space w / :w", "save");
+        bullet(out, "Ctrl+s / :w", "save");
+        bullet(out, "Ctrl+w", "close tab");
         bullet(out, ":wq / :q[!]", "write-quit / quit");
         bullet(out, "Space f / :find", "fuzzy file quick-open (recent when empty)");
     }
@@ -179,8 +181,8 @@ namespace
     void page_session(std::vector<std::string> &out)
     {
         section(out, "SESSION / RECOVERY");
-        bullet(out, "Space s s", "saveSession — write .noni/session.json");
-        bullet(out, "Space s r", "restoreSession — reopen tabs from session");
+        bullet(out, "Space m s", "saveSession — write .noni/session.json");
+        bullet(out, "Space m r", "restoreSession — reopen tabs from session");
         blank(out);
         line(out, "On quit: session (workspace, tabs, cursors, recent, UI flags) is saved.");
         line(out, "On start (no file arg): session tabs are restored if present.");
@@ -194,7 +196,11 @@ namespace
         section(out, "LSP");
         bullet(out, "Space l s", "lsp.showStatus");
         bullet(out, "Space l r", "lsp.restart");
+        bullet(out, ":lsp", "install panel (Enter installs selected server)");
         bullet(out, "Ctrl+Space / Space l c", "trigger completion");
+        bullet(out, ":logs [noni|lsp|install|grammar]", "file logs under logs/");
+        bullet(out, "F12 / g d", "go to definition");
+        bullet(out, "F2 / Space l n", "rename");
         bullet(out, "g d / g D / g y", "definition / declaration / type definition");
         bullet(out, "g r", "find references");
         bullet(out, "Space l o / Space l w", "document / workspace symbols");
@@ -202,6 +208,8 @@ namespace
         bullet(out, "Space l a", "code actions / quick fix");
         blank(out);
         line(out, "Configured in config.json -> lsp.servers (language, command, rootMarkers).");
+        line(out, "Logger → logs/noni.log (truncated each launch). LSP stderr → logs/lsp.stderr.log.");
+        line(out, ":messages = statusbar ring only; :logs = file logs.");
         line(out, "Diagnostics: gutter markers (! ? i .) + inline highlight.");
         line(out, "Completion picker: ^v, Enter/Tab accept, Esc cancel.");
         line(out, "Navigation results use the shared LSP picker; jumps recorded.");
@@ -241,11 +249,15 @@ namespace
         bullet(out, "sidebarWidth", "explorer width");
         bullet(out, "lineNumberWidth", "gutter width");
         bullet(out, "escDelayMs", "ncurses ESC delay");
-        bullet(out, "syntaxAutoInstall", "tree-sitter: curl+tar (nvim-style) then git");
+        bullet(out, "syntaxAutoInstall", "tree-sitter → ~/.local/share/noni/tree-sitter/ (else .noni/tree-sitter)");
+        line(out, "Statusbar shows download/compile path; details in logs/grammar-install.log");
+        bullet(out, "lsp.autoInstall", "missing servers → ~/.local/share/noni/lsp/ (pip/npm/bun/curl/go)");
+        line(out, "Details: logs/lsp-install.log — no sudo / no manual pip");
         bullet(out, "terminal.*", "shell, height, scrollback");
         bullet(out, "lsp.servers[]", "language servers");
         bullet(out, "extensions.*", "per-extension settings");
-        bullet(out, "keybindings[]", "key / command / when");
+        bullet(out, "keybindings[]", "ONLY source of command keys (C++ defaults empty)");
+        line(out, "Edit config.json — workbench/LSP chords are not hardcoded in code.");
         blank(out);
         line(out, "`when` context flags: editorFocus, normalMode, insertMode, visualMode,");
         line(out, "sidebarFocus, terminalFocus, searchFocus, ...");
@@ -296,6 +308,9 @@ namespace
         bullet(out, "Space t", "terminal");
         bullet(out, "Space f", "fuzzy files");
         bullet(out, "Ctrl+Space", "LSP completion");
+        bullet(out, "Ctrl+t", "toggle terminal");
+        bullet(out, "Ctrl+p", "quick open");
+        bullet(out, "Ctrl+s", "save");
         bullet(out, ":help all", "full documentation dump");
         blank(out);
         line(out, "Coordinate systems: Cursor.column = UTF-8 bytes;");

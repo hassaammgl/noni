@@ -18,7 +18,6 @@ struct FuzzyMatch
 
 namespace Fuzzy
 {
-    // Returns match score, or -1 if no match.
     int score(std::string_view text, std::string_view query);
 
     std::vector<FuzzyMatch> filter(
@@ -32,8 +31,8 @@ class FileIndex
 {
 public:
     void set_root(const fs::path &root);
-    void rebuild();          // sync
-    void rebuild_async();    // background; UI should poll ready()
+    void rebuild();       // sync
+    void rebuild_async(); // background; UI should poll ready()
     bool is_indexing() const;
     std::uint64_t version() const;
 

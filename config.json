@@ -1,7 +1,7 @@
 {
   "appName": "noni",
   "sidebarWidth": 25,
-  "lineNumberWidth": 5,
+  "lineNumberWidth": 7,
   "escDelayMs": 25,
   "syntaxAutoInstall": true,
   "terminal": {
@@ -11,10 +11,11 @@
   },
   "extensions": {
     "noni.hello": {
-      "greet": ""
+      "greet": "Welcome back"
     }
   },
   "lsp": {
+    "autoInstall": true,
     "servers": [
       {
         "language": "cpp",
@@ -35,19 +36,109 @@
       "when": ""
     },
     {
-      "key": "space w",
+      "key": "ctrl+s",
       "command": "workbench.action.files.save",
-      "when": "editorFocus && normalMode"
+      "when": "editorFocus"
     },
     {
-      "key": "space x",
+      "key": "ctrl+w",
       "command": "workbench.action.closeActiveEditor",
       "when": "editorFocus && normalMode"
     },
     {
-      "key": "space f",
+      "key": "ctrl+p",
       "command": "noni.search.files",
       "when": "editorFocus && normalMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "ctrl+shift+f",
+      "command": "workbench.action.findInFiles",
+      "when": "editorFocus && normalMode || searchFocus || sidebarFocus"
+    },
+    {
+      "key": "space shift+f",
+      "command": "workbench.action.findInFiles",
+      "when": "editorFocus && normalMode || searchFocus || sidebarFocus"
+    },
+    {
+      "key": "ctrl+b",
+      "command": "workbench.action.toggleSidebarVisibility",
+      "when": "editorFocus && normalMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "ctrl+t",
+      "command": "workbench.action.terminal.toggle",
+      "when": "editorFocus && normalMode || terminalFocus || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "ctrl+y",
+      "command": "editor.action.redo",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+v",
+      "command": "editor.action.clipboardPasteAction",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+space",
+      "command": "editor.action.triggerSuggest",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+backslash",
+      "command": "workbench.action.splitEditorRight",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+k s",
+      "command": "workbench.action.splitEditorDown",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+k q",
+      "command": "workbench.action.closeActiveEditorGroup",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+k h",
+      "command": "workbench.action.focusLeftGroup",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+k l",
+      "command": "workbench.action.focusRightGroup",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+k k",
+      "command": "workbench.action.focusAboveGroup",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+k j",
+      "command": "workbench.action.focusBelowGroup",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+k leftbracket",
+      "command": "workbench.action.decreaseViewWidth",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+k rightbracket",
+      "command": "workbench.action.increaseViewWidth",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+k underscore",
+      "command": "workbench.action.decreaseViewHeight",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+k equals",
+      "command": "workbench.action.increaseViewHeight",
+      "when": "editorFocus && normalMode"
     },
     {
       "key": "space ;",
@@ -65,11 +156,6 @@
       "when": "editorFocus && normalMode"
     },
     {
-      "key": "space b",
-      "command": "workbench.action.toggleSidebarVisibility",
-      "when": "editorFocus && normalMode || sidebarFocus || searchFocus"
-    },
-    {
       "key": "space e",
       "command": "workbench.view.explorer",
       "when": "editorFocus && normalMode || searchFocus"
@@ -78,21 +164,6 @@
       "key": "space e",
       "command": "noni.focus.editor",
       "when": "sidebarFocus"
-    },
-    {
-      "key": "space s",
-      "command": "workbench.action.findInFiles",
-      "when": "editorFocus && normalMode || searchFocus || sidebarFocus"
-    },
-    {
-      "key": "space t",
-      "command": "workbench.action.terminal.toggle",
-      "when": "editorFocus && normalMode || terminalFocus || sidebarFocus || searchFocus"
-    },
-    {
-      "key": "space p",
-      "command": "editor.action.clipboardPasteAction",
-      "when": "editorFocus && normalMode"
     },
     {
       "key": "tab",
@@ -110,6 +181,11 @@
       "when": "editorFocus && normalMode"
     },
     {
+      "key": "g g",
+      "command": "editor.action.goToFileStart",
+      "when": "editorFocus && normalMode"
+    },
+    {
       "key": "g shift+t",
       "command": "workbench.action.previousEditor",
       "when": "editorFocus && normalMode"
@@ -118,66 +194,6 @@
       "key": "u",
       "command": "editor.action.undo",
       "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "ctrl+r",
-      "command": "editor.action.redo",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "ctrl+w v",
-      "command": "workbench.action.splitEditorRight",
-      "when": "editorFocus"
-    },
-    {
-      "key": "ctrl+w s",
-      "command": "workbench.action.splitEditorDown",
-      "when": "editorFocus"
-    },
-    {
-      "key": "ctrl+w q",
-      "command": "workbench.action.closeActiveEditorGroup",
-      "when": "editorFocus"
-    },
-    {
-      "key": "ctrl+w h",
-      "command": "workbench.action.focusLeftGroup",
-      "when": "editorFocus"
-    },
-    {
-      "key": "ctrl+w l",
-      "command": "workbench.action.focusRightGroup",
-      "when": "editorFocus"
-    },
-    {
-      "key": "ctrl+w k",
-      "command": "workbench.action.focusAboveGroup",
-      "when": "editorFocus"
-    },
-    {
-      "key": "ctrl+w j",
-      "command": "workbench.action.focusBelowGroup",
-      "when": "editorFocus"
-    },
-    {
-      "key": "ctrl+w <",
-      "command": "workbench.action.decreaseViewWidth",
-      "when": "editorFocus"
-    },
-    {
-      "key": "ctrl+w >",
-      "command": "workbench.action.increaseViewWidth",
-      "when": "editorFocus"
-    },
-    {
-      "key": "ctrl+w -",
-      "command": "workbench.action.decreaseViewHeight",
-      "when": "editorFocus"
-    },
-    {
-      "key": "ctrl+w +",
-      "command": "workbench.action.increaseViewHeight",
-      "when": "editorFocus"
     },
     {
       "key": "space g r",
@@ -215,12 +231,12 @@
       "when": "editorFocus && normalMode"
     },
     {
-      "key": "space s s",
+      "key": "space m s",
       "command": "workbench.action.saveSession",
       "when": "editorFocus && normalMode"
     },
     {
-      "key": "space s r",
+      "key": "space m r",
       "command": "workbench.action.restoreSession",
       "when": "editorFocus && normalMode"
     },
@@ -235,18 +251,13 @@
       "when": "editorFocus && normalMode"
     },
     {
-      "key": "space h",
-      "command": "extension.hello.ping",
+      "key": "space l c",
+      "command": "editor.action.triggerSuggest",
       "when": "editorFocus && normalMode"
     },
     {
-      "key": "ctrl+space",
-      "command": "editor.action.triggerSuggest",
-      "when": "editorFocus"
-    },
-    {
-      "key": "space l c",
-      "command": "editor.action.triggerSuggest",
+      "key": "f12",
+      "command": "editor.action.revealDefinition",
       "when": "editorFocus && normalMode"
     },
     {
@@ -265,6 +276,11 @@
       "when": "editorFocus && normalMode"
     },
     {
+      "key": "shift+f12",
+      "command": "editor.action.goToReferences",
+      "when": "editorFocus && normalMode"
+    },
+    {
       "key": "g r",
       "command": "editor.action.goToReferences",
       "when": "editorFocus && normalMode"
@@ -277,6 +293,11 @@
     {
       "key": "space l w",
       "command": "workbench.action.showAllSymbols",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "f2",
+      "command": "editor.action.rename",
       "when": "editorFocus && normalMode"
     },
     {

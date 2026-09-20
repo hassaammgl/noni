@@ -5,10 +5,15 @@
 
 #include <array>
 #include <cctype>
+#include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <format>
 #include <mutex>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include <system_error>
 #include <unordered_map>
 #include <unordered_set>
@@ -21,6 +26,51 @@ namespace
     std::atomic<std::uint64_t> g_generation{1};
     std::unordered_map<std::string, GrammarInstaller::Status> g_status;
     std::unordered_set<std::string> g_queued;
+    std::unordered_map<std::string, std::chrono::steady_clock::time_point> g_failed_at;
+    constexpr auto kFailedRetry = std::chrono::seconds(60);
+    fs::path g_workspace_root;
+    fs::path g_user_dir_cache;
+    bool g_user_dir_resolved = false;
+
+    bool dir_writable(const fs::path &dir)
+    {
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        if (ec)
+            return false;
+        const fs::path probe = dir / ".write_test";
+        std::FILE *f = std::fopen(probe.c_str(), "w");
+        if (!f)
+            return false;
+        std::fclose(f);
+        fs::remove(probe, ec);
+        return true;
+    }
+
+    fs::path xdg_grammar_dir()
+    {
+        if (const char *home = std::getenv("HOME"); home && *home)
+            return fs::path(home) / ".local" / "share" / "noni" / "tree-sitter";
+        return fs::path("/tmp/noni-tree-sitter");
+    }
+
+    fs::path workspace_grammar_dir()
+    {
+        fs::path root;
+        {
+            std::lock_guard lock(g_mu);
+            root = g_workspace_root;
+        }
+        if (root.empty())
+            return {};
+        return root / ".noni" / "tree-sitter";
+    }
+
+    fs::path tmp_grammar_dir()
+    {
+        return fs::path("/tmp") /
+               std::format("noni-tree-sitter-{}", static_cast<unsigned>(::getuid()));
+    }
 
     // Mirrors classic nvim-treesitter install_info (url + location + branch).
     struct InstallSpec
@@ -127,8 +177,11 @@ namespace
 
     int run_cmd(const std::string &cmd)
     {
+        // Keep install chatter out of the TTY (same class of bug as LSP stderr).
+        (void)mkdir("logs", 0755);
+        const std::string wrapped = cmd + " >>logs/grammar-install.log 2>&1";
         Logger::debug(std::format("grammar-install: {}", cmd));
-        return std::system(cmd.c_str());
+        return std::system(wrapped.c_str());
     }
 
     std::string repo_basename(const std::string &url)
@@ -193,7 +246,8 @@ namespace
                     rev);
 
             const std::string curl_cmd = std::format(
-                "curl --silent --show-error -L \"{}\" --output \"{}\"",
+                "curl --fail --location --silent --show-error --max-time 120 "
+                "-L \"{}\" --output \"{}\"",
                 archive_url,
                 tar_path.string());
             if (run_cmd(curl_cmd) != 0 || !fs::exists(tar_path))
@@ -374,7 +428,8 @@ namespace
         fs::create_directories(out_so.parent_path());
         const fs::path tmp = out_so.string() + ".tmp";
 
-        // nvim: -o parser.so -I./src files -Os -std=c11 -shared -fPIC [-lstdc++]
+        // nvim: -o parser.so -I./src files -Os -shared -fPIC [-lstdc++]
+        // Use c11 for C-only grammars; C++ scanners need a C++ standard.
         std::string cmd = cc;
         cmd += " -o \"";
         cmd += tmp.string();
@@ -387,9 +442,8 @@ namespace
             cmd += s.string();
             cmd += "\"";
         }
-        cmd += " -Os -std=c11 -shared -fPIC";
-        if (cxx)
-            cmd += " -lstdc++";
+        cmd += cxx ? " -Os -std=c++14 -shared -fPIC -lstdc++"
+                   : " -Os -std=c11 -shared -fPIC";
 
         if (run_cmd(cmd) != 0)
         {
@@ -415,7 +469,25 @@ namespace
         const fs::path repo_dir = cache_folder / project;
         const fs::path out_so = root / spec.so_name;
 
-        fs::create_directories(cache_folder);
+        Messages::info(std::format(
+            "Grammar {} → {}",
+            spec.so_name,
+            root.string()));
+
+        std::error_code ec;
+        fs::create_directories(cache_folder, ec);
+        if (ec)
+        {
+            Logger::error(std::format(
+                "grammar-install: cannot write {} ({}) — fix ownership "
+                "(e.g. sudo chown -R \"$USER\" ~/.local/share/noni)",
+                cache_folder.string(),
+                ec.message()));
+            Messages::error(std::format(
+                "Grammar dir not writable: {}",
+                root.string()));
+            return false;
+        }
 
         const bool have_src =
             fs::exists(repo_dir / spec.src_rel / "parser.c") ||
@@ -423,6 +495,10 @@ namespace
 
         if (!have_src)
         {
+            Messages::info(std::format(
+                "Downloading {} → {}",
+                project,
+                repo_dir.string()));
             // nvim order: curl+tar first, then git.
             if (!download_tarball(spec, cache_folder, repo_dir) &&
                 !download_git(spec, cache_folder, repo_dir))
@@ -430,16 +506,29 @@ namespace
                 Logger::error(std::format(
                     "grammar-install: download failed for {} (need curl+tar or git)",
                     spec.so_name));
+                Messages::warning(std::format(
+                    "Download failed: {} (see logs/grammar-install.log)",
+                    project));
                 return false;
             }
+            Messages::info(std::format("Downloaded {}", project));
+        }
+        else
+        {
+            Messages::info(std::format("Using cached src {}", repo_dir.string()));
         }
 
         fs::path src_dir = repo_dir / spec.src_rel;
         if (!fs::exists(src_dir / "parser.c"))
             src_dir = repo_dir / "src";
+
+        Messages::info(std::format("Compiling {} → {}", spec.so_name, out_so.string()));
         if (!compile_parser(src_dir, out_so))
         {
             Logger::error(std::format("grammar-install: compile failed for {}", spec.so_name));
+            Messages::warning(std::format(
+                "Compile failed: {} (see logs/grammar-install.log)",
+                spec.so_name));
             return false;
         }
 
@@ -466,13 +555,60 @@ bool GrammarInstaller::auto_install()
     return g_auto_install;
 }
 
+void GrammarInstaller::set_workspace_root(const fs::path &root)
+{
+    std::lock_guard lock(g_mu);
+    if (g_workspace_root == root)
+        return;
+    g_workspace_root = root;
+    // Re-resolve install dir so we can prefer <ws>/.noni/tree-sitter.
+    g_user_dir_resolved = false;
+    g_user_dir_cache.clear();
+}
+
 fs::path GrammarInstaller::user_dir()
 {
-    const char *home = std::getenv("HOME");
-    if (!home || !*home)
-        return fs::path("/tmp/noni-tree-sitter");
-    // Same shape as nvim stdpath('data')/... — under XDG data home.
-    return fs::path(home) / ".local" / "share" / "noni" / "tree-sitter";
+    {
+        std::lock_guard lock(g_mu);
+        if (g_user_dir_resolved)
+            return g_user_dir_cache;
+    }
+
+    const fs::path preferred = xdg_grammar_dir();
+    if (dir_writable(preferred))
+    {
+        std::lock_guard lock(g_mu);
+        g_user_dir_cache = preferred;
+        g_user_dir_resolved = true;
+        return g_user_dir_cache;
+    }
+
+    const fs::path ws = workspace_grammar_dir();
+    if (!ws.empty() && dir_writable(ws))
+    {
+        Logger::warning(std::format(
+            "grammar-install: {} not writable — using {} "
+            "(fix with: sudo chown -R \"$USER\" ~/.local/share/noni)",
+            preferred.string(),
+            ws.string()));
+        std::lock_guard lock(g_mu);
+        g_user_dir_cache = ws;
+        g_user_dir_resolved = true;
+        return g_user_dir_cache;
+    }
+
+    const fs::path tmp = tmp_grammar_dir();
+    std::error_code ec;
+    fs::create_directories(tmp, ec);
+    Logger::warning(std::format(
+        "grammar-install: {} not writable — using {} "
+        "(fix with: sudo chown -R \"$USER\" ~/.local/share/noni)",
+        preferred.string(),
+        tmp.string()));
+    std::lock_guard lock(g_mu);
+    g_user_dir_cache = tmp;
+    g_user_dir_resolved = true;
+    return g_user_dir_cache;
 }
 
 fs::path GrammarInstaller::so_path(const std::string &so_name)
@@ -486,9 +622,28 @@ fs::path GrammarInstaller::find_grammar(const std::string &so_name)
     if (fs::exists(system))
         return system;
 
-    const fs::path user = so_path(so_name);
+    // Preferred XDG path (may be root-owned and read-only — still load .so from it).
+    {
+        const fs::path preferred = xdg_grammar_dir() / so_name;
+        if (fs::exists(preferred))
+            return preferred;
+    }
+
+    // Project-local cache (used when XDG is broken / unwritable).
+    if (const fs::path ws = workspace_grammar_dir(); !ws.empty())
+    {
+        const fs::path cand = ws / so_name;
+        if (fs::exists(cand))
+            return cand;
+    }
+
+    const fs::path user = so_path(so_name); // writable dir (xdg / .noni / /tmp)
     if (fs::exists(user))
         return user;
+
+    const fs::path tmp = tmp_grammar_dir() / so_name;
+    if (fs::exists(tmp))
+        return tmp;
 
     return {};
 }
@@ -500,9 +655,11 @@ std::uint64_t GrammarInstaller::generation()
 
 GrammarInstaller::Status GrammarInstaller::status(const std::string &so_name)
 {
-    std::lock_guard lock(g_mu);
-    if (const auto it = g_status.find(so_name); it != g_status.end())
-        return it->second;
+    {
+        std::lock_guard lock(g_mu);
+        if (const auto it = g_status.find(so_name); it != g_status.end())
+            return it->second;
+    }
     if (!find_grammar(so_name).empty())
         return Status::Ready;
     return Status::Missing;
@@ -528,36 +685,55 @@ void GrammarInstaller::request(Language lang)
         std::lock_guard lock(g_mu);
         if (!g_auto_install)
             return;
-        // Don't spam the job queue every frame after a failure (restart clears status).
-        if (g_queued.count(so) || g_status[so] == Status::Installing ||
-            g_status[so] == Status::Failed)
+        if (g_queued.count(so) || g_status[so] == Status::Installing)
             return;
+        if (g_status[so] == Status::Failed)
+        {
+            const auto it = g_failed_at.find(so);
+            if (it != g_failed_at.end() &&
+                std::chrono::steady_clock::now() - it->second < kFailedRetry)
+                return;
+        }
         g_queued.insert(so);
         g_status[so] = Status::Installing;
+        g_failed_at.erase(so);
     }
 
-    Messages::info(std::format("Installing tree-sitter grammar: {}…", so));
-    Logger::info(std::format("grammar-install: queued {} (nvim-style curl/tar|git)", so));
+    const fs::path dest = GrammarInstaller::user_dir();
+    Messages::info(std::format(
+        "Installing {} → {} …",
+        so,
+        dest.string()));
+    Logger::info(std::format(
+        "grammar-install: queued {} → {}",
+        so,
+        dest.string()));
 
     const std::string so_name = so;
     InstallSpec spec_copy = *spec;
 
     Background::instance().post([so_name, spec_copy]() {
         const bool ok = install_one(spec_copy);
+        const fs::path out = GrammarInstaller::so_path(so_name);
         {
             std::lock_guard lock(g_mu);
             g_queued.erase(so_name);
             g_status[so_name] = ok ? Status::Ready : Status::Failed;
+            if (!ok)
+                g_failed_at[so_name] = std::chrono::steady_clock::now();
+            else
+                g_failed_at.erase(so_name);
         }
         if (ok)
         {
             g_generation.fetch_add(1, std::memory_order_relaxed);
-            Messages::info(std::format("Tree-sitter grammar ready: {}", so_name));
+            Messages::info(std::format("Grammar ready: {}", out.string()));
         }
         else
         {
             Messages::warning(std::format(
-                "Tree-sitter install failed: {} (using lexer)", so_name));
+                "Grammar failed: {} (retry 60s; log: logs/grammar-install.log)",
+                so_name));
         }
     });
 }

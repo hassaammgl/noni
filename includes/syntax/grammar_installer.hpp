@@ -11,7 +11,7 @@ namespace fs = std::filesystem;
 
 // nvim-treesitter-style grammar install:
 // prefer curl+tar of GitHub archive, fall back to git clone, then compile .so
-// into ~/.local/share/noni/tree-sitter/
+// into ~/.local/share/noni/tree-sitter/ (or <workspace>/.noni/tree-sitter fallback)
 class GrammarInstaller
 {
 public:
@@ -25,6 +25,9 @@ public:
 
     static void set_auto_install(bool enabled);
     static bool auto_install();
+
+    // Prefer <workspace>/.noni/tree-sitter when XDG data dir is unwritable.
+    static void set_workspace_root(const fs::path &root);
 
     static fs::path user_dir();
     static fs::path so_path(const std::string &so_name); // name.so under user_dir

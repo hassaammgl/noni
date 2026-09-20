@@ -130,8 +130,18 @@ private:
     std::atomic<LspSessionState> state_{LspSessionState::Idle};
     std::mutex write_mu_;
     std::unordered_set<std::string> open_uris_;
+    struct PendingOpen
+    {
+        std::string uri;
+        std::string language_id;
+        int version = 1;
+        std::string text;
+    };
+    std::vector<PendingOpen> pending_opens_;
     int initialize_id_ = 0;
     bool initialized_sent_ = false;
+
+    void flush_did_open(const PendingOpen &doc);
 };
 
 class LspService
@@ -200,6 +210,7 @@ private:
     std::vector<LspServerConfig> configs_;
     std::unordered_map<std::string, std::unique_ptr<LspSession>> sessions_;
     std::unordered_map<std::uintptr_t, LspDocumentState> documents_;
+    std::uint64_t install_gen_ = 0;
 
     std::unordered_map<int, LspPendingRequest> pending_;
 

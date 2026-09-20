@@ -33,11 +33,26 @@ namespace
 bool TextSearch::should_skip_dir(const std::string &name)
 {
     static const char *skip[] = {
-        ".git", ".hg", ".svn",
-        "node_modules", "target", "build", "dist", "out",
-        ".cache", ".idea", ".vscode", ".cursor",
-        "__pycache__", ".next", ".nuxt", "vendor",
-        "CMakeFiles", ".tox", ".venv", "venv",
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        "target",
+        "build",
+        "dist",
+        "out",
+        ".cache",
+        ".idea",
+        ".vscode",
+        ".cursor",
+        "__pycache__",
+        ".next",
+        ".nuxt",
+        "vendor",
+        "CMakeFiles",
+        ".tox",
+        ".venv",
+        "venv",
     };
     for (const char *s : skip)
     {
@@ -167,7 +182,8 @@ std::vector<TextMatch> TextSearch::scan(
             if (!line.empty() && line.back() == '\r')
                 line.pop_back();
 
-            auto add_match = [&](std::size_t col) {
+            auto add_match = [&](std::size_t col)
+            {
                 TextMatch m;
                 m.path = entry.path();
                 m.line = line_no;
@@ -199,13 +215,15 @@ std::vector<TextMatch> TextSearch::scan(
             }
             else
             {
-                const std::string hay = opts.match_case ? line : [&]() {
+                const std::string hay = opts.match_case ? line : [&]()
+                {
                     std::string s = line;
                     for (char &c : s)
                         c = lower(c);
                     return s;
                 }();
-                const std::string needle = opts.match_case ? query : [&]() {
+                const std::string needle = opts.match_case ? query : [&]()
+                {
                     std::string s = query;
                     for (char &c : s)
                         c = lower(c);
@@ -256,7 +274,8 @@ void TextSearch::search_async(const std::string &query, TextSearchOptions opts)
     job_token.store(token, std::memory_order_relaxed);
     searching.store(true, std::memory_order_release);
 
-    Background::instance().post([this, root, query, opts, token]() {
+    Background::instance().post([this, root, query, opts, token]()
+                                {
         if (job_token.load(std::memory_order_relaxed) != token)
             return;
 
@@ -282,6 +301,5 @@ void TextSearch::search_async(const std::string &query, TextSearchOptions opts)
         }
         searching.store(false, std::memory_order_release);
         ver.fetch_add(1, std::memory_order_relaxed);
-        Logger::info(std::format("TextSearch: {} hits for '{}'", results().size(), query));
-    });
+        Logger::info(std::format("TextSearch: {} hits for '{}'", results().size(), query)); });
 }

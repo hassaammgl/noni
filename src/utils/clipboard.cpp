@@ -8,9 +8,18 @@
 
 namespace
 {
+    struct PipeCloser
+    {
+        void operator()(FILE *f) const noexcept
+        {
+            if (f)
+                ::pclose(f);
+        }
+    };
+
     std::optional<std::string> run_capture(const char *cmd)
     {
-        std::unique_ptr<FILE, decltype(&pclose)> pipe(popen(cmd, "r"), pclose);
+        std::unique_ptr<FILE, PipeCloser> pipe(popen(cmd, "r"));
         if (!pipe)
             return std::nullopt;
 
@@ -18,9 +27,6 @@ namespace
         char buf[4096];
         while (std::fgets(buf, sizeof(buf), pipe.get()) != nullptr)
             out += buf;
-
-        // Also drain any remaining without newline
-        // (fgets already covers text; binary paste rare for editors)
 
         if (out.empty())
             return std::nullopt;

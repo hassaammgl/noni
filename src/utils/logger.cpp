@@ -17,34 +17,34 @@ namespace fs = std::filesystem;
 
 namespace
 {
-constexpr const char *LOG_DIR = "logs";
-constexpr const char *LOG_PATH = "logs/noni.log";
+    constexpr const char *LOG_DIR = "logs";
+    constexpr const char *LOG_PATH = "logs/noni.log";
 
-std::ofstream log_file;
-bool log_ready = false;
+    std::ofstream log_file;
+    bool log_ready = false;
 
-std::mutex queue_mu;
-std::condition_variable queue_cv;
-std::queue<std::string> queue;
-std::thread writer;
-std::atomic<bool> running{false};
+    std::mutex queue_mu;
+    std::condition_variable queue_cv;
+    std::queue<std::string> queue;
+    std::thread writer;
+    std::atomic<bool> running{false};
 
-std::string timestamp()
-{
-    const auto now = std::chrono::system_clock::now();
-    const std::time_t t = std::chrono::system_clock::to_time_t(now);
-    std::tm tm{};
+    std::string timestamp()
+    {
+        const auto now = std::chrono::system_clock::now();
+        const std::time_t t = std::chrono::system_clock::to_time_t(now);
+        std::tm tm{};
 
 #if defined(_WIN32)
-    localtime_s(&tm, &t);
+        localtime_s(&tm, &t);
 #else
-    localtime_r(&t, &tm);
+        localtime_r(&t, &tm);
 #endif
 
-    std::ostringstream out;
-    out << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
-    return out.str();
-}
+        std::ostringstream out;
+        out << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+        return out.str();
+    }
 } // namespace
 
 void Logger::ensure_open()
@@ -66,9 +66,8 @@ void Logger::writer_loop()
     {
         {
             std::unique_lock lock(queue_mu);
-            queue_cv.wait_for(lock, std::chrono::milliseconds(100), []() {
-                return !queue.empty() || !running.load(std::memory_order_acquire);
-            });
+            queue_cv.wait_for(lock, std::chrono::milliseconds(100), []()
+                              { return !queue.empty() || !running.load(std::memory_order_acquire); });
 
             while (!queue.empty())
             {

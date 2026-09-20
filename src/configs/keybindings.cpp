@@ -1,6 +1,9 @@
 #include <configs/keybindings.hpp>
 #include <commands/command_registry.hpp>
+#include <utils/logger.hpp>
 #include <utils/str.hpp>
+
+#include <format>
 
 #include <ncurses.h>
 #include <algorithm>
@@ -56,8 +59,36 @@ namespace
             t.code = KEY_F(3);
         else if (name == "f4")
             t.code = KEY_F(4);
+        else if (name == "f5")
+            t.code = KEY_F(5);
+        else if (name == "f6")
+            t.code = KEY_F(6);
+        else if (name == "f7")
+            t.code = KEY_F(7);
+        else if (name == "f8")
+            t.code = KEY_F(8);
+        else if (name == "f9")
+            t.code = KEY_F(9);
+        else if (name == "f10")
+            t.code = KEY_F(10);
+        else if (name == "f11")
+            t.code = KEY_F(11);
+        else if (name == "f12")
+            t.code = KEY_F(12);
         else if (name == "`" || name == "backtick" || name == "grave")
             t.code = '`';
+        else if (name == "\\" || name == "backslash")
+            t.code = '\\';
+        else if (name == "[" || name == "leftbracket")
+            t.code = '[';
+        else if (name == "]" || name == "rightbracket")
+            t.code = ']';
+        else if (name == "-" || name == "minus")
+            t.code = '-';
+        else if (name == "=" || name == "equals" || name == "plus")
+            t.code = '=';
+        else if (name == "_" || name == "underscore")
+            t.code = '_';
         else if (name.size() == 1)
         {
             char c = name[0];
@@ -94,6 +125,13 @@ void KeybindingEngine::load(const AppConfig &config)
         {
             rb.leader = is_leader_token(rb.chord.front());
             bindings.push_back(std::move(rb));
+        }
+        else
+        {
+            Logger::warning(std::format(
+                "keybinding skipped (unparsed key or empty command): '{}' -> '{}'",
+                kb.key,
+                kb.command));
         }
     }
 }
@@ -187,6 +225,11 @@ KeyToken KeybindingEngine::from_raw(int raw_key)
         t.code = KEY_F(4);
         return t;
     }
+    if (raw_key == KEY_F(5))
+    {
+        t.code = KEY_F(5);
+        return t;
+    }
     if (raw_key == KEY_F(6))
     {
         t.code = KEY_F(6);
@@ -202,11 +245,39 @@ KeyToken KeybindingEngine::from_raw(int raw_key)
         t.code = KEY_F(8);
         return t;
     }
+    if (raw_key == KEY_F(9))
+    {
+        t.code = KEY_F(9);
+        return t;
+    }
+    if (raw_key == KEY_F(10))
+    {
+        t.code = KEY_F(10);
+        return t;
+    }
+    if (raw_key == KEY_F(11))
+    {
+        t.code = KEY_F(11);
+        return t;
+    }
+    if (raw_key == KEY_F(12))
+    {
+        t.code = KEY_F(12);
+        return t;
+    }
 
     if (raw_key >= 1 && raw_key <= 26)
     {
         t.ctrl = true;
         t.code = 'a' + (raw_key - 1);
+        return t;
+    }
+
+    // Ctrl+\ (ASCII FS) — VS Code split binding.
+    if (raw_key == 28)
+    {
+        t.ctrl = true;
+        t.code = '\\';
         return t;
     }
 
@@ -326,59 +397,15 @@ ResolveResult KeybindingEngine::resolve_pending(const std::string &when_context,
     {
         if (pending.size() > 1)
         {
-            const KeyToken last = pending.back();
-            pending.clear();
-            pending.push_back(last);
-            return resolve_pending(when_context, input_ctx);
-        }
-        pending.clear();
-        result.status = ResolveStatus::Unmatched;
-        return result;
-    }
-
-    // Soft prefix: bare editor-modal starters (g, d, c, y, m, ', ") must not
-    // steal keys from the editor state machine. Ctrl/Alt chords (ctrl+w …) and
-    // Space-leader chords still consume as Prefix.
-    if (!any_leader_prefix &&
-        (input_ctx == InputContext::EditorNormal ||
-         input_ctx == InputContext::EditorVisual ||
-         input_ctx == InputContext::EditorInsert))
-    {
-        bool any_modified_prefix = false;
-        for (const auto &b : bindings)
-        {
-            if (!when_matches(b.when, when_context))
-                continue;
-            if (b.chord.size() <= pending.size())
-                continue;
-            bool prefix = true;
-            for (std::size_t i = 0; i < pending.size(); ++i)
-            {
-                if (!(b.chord[i] == pending[i]))
-                {
-                    prefix = false;
-                    break;
-                }
-            }
-            if (!prefix)
-                continue;
-            if (b.chord.front().ctrl || b.chord.front().alt)
-                any_modified_prefix = true;
-        }
-
-        const KeyToken &first = pending.front();
-        const bool editor_modal =
-            !first.ctrl && !first.alt &&
-            (first.code == 'g' || first.code == 'd' || first.code == 'c' ||
-             first.code == 'y' || first.code == 'm' || first.code == '\'' ||
-             first.code == '"');
-
-        if (!any_modified_prefix && editor_modal)
-        {
+            // Chord failed — drop the whole attempt so the last key can fall
+            // through to the editor (JSON is source of truth for prefixes).
             pending.clear();
             result.status = ResolveStatus::Unmatched;
             return result;
         }
+        pending.clear();
+        result.status = ResolveStatus::Unmatched;
+        return result;
     }
 
     result.status = ResolveStatus::Prefix;

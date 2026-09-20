@@ -15,7 +15,9 @@ void CommandRegistry::diagnose(
         for (const auto &id : known_)
         {
             if (!bound.count(id))
+            {
                 unbound_out->push_back(id);
+            }
         }
     }
 
@@ -24,7 +26,9 @@ void CommandRegistry::diagnose(
         for (const auto &id : bound_ids)
         {
             if (!handlers_.count(id))
+            {
                 unknown_out->push_back(id);
+            }
         }
     }
 }

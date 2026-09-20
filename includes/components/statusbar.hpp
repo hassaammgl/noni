@@ -25,6 +25,6 @@ public:
     void set_scm_badge(std::string badge);
 
     // Short-lived user-facing message (not Logger output).
-    void set_echo(std::string text, int ttl_ms = 2500);
+    void set_echo(std::string text, int ttl_ms = 5000);
     void clear_echo();
 };

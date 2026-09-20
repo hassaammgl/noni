@@ -243,6 +243,9 @@ public:
     void ex_bdelete(bool bang);
     void ex_messages();
     void ex_help(const std::string &topic);
+    void ex_logs(const std::string &which);
+    void ex_lsp();
+    void open_lsp_install_picker();
     void ex_sidebar(const std::string &arg);
     void ex_find();
     void ex_buffers();

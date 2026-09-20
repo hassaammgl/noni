@@ -1,5 +1,7 @@
 #include <lsp/lsp_service.hpp>
+#include <lsp/lsp_installer.hpp>
 #include <utils/logger.hpp>
+#include <utils/messages.hpp>
 #include <utils/text_metrics.hpp>
 
 #include <algorithm>
@@ -346,6 +348,9 @@ bool LspSession::start()
     {
         state_ = LspSessionState::Failed;
         Logger::error(std::format("LSP failed to start: {}", config_.command[0]));
+        Messages::warning(std::format(
+            "LSP failed to launch `{}` (check logs/lsp.stderr.log)",
+            config_.command[0]));
         return false;
     }
 
@@ -429,6 +434,7 @@ void LspSession::stop()
     process_.stop();
     state_ = LspSessionState::Stopped;
     open_uris_.clear();
+    pending_opens_.clear();
     initialized_sent_ = false;
 }
 
@@ -458,6 +464,23 @@ void LspSession::send_initialized()
     (void)send_raw(rpc_.make_notification("initialized", jobject({})));
     state_ = LspSessionState::Running;
     Logger::info(std::format("LSP initialized: {} @ {}", config_.language, root_.string()));
+    // Spec: no textDocument/* until after initialize + initialized.
+    for (const auto &doc : pending_opens_)
+        flush_did_open(doc);
+    pending_opens_.clear();
+}
+
+void LspSession::flush_did_open(const PendingOpen &doc)
+{
+    open_uris_.insert(doc.uri);
+    MiniJson::Object td;
+    td["uri"] = jstr(doc.uri);
+    td["languageId"] = jstr(doc.language_id);
+    td["version"] = jnum(static_cast<double>(doc.version));
+    td["text"] = jstr(doc.text);
+    MiniJson::Object params;
+    params["textDocument"] = jobject(std::move(td));
+    (void)send_raw(rpc_.make_notification("textDocument/didOpen", jobject(std::move(params))));
 }
 
 void LspSession::on_message(const MiniJson::Value &msg)
@@ -554,17 +577,25 @@ void LspSession::did_open(
     int version,
     const std::string &text)
 {
-    if (state_ != LspSessionState::Running && state_ != LspSessionState::Starting)
+    if (state_ == LspSessionState::Running)
+    {
+        flush_did_open(PendingOpen{uri, language_id, version, text});
         return;
-    open_uris_.insert(uri);
-    MiniJson::Object doc;
-    doc["uri"] = jstr(uri);
-    doc["languageId"] = jstr(language_id);
-    doc["version"] = jnum(static_cast<double>(version));
-    doc["text"] = jstr(text);
-    MiniJson::Object params;
-    params["textDocument"] = jobject(std::move(doc));
-    (void)send_raw(rpc_.make_notification("textDocument/didOpen", jobject(std::move(params))));
+    }
+    if (state_ != LspSessionState::Starting)
+        return;
+    // Queue until initialized — sending early breaks clangd / completion.
+    for (auto &p : pending_opens_)
+    {
+        if (p.uri == uri)
+        {
+            p.language_id = language_id;
+            p.version = version;
+            p.text = text;
+            return;
+        }
+    }
+    pending_opens_.push_back(PendingOpen{uri, language_id, version, text});
 }
 
 void LspSession::did_change_full(const std::string &uri, int version, const std::string &text)
@@ -788,6 +819,7 @@ Cursor LspService::lsp_pos_to_cursor(const std::vector<std::string> &lines, int 
 
 void LspService::set_workspace_root(const fs::path &root)
 {
+    LspInstaller::set_workspace_root(root);
     std::lock_guard lock(mu_);
     if (workspace_root_ == root)
         return;
@@ -817,11 +849,30 @@ void LspService::set_server_configs(std::vector<LspServerConfig> configs)
 
 void LspService::pump()
 {
-    std::lock_guard lock(mu_);
-    for (auto &[k, s] : sessions_)
+    const std::uint64_t gen = LspInstaller::generation();
+    std::vector<Buffer *> retry;
     {
-        if (s)
-            s->pump();
+        std::lock_guard lock(mu_);
+        if (gen != install_gen_)
+        {
+            install_gen_ = gen;
+            for (auto &[id, doc] : documents_)
+            {
+                (void)id;
+                if (!doc.open && doc.buffer)
+                    retry.push_back(doc.buffer);
+            }
+        }
+        for (auto &[k, s] : sessions_)
+        {
+            if (s)
+                s->pump();
+        }
+    }
+    for (Buffer *b : retry)
+    {
+        if (b)
+            notify_open(*b);
     }
 }
 
@@ -904,7 +955,18 @@ LspSession *LspService::session_for(Language lang)
     const std::string name = language_id_for(lang);
     auto it = sessions_.find(name);
     if (it != sessions_.end() && it->second)
-        return it->second.get();
+    {
+        const auto st = it->second->state();
+        if (st == LspSessionState::Failed || st == LspSessionState::Stopped)
+        {
+            it->second->stop();
+            sessions_.erase(it);
+        }
+        else
+        {
+            return it->second.get();
+        }
+    }
 
     const LspServerConfig *cfg = nullptr;
     for (const auto &c : configs_)
@@ -929,7 +991,16 @@ LspSession *LspService::session_for(Language lang)
     if (!cfg || cfg->command.empty())
         return nullptr;
 
-    auto session = std::make_unique<LspSession>(*cfg, workspace_root_, this);
+    LspServerConfig resolved = *cfg;
+    const fs::path bin = LspInstaller::resolve(resolved.command[0]);
+    if (bin.empty())
+    {
+        LspInstaller::request(resolved.command[0]);
+        return nullptr;
+    }
+    resolved.command[0] = bin.string();
+
+    auto session = std::make_unique<LspSession>(std::move(resolved), workspace_root_, this);
     if (!session->start())
         return nullptr;
     LspSession *raw = session.get();
@@ -967,16 +1038,20 @@ void LspService::notify_open(Buffer &buffer)
         return;
 
     const Language lang = Syntax::detect_language(path);
+    auto &doc = *doc_for(buffer);
+    doc.uri = path_to_uri(path);
+    doc.language = lang;
+    doc.buffer = &buffer;
+    // Keep intent even while the binary is still installing.
+    if (doc.open)
+        return;
+
     LspSession *session = session_for(lang);
     if (!session)
         return;
 
-    auto &doc = *doc_for(buffer);
-    doc.uri = path_to_uri(path);
-    doc.language = lang;
     doc.version = 1;
     doc.open = true;
-    doc.buffer = &buffer;
     session->did_open(doc.uri, language_id_for(lang), doc.version, join_lines(buffer.lines()));
 }
 
@@ -1087,7 +1162,11 @@ int LspService::request_completion(Buffer &buffer, int line, int byte_col)
     if (it == documents_.end() || !it->second.open)
         return 0;
     LspSession *session = session_for(it->second.language);
-    if (!session || session->state() != LspSessionState::Running)
+    if (!session)
+        return 0;
+    if (session->state() == LspSessionState::Starting)
+        return -1; // still handshaking — UI can show "starting"
+    if (session->state() != LspSessionState::Running)
         return 0;
 
     const int u16 = utf16_on_line(buffer.lines(), line, byte_col);

@@ -1,64 +1,63 @@
 #include <configs/config.hpp>
-#include <utils/fs.hpp>
 #include <utils/logger.hpp>
 
+#include <cstdlib>
 #include <format>
 #include <fstream>
 #include <sstream>
+#include <unistd.h>
+#include <filesystem>
+#include <vector>
 
-AppConfig AppConfig::defaults()
+namespace fs = std::filesystem;
+
+namespace
 {
-    AppConfig cfg;
-    cfg.keybindings = {
-        {"escape", "noni.mode.normal", ""},
-        {"space w", "workbench.action.files.save", "editorFocus && normalMode"},
-        {"space x", "workbench.action.closeActiveEditor", "editorFocus && normalMode"},
-        {"space f", "noni.search.files", "editorFocus && normalMode || sidebarFocus || searchFocus"},
-        {"space b", "workbench.action.toggleSidebarVisibility", "editorFocus && normalMode || sidebarFocus || searchFocus"},
-        {"space e", "workbench.view.explorer", "editorFocus && normalMode || searchFocus"},
-        {"space e", "noni.focus.editor", "sidebarFocus"},
-        {"space s", "workbench.action.findInFiles", "editorFocus && normalMode || searchFocus || sidebarFocus"},
-        {"space t", "workbench.action.terminal.toggle", "editorFocus && normalMode || terminalFocus || sidebarFocus || searchFocus"},
-        {"space p", "editor.action.clipboardPasteAction", "editorFocus && normalMode"},
-        {"tab", "noni.focus.toggleSidebar", "editorFocus && normalMode || sidebarFocus"},
-        {":", "noni.command.open", "editorFocus && normalMode"},
-        {"g t", "workbench.action.nextEditor", "editorFocus && normalMode"},
-        {"g shift+t", "workbench.action.previousEditor", "editorFocus && normalMode"},
-        {"u", "editor.action.undo", "editorFocus && normalMode"},
-        {"ctrl+r", "editor.action.redo", "editorFocus && normalMode"},
-        {"ctrl+w v", "workbench.action.splitEditorRight", "editorFocus"},
-        {"ctrl+w s", "workbench.action.splitEditorDown", "editorFocus"},
-        {"ctrl+w q", "workbench.action.closeActiveEditorGroup", "editorFocus"},
-        {"ctrl+w h", "workbench.action.focusLeftGroup", "editorFocus"},
-        {"ctrl+w l", "workbench.action.focusRightGroup", "editorFocus"},
-        {"ctrl+w k", "workbench.action.focusAboveGroup", "editorFocus"},
-        {"ctrl+w j", "workbench.action.focusBelowGroup", "editorFocus"},
-        {"ctrl+w <", "workbench.action.decreaseViewWidth", "editorFocus"},
-        {"ctrl+w >", "workbench.action.increaseViewWidth", "editorFocus"},
-        {"ctrl+w -", "workbench.action.decreaseViewHeight", "editorFocus"},
-        {"ctrl+w +", "workbench.action.increaseViewHeight", "editorFocus"},
-    };
-    return cfg;
-}
-
-AppConfig AppConfig::load(const std::string &path)
-{
-    AppConfig cfg = defaults();
-
-    std::ifstream file(path);
-    if (!file)
+    fs::path exe_directory()
     {
-        Logger::warning(std::format("Config not found ({}), using defaults", path));
-        return cfg;
+        char buf[4096];
+        const ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+        if (n <= 0)
+            return {};
+        buf[n] = '\0';
+        return fs::path(buf).parent_path();
     }
 
-    std::ostringstream ss;
-    ss << file.rdbuf();
-    const std::string text = ss.str();
-
-    try
+    std::vector<fs::path> config_candidates()
     {
-        const MiniJson::Value root = MiniJson::parse(text);
+        std::vector<fs::path> out;
+        auto push = [&](fs::path p) {
+            if (p.empty())
+                return;
+            std::error_code ec;
+            fs::path norm = fs::weakly_canonical(p, ec);
+            if (ec)
+                norm = p;
+            for (const auto &e : out)
+            {
+                if (e == norm)
+                    return;
+            }
+            out.push_back(std::move(norm));
+        };
+
+        std::error_code ec;
+        const fs::path cwd = fs::current_path(ec);
+        if (!ec)
+            push(cwd / "config.json");
+
+        const fs::path exe = exe_directory();
+        if (!exe.empty())
+            push(exe / "config.json");
+
+        if (const char *home = std::getenv("HOME"); home && home[0])
+            push(fs::path(home) / ".config" / "noni" / "config.json");
+
+        return out;
+    }
+
+    void apply_json(AppConfig &cfg, const MiniJson::Value &root)
+    {
         cfg.app_name = root.get_string("appName", cfg.app_name);
         cfg.sidebar_width = root.get_int("sidebarWidth", cfg.sidebar_width);
         cfg.line_number_width = root.get_int("lineNumberWidth", cfg.line_number_width);
@@ -82,6 +81,8 @@ AppConfig AppConfig::load(const std::string &path)
 
         if (const MiniJson::Value *lsp = root.get("lsp"); lsp && lsp->is_object())
         {
+            if (const MiniJson::Value *ai = lsp->get("autoInstall"); ai && ai->is_bool())
+                cfg.lsp_auto_install = ai->as_bool(cfg.lsp_auto_install);
             if (const MiniJson::Value *servers = lsp->get("servers"); servers && servers->is_array())
             {
                 cfg.lsp_servers.clear();
@@ -126,7 +127,36 @@ AppConfig AppConfig::load(const std::string &path)
             for (const auto &[k, v] : exts->as_object())
                 cfg.extensions.emplace(k, v);
         }
+    }
+}
 
+AppConfig AppConfig::defaults()
+{
+    AppConfig cfg;
+    cfg.keybindings = {};
+    return cfg;
+}
+
+AppConfig AppConfig::load_file(const std::string &path)
+{
+    AppConfig cfg = defaults();
+    cfg.loaded_from = path;
+
+    std::ifstream file(path);
+    if (!file)
+    {
+        cfg.loaded_from.clear();
+        cfg.load_message = std::format("Config not found ({})", path);
+        Logger::warning(std::format("{}, using defaults", cfg.load_message));
+        return cfg;
+    }
+
+    std::ostringstream ss;
+    ss << file.rdbuf();
+
+    try
+    {
+        apply_json(cfg, MiniJson::parse(ss.str()));
         Logger::info(std::format(
             "Config loaded: {} ({} keybindings, {} lsp servers, {} extension configs)",
             path,
@@ -136,8 +166,32 @@ AppConfig AppConfig::load(const std::string &path)
     }
     catch (const std::exception &e)
     {
-        Logger::error(std::format("Config parse failed: {}", e.what()));
+        AppConfig failed = defaults();
+        failed.loaded_from = path;
+        failed.load_message = std::format("Config parse failed ({}): {}", path, e.what());
+        Logger::error(failed.load_message);
+        return failed;
     }
 
+    return cfg;
+}
+
+AppConfig AppConfig::load()
+{
+    const auto candidates = config_candidates();
+    for (const auto &p : candidates)
+    {
+        std::error_code ec;
+        if (!fs::is_regular_file(p, ec) || ec)
+            continue;
+        return load_file(p.string());
+    }
+
+    AppConfig cfg = defaults();
+    cfg.load_message =
+        "config.json not found (looked cwd, exe dir, ~/.config/noni/); keybindings empty";
+    Logger::warning(cfg.load_message);
+    for (const auto &p : candidates)
+        Logger::warning(std::format("  tried: {}", p.string()));
     return cfg;
 }

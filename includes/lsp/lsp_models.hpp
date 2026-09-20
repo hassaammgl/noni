@@ -101,4 +101,5 @@ enum class LspPickerKind
     Locations,
     Symbols,
     CodeActions,
+    InstallServers,
 };

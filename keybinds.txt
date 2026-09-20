@@ -1,0 +1,51 @@
+NONI KEYBINDS — CURRENT DEFAULTS (applied)
+==========================================
+Vim motions (hjkl, i/a/v, d/c/y…) stay in the editor modal layer for now.
+Command / workbench / LSP / git chords: ONLY config.json (no C++ defaults).
+
+------------------------------------------------
+CTRL (VS Code) — from config.json
+------------------------------------------------
+  Ctrl+S           save
+  Ctrl+W           close tab
+  Ctrl+P           quick open files
+  Ctrl+Shift+F     find in files   (+ Space Shift+f fallback)
+  Ctrl+B           toggle sidebar
+  Ctrl+T           toggle terminal   (Ctrl+` often broken in TUI)
+  Ctrl+Y           redo
+  Ctrl+V           paste (Normal)
+  Ctrl+Space       completion
+  Ctrl+\           split right
+  Ctrl+K s         split down
+  Ctrl+K q         close split
+  Ctrl+K h/j/k/l   focus splits
+  Ctrl+K [ ] _ =   resize
+
+------------------------------------------------
+SPACE (leader groups)
+------------------------------------------------
+  Space ;          buffers
+  Space o          open workspace
+  Space .          reveal in explorer
+  Space e          explorer / focus editor
+  Space g …        git
+  Space m s/r      session save/restore
+  Space l …        lsp (+ Space l c completion)
+  Space Shift+f    find in files (alt)
+
+------------------------------------------------
+OTHER
+------------------------------------------------
+  Tab              sidebar focus toggle
+  :                command line
+  g t / g Shift+t  next / prev tab
+  u                undo
+  F12 / g d        definition
+  F2 / Space l n   rename
+  Shift+F12 / g r  references
+
+------------------------------------------------
+EDIT HERE then say: apply keybinds.txt
+------------------------------------------------
+# Your tweaks:
+#

@@ -14,6 +14,7 @@
 #include <workspace/recovery.hpp>
 #include <utils/fs_watcher.hpp>
 #include <syntax/grammar_installer.hpp>
+#include <lsp/lsp_installer.hpp>
 #include <utils/logger.hpp>
 #include <utils/messages.hpp>
 #include <utils/str.hpp>
@@ -140,10 +141,27 @@ UI::UI(const fs::path file_path = "")
     std::vector<CommandId> unbound;
     std::vector<CommandId> unknown;
     commands.diagnose(keys.bound_commands(), &unbound, &unknown);
+    std::sort(unbound.begin(), unbound.end());
+    std::sort(unknown.begin(), unknown.end());
     for (const auto &id : unknown)
         Logger::warning(std::format("keybinding references unknown command: {}", id));
-    for (const auto &id : unbound)
-        Logger::debug(std::format("command registered but unbound: {}", id));
+
+    std::string unbound_list;
+    for (std::size_t i = 0; i < unbound.size(); ++i)
+    {
+        if (i)
+            unbound_list += ", ";
+        unbound_list += unbound[i];
+    }
+    Logger::info(std::format(
+        "loaded {} bindings{}, {} commands registered, unbound: {}",
+        config.keybindings.size(),
+        config.loaded_from.empty() ? "" : std::format(" from {}", config.loaded_from),
+        commands.known().size(),
+        unbound_list.empty() ? "(none)" : unbound_list));
+
+    if (!config.load_message.empty())
+        statusbar.set_echo(config.load_message);
 
     queue_recovery_prompts();
 }
@@ -198,11 +216,13 @@ void UI::init()
 
 void UI::load_config()
 {
-    config = AppConfig::load("config.json");
+    config = AppConfig::load();
     keys.load(config);
     GrammarInstaller::set_auto_install(config.syntax_auto_install);
+    LspInstaller::set_auto_install(config.lsp_auto_install);
 
     std::vector<LspServerConfig> servers;
+    std::vector<std::string> lsp_bins;
     servers.reserve(config.lsp_servers.size());
     for (const auto &s : config.lsp_servers)
     {
@@ -210,9 +230,13 @@ void UI::load_config()
         c.language = s.language;
         c.command = s.command;
         c.root_markers = s.root_markers;
+        if (!c.command.empty())
+            lsp_bins.push_back(c.command[0]);
         servers.push_back(std::move(c));
     }
     core.lsp().set_server_configs(std::move(servers));
+    LspInstaller::set_workspace_root(project_root());
+    LspInstaller::request_all(lsp_bins);
 
     terminal_height = std::max(5, config.terminal.height);
     TerminalSessionConfig tcfg;
@@ -382,6 +406,12 @@ void UI::register_actions()
             Messages::info("Nothing to undo");
     });
 
+    commands.register_command("editor.action.goToFileStart", [this]() {
+        if (focus != Focus::Editor || !core.buffers().has_tabs())
+            return;
+        editor.set_cursor_position(0, 0);
+    });
+
     commands.register_command("editor.action.redo", [this]() {
         if (focus != Focus::Editor || !core.buffers().has_tabs())
             return;
@@ -484,6 +514,10 @@ void UI::register_actions()
     commands.register_command(Commands::LspShowStatus, [this]() {
         core.lsp().pump();
         Messages::info(core.lsp().status_summary());
+    });
+
+    commands.register_command(Commands::LspInstall, [this]() {
+        open_lsp_install_picker();
     });
 
     commands.register_command(Commands::LspRestart, [this]() {
@@ -811,6 +845,7 @@ void UI::refresh_scm(const fs::path &hint)
     scm_diff_lines_ = -1;
     scm_diff_gen_seen_ = 0;
     core.lsp().set_workspace_root(root);
+    GrammarInstaller::set_workspace_root(root);
 }
 
 void UI::sync_scm_diff()
@@ -1448,6 +1483,44 @@ void UI::open_lsp_actions(std::vector<LspCodeAction> actions)
     resize();
 }
 
+void UI::open_lsp_install_picker()
+{
+    std::vector<LspCodeAction> items;
+    for (const auto &e : LspInstaller::catalog())
+    {
+        const auto st = LspInstaller::status(e.binary);
+        const fs::path path = LspInstaller::resolve(e.binary);
+        LspCodeAction a;
+        a.title = std::format(
+            "[{}] {}  · {} ({})",
+            LspInstaller::status_label(st),
+            e.binary,
+            e.via,
+            e.package);
+        if (!path.empty())
+            a.title += std::format("  → {}", path.string());
+        a.kind = "install";
+        a.has_command = true;
+        a.command = e.binary;
+        a.is_preferred = st != LspInstaller::Status::Ready;
+        items.push_back(std::move(a));
+    }
+    if (items.empty())
+    {
+        Messages::info("No LSP install recipes");
+        return;
+    }
+    lsp_picker_kind_ = LspPickerKind::InstallServers;
+    lsp_picker.open_actions("LSP servers (Enter = install)", std::move(items));
+    focus = Focus::LspPicker;
+    resize();
+}
+
+void UI::ex_lsp()
+{
+    open_lsp_install_picker();
+}
+
 void UI::close_lsp_picker(bool accept)
 {
     if (!lsp_picker.is_active())
@@ -1471,6 +1544,8 @@ void UI::close_lsp_picker(bool accept)
             goto_lsp_location(loc);
         else
             lsp_picker.close();
+        focus = Focus::Editor;
+        resize();
     }
     else if (lsp_picker_kind_ == LspPickerKind::Symbols)
     {
@@ -1479,6 +1554,25 @@ void UI::close_lsp_picker(bool accept)
             goto_lsp_location(sym.location);
         else
             lsp_picker.close();
+        focus = Focus::Editor;
+        resize();
+    }
+    else if (lsp_picker_kind_ == LspPickerKind::InstallServers)
+    {
+        LspCodeAction act;
+        if (lsp_picker.take_action(act) && act.has_command && !act.command.empty())
+        {
+            if (!LspInstaller::resolve(act.command).empty())
+                Messages::info(std::format("LSP `{}` already installed", act.command));
+            else
+                LspInstaller::request(act.command, true);
+        }
+        else
+        {
+            lsp_picker.close();
+        }
+        focus = Focus::Editor;
+        resize();
     }
     else
     {
@@ -1497,9 +1591,9 @@ void UI::close_lsp_picker(bool accept)
         {
             lsp_picker.close();
         }
+        focus = Focus::Editor;
+        resize();
     }
-    focus = Focus::Editor;
-    resize();
 }
 
 void UI::poll_lsp_results()
@@ -1793,7 +1887,12 @@ void UI::trigger_completion()
     const Cursor c = editor.get_cursor();
     core.lsp().cancel_completion();
     const int id = core.lsp().request_completion(buf, c.line, c.column);
-    if (id <= 0)
+    if (id < 0)
+    {
+        Messages::info("LSP still starting — try Ctrl+Space again in a second");
+        return;
+    }
+    if (id == 0)
     {
         Messages::info("Completion unavailable (no LSP for this buffer)");
         return;
@@ -2856,6 +2955,70 @@ void UI::ex_messages()
 {
     messages_panel.open("Messages");
     focus = Focus::Messages;
+}
+
+void UI::ex_logs(const std::string &which)
+{
+    struct Entry
+    {
+        const char *key;
+        const char *path;
+        const char *title;
+    };
+    static constexpr Entry kLogs[] = {
+        {"noni", "logs/noni.log", "noni.log (app Logger)"},
+        {"lsp", "logs/lsp.stderr.log", "lsp.stderr.log (clangd/pylsp stderr)"},
+        {"install", "logs/lsp-install.log", "lsp-install.log"},
+        {"grammar", "logs/grammar-install.log", "grammar-install.log"},
+    };
+
+    const std::string w = StrUtils::to_lower(StrUtils::trim(which));
+    std::vector<std::string> out;
+    out.push_back("LOGS — file-backed (not the statusbar Messages ring)");
+    out.push_back("  :logs          → all (last ~80 lines each)");
+    out.push_back("  :logs noni|lsp|install|grammar");
+    out.push_back("  Tip: :messages only shows Messages::info/warning, not Logger.");
+    out.push_back("");
+
+    auto append_file = [&](const Entry &e) {
+        out.push_back(std::format("═══ {} ({}) ═══", e.title, e.path));
+        std::ifstream in(e.path);
+        if (!in)
+        {
+            out.push_back(std::format("  (missing — nothing written yet)"));
+            out.push_back("");
+            return;
+        }
+        std::vector<std::string> lines;
+        std::string line;
+        while (std::getline(in, line))
+            lines.push_back(std::move(line));
+        const std::size_t keep = 80;
+        const std::size_t start =
+            lines.size() > keep ? lines.size() - keep : 0;
+        for (std::size_t i = start; i < lines.size(); ++i)
+            out.push_back(lines[i]);
+        out.push_back("");
+    };
+
+    bool any = false;
+    for (const auto &e : kLogs)
+    {
+        if (!w.empty() && w != "all" && w != e.key)
+            continue;
+        append_file(e);
+        any = true;
+    }
+    if (!any)
+    {
+        Messages::error("E149: Unknown log — use noni|lsp|install|grammar");
+        return;
+    }
+
+    Messages::set_lines(std::move(out));
+    messages_panel.open(w.empty() || w == "all" ? "Logs" : std::format("Logs: {}", w));
+    focus = Focus::Messages;
+    keys.clear_chord();
 }
 
 void UI::ex_help(const std::string &topic)

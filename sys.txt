@@ -1,0 +1,1870 @@
+LAST VERIFIED AGAINST CODE: 2026-09-21
+
+NONI — COMPLETE SYSTEM GUIDE (sys.txt)
+======================================
+Purpose: samajh + fix karne ke liye — editor kya hai, kya karta hai, kaise chalta hai.
+Build: `make` → `./build/bin/app`  (config.json: cwd → exe dir → ~/.config/noni/)
+
+################################################################
+PART A — YE EDITOR KYA HAI?
+################################################################
+
+Noni = terminal (TUI) code editor, ncursesw pe.
+Inspired by vim modes + VS Code-style workbench actions (Ctrl / Space chords).
+
+Ek line mein:
+  Files kholo → vim-style edit karo → LSP se smart help → git gutter →
+  integrated terminal → session yaad rakhe → tree-sitter se colors.
+
+Entry: noni.cpp::main → Logger::init → Args::get_file_path(argv[1]) → UI(file_path)::run → Logger::shutdown.
+
+Target user: keyboard-first, local projects, C++/Python/etc. with LSP.
+
+Code me debugger / SSH / GUI / plugin marketplace UI nahi hai.
+
+################################################################
+PART B — USER KO KYA MILTA HAI? (FEATURES)
+################################################################
+
+1) EDITING
+   - Modes: Normal / Insert / Visual / Visual-Line (enum EditorMode, includes/editor/editor_tab.hpp)
+   - Motions/operators: src/components/editor.cpp handle_normal_input / handle_visual_input / handle_insert_input
+   - Undo/redo: Buffer undo_stack (kMaxUndo=256, includes/editor/buffer.hpp)
+   - Marks (MarkTable), registers (RegisterFile), jumps (JumpList) — EditorCore members
+   - Multi-cursor: code me nahi
+   - UTF-8 display + LSP UTF-16: TextMetrics (includes/utils/text_metrics.hpp)
+
+2) BUFFERS / TABS / SPLITS
+   - BufferManager owns unique_ptr<Buffer> + EditorTab vector
+   - WindowLayout binary tree of splits (includes/editor/window_layout.hpp, HEADER-ONLY)
+   - Untitled: path empty; :w path se save-as (UI::ex_write)
+
+3) WORKSPACE / EXPLORER
+   - Workspace::detect_root (git root first, else marker walk) — src/workspace/workspace.cpp
+   - Sidebar + DirScanner async tree
+   - FilePicker fuzzy (FileIndex) + RecentFiles
+   - BufferPicker (Space ;)
+
+4) SEARCH
+   - In-buffer: / ? n N → BufferSearchState (src/editor/buffer_search.cpp)
+   - Project: SearchPanel + TextSearch::search_async
+   - Commands: editor.action.replaceOne / replaceAll (register_actions)
+
+5) SYNTAX COLORS
+   - TreeHighlighter + GrammarInstaller (optional auto-install)
+   - Fallback Syntax::highlight_line lexer
+   - Theme color pairs (includes/ui/theme.hpp)
+
+6) LSP
+   - config.json lsp.servers[] → LspService sessions
+   - LspInstaller pip/npm/curl/go into user dir
+   - Completion, definition/declaration/type/references, symbols, rename, code actions
+   - :lsp install picker
+
+7) GIT / SCM
+   - ScmService async refresh; ScmGit uses git CLI (utils/git.hpp popen), not libgit2 API
+   - Makefile does not link libgit2; src/includes me #include <git2.h> nahi hai
+
+8) TERMINAL
+   - PtySession + TerminalSession + VtParser + TerminalScreen + TerminalPanel
+
+9) SESSION / CRASH
+   - <workspace>/.noni/session.json (SessionStore)
+   - <workspace>/.noni/recovery/<id>.txt + <id>.meta.json (RecoveryStore)
+
+10) HELP / MESSAGES / LOGS
+   - :help HelpDocs::build
+   - Messages ring + :messages / :logs
+
+11) EXTENSIONS
+   - ExtensionManager; builtin HelloExtension (noni.hello)
+
+################################################################
+PART C — SCREEN LAYOUT (kya dikhta hai)
+################################################################
+
+  ┌──────────┬─────────────────────────────┬─────────┐
+  │ Sidebar  │  Tab bar                    │         │
+  │ explorer │─────────────────────────────│         │
+  │ or       │  Line# │ Editor text        │         │
+  │ search   │        │ (splits possible)  │         │
+  │          │        │                    │         │
+  │          ├─────────────────────────────┤         │
+  │          │  Terminal (optional)        │         │
+  ├──────────┴─────────────────────────────┴─────────┤
+  │ Statusbar: mode, file, git, cursor, message echo │
+  └──────────────────────────────────────────────────┘
+
+Layout numbers: UI::resize (src/ui/ui.cpp:2422). Overlays: CommandLine, ConfirmPrompt, InputPrompt, FilePicker, BufferPicker, LspPicker, CompletionPicker, MessagesPanel.
+
+################################################################
+PART D — TYPICAL USER FLOWS (kaise use hota hai)
+################################################################
+
+A) Project kholo
+   ./build/bin/app
+   OR ./build/bin/app path/to/file.cpp
+   OR ./build/bin/app path/to/folder
+   → UI ctor: Workspace::open(hint); empty/dir → restore_session_if_available(true) else untitled;
+     file path → open_file + restore_session_if_available(false) (tabs replace nahi, recent/UI flags)
+   → load_config, init, register_actions, extensions.activate_all, queue_recovery_prompts
+   CLI: sirf argv[1] (Args::get_file_path). Extra argv unused.
+
+B) File edit
+   Ctrl+P → noni.search.files → FilePicker
+   i → Insert; Esc → noni.mode.normal; Ctrl+S save
+
+C) LSP
+   Open language file → session_for → LspProcess fork/exec
+   Ctrl+Space completion; F12 / g d definition
+
+D) Git — Space g * commands (config.json)
+
+E) Terminal — Ctrl+T toggle; Esc / Ctrl+] (raw 29) leave focus without killing PTY
+
+F) Quit — :q / :q! / workbench.action.quit (registered, config.json me bound nahi)
+
+################################################################
+PART E — INTERNAL ARCHITECTURE (kaise bana hai)
+################################################################
+
+┌─────────────┐
+│  noni.cpp   │  main → Logger → UI → run loop → shutdown
+└──────┬──────┘
+       ▼
+┌─────────────────────────────────────────────────────────────┐
+│ UI (src/ui/ui.cpp + includes/ui/ui.hpp)                       │
+│  focus, layout, render, handle_inputs, register_actions       │
+│  owns widgets + EditorCore + CommandRegistry + KeybindingEngine│
+│  + AppConfig + FsWatcher + ExtensionManager                   │
+└───────────────┬─────────────────────────┬───────────────────┘
+                │                         │
+                ▼                         ▼
+        ┌───────────────┐         ┌──────────────────┐
+        │  EditorCore   │         │ Components (view)│
+        │  buffers,lsp, │         │ Editor draws     │
+        │  scm,workspace│         │ Buffer text      │
+        └───────┬───────┘         └──────────────────┘
+                │
+    BufferMgr  LspService  ScmService  Workspace  RecentFiles
+
+Async: Background pool 2 workers (UI ctor: Background::instance().start(2), src/ui/ui.cpp:74)
+
+################################################################
+PART F — INPUT PIPELINE (key dabane pe kya hota hai)
+################################################################
+
+  ncurses getch  (timeout 50 ms → ERR = no key, Prefix survive)
+       │
+       ▼
+  UI::handle_inputs (src/ui/ui.cpp:3186)
+       │
+       ├─ KEY_RESIZE → resize()
+       ├─ overlay focus? Esc/Enter hardcoded + component input
+       ├─ keys.resolve(raw, when_context, InputContext)
+       │     Matched  → commands.execute(command_id)
+       │     Prefix   → consume, wait next key (NO timeout)
+       │     Unmatched│
+       └─ Editor / Sidebar / Terminal / Search handle_input
+             (HARDCODED modal / panel keys)
+
+Command keys source = config.json ONLY (AppConfig::defaults().keybindings = {}).
+Editor vim keys source = src/components/editor.cpp.
+Sidebar/picker keys = unke .cpp.
+
+Full tables: PART T / U / V.
+
+################################################################
+PART G — MAJOR SUBSYSTEMS (har ek kya karta / kaise)
+################################################################
+
+-------------------------------------------------------------------
+G1. BUFFER + UNDO
+-------------------------------------------------------------------
+Buffer: lines, dirty via content_id vs saved_content_id, atomic FS write.
+record_change → apply_forward + TreeHighlighter::notify_edit + change_listener_ (LSP).
+UndoTransaction stack, kMaxUndo=256.
+
+-------------------------------------------------------------------
+G2. EDITOR MODES + MOTIONS
+-------------------------------------------------------------------
+Editor component bound to EditorCore* + EditorTab*. Window = view (scroll/cursor/selection).
+Motion namespace HEADER-ONLY (includes/editor/motion.hpp).
+TextMetrics: codepoints, display columns, UTF-16.
+
+-------------------------------------------------------------------
+G3. SYNTAX HIGHLIGHT
+-------------------------------------------------------------------
+TreeHighlighter dlopen grammar .so; GrammarInstaller curl/git + cc.
+Fallback Syntax lexer. Query strings embedded in tree_highlighter.cpp (disk highlights.scm nahi).
+Lookup: /usr/lib/tree_sitter → $HOME/.local/share/noni/tree-sitter → <ws>/.noni/tree-sitter → user_dir → /tmp/noni-tree-sitter-<uid>
+Log: logs/grammar-install.log (cwd-relative; cmds wrapped >>logs/grammar-install.log)
+
+-------------------------------------------------------------------
+G4. LSP
+-------------------------------------------------------------------
+LspProcess pipes + fork + execvp; stderr → logs/lsp.stderr.log (append) else /dev/null.
+JSON-RPC Content-Length framing. initialize THEN initialized THEN didOpen (queued while Starting).
+LspInstaller if binary missing + autoInstall. rootMarkers config me parse hote hain, session_for unhe read nahi karta — workspace = Workspace root.
+
+-------------------------------------------------------------------
+G5. SCM / GIT
+-------------------------------------------------------------------
+Git class: git subprocess (popen). ScmGit porcelain + diffs. ScmService cache + Background refresh.
+stage/unstage/discard: sync on main thread then request_refresh.
+Makefile no longer links -lgit2: source me libgit2 API call nahi (confirmed T0).
+
+-------------------------------------------------------------------
+G6. WORKSPACE / SIDEBAR / FS WATCHER
+-------------------------------------------------------------------
+Workspace::detect_root: ScmGit::find_repository_root, else walk markers (.git, CMakeLists.txt, package.json, … full list workspace.cpp:21-34).
+FsWatcher: inotify IN_NONBLOCK, koi watcher thread nahi; UI::run me poll_fs_events.
+
+-------------------------------------------------------------------
+G7. SEARCH
+-------------------------------------------------------------------
+Buffer: / ? CommandLine → EditorCore::search_start → BufferSearchState.
+Project: SearchPanel → TextSearch::search_async.
+Pickers: FilePicker (FileIndex), BufferPicker.
+
+-------------------------------------------------------------------
+G8. TERMINAL
+-------------------------------------------------------------------
+PtySession forkpty + reader thread. TerminalSession::pump on main. Leave: Esc or ch==29 (Ctrl+]).
+
+-------------------------------------------------------------------
+G9. SESSION / RECOVERY
+-------------------------------------------------------------------
+SessionStore save/load. RecoveryStore write_snapshot every render if dirty ≥2s (tick_recovery_snapshots).
+space m s / space m r commands.
+
+-------------------------------------------------------------------
+G10. CONFIG / KEYS / COMMANDS
+-------------------------------------------------------------------
+AppConfig::load() search: cwd/config.json → exe dir → $HOME/.config/noni/config.json. First existing file wins; parse fail → defaults + statusbar. KeybindingEngine. CommandRegistry. ExCommands → UI::ex_*.
+
+-------------------------------------------------------------------
+G11. LOGGING / MESSAGES
+-------------------------------------------------------------------
+Logger::init truncates logs/noni.log (std::ios::out|trunc, logger.cpp:124) then writer thread; ensure_open reopen uses app.
+Each log = 2 lines: message + "file:line in function".
+Messages: statusbar echo + ring. :logs tails logs/*.log into messages panel.
+
+-------------------------------------------------------------------
+G12. THEME / ICONS
+-------------------------------------------------------------------
+Theme::init pairs 1–90. Icons HEADER-ONLY includes/ui/icons.hpp.
+
+-------------------------------------------------------------------
+G13. EXTENSIONS
+-------------------------------------------------------------------
+UI ctor: extensions.add(make_hello_extension()); activate_all.
+Hello reads config extensions["noni.hello"].greet; registers extension.hello.ping (config.json me unbound).
+
+################################################################
+PART H — ON-DISK LAYOUT
+################################################################
+
+  config.json          load order: cwd → exe dir → $HOME/.config/noni/config.json (first existing file)
+  keybinds.txt         notes only — app load nahi karta
+  sys.txt              THIS guide
+  simpletodo.txt       file-split tracking (user)
+  .cursor/rules/file-size.mdc  hard 200 lines per .cpp/.hpp
+  .cursor/rules/noni-master.mdc  standing rules R1–R10 (alwaysApply)
+  PROGRESS.md          work-queue tracker
+  .clangd              CompileFlags: -std=c++23
+  .noni/session.json   last session
+  .noni/recovery/      crash drafts
+  .noni/tree-sitter/   grammar fallback
+  .noni/lsp/           lsp install fallback
+  logs/noni.log        app logger (truncate each Logger::init)
+  logs/lsp.stderr.log  LS stderr append
+  logs/lsp-install.log installer cmds
+  logs/grammar-install.log grammar cmds
+  includes/  src/      code
+  build/bin/app        binary (Makefile TARGET)
+  Makefile             handwritten g++ (repo file; .gitignore CMake Makefile pattern bhi list karta hai)
+  noni.cpp             main
+
+User data dirs (code hardcoded $HOME/.local/share/noni/… ; XDG_DATA_HOME env read nahi):
+  ~/.local/share/noni/tree-sitter/
+  ~/.local/share/noni/lsp/
+
+.grammar-test/  local grammar scratch (.gitignore) — app source nahi
+.noni/tree-sitter/src/tree-sitter-c/  installed grammar sources — app source nahi
+
+################################################################
+PART I — MAIN LOOP (har frame)
+################################################################
+
+UI::run (src/ui/ui.cpp:2718):
+  while running:
+    file_picker.poll()
+    search_panel.poll()
+    terminal.poll()
+    poll_fs_events()
+    sidebar.poll() (optional reveal_path)
+    render()          // scm sync, recovery tick, lsp.pump, poll completion/lsp, draw, doupdate
+    handle_inputs()   // getch timeout 50ms; ERR → return, Prefix persist
+
+################################################################
+PART J — KEYS & BINDINGS (summary)
+################################################################
+
+TWO LAYERS:
+  1) config.json keybindings[] → CommandId  (C++ defaults empty)
+  2) Hardcoded modal/panel keys → editor.cpp / sidebar.cpp / pickers / …
+
+When flags: UI::when_context() (ui.cpp:548). Leader (Space) sirf EditorNormal / EditorVisual / Sidebar / SearchResults (command.hpp:115).
+
+Chord Prefix: koi timeout nahi. Esc (config → noni.mode.normal) + clear_chord on many focus changes.
+
+Full tables: PART T. Commands: PART U. Ex: PART V.
+
+################################################################
+PART K — LSP + GRAMMAR vs “INSTALL”
+################################################################
+
+Grammar: syntaxAutoInstall → GrammarInstaller::request → .so
+LSP: PATH or LspInstaller user_dir/bin; autoInstall from config.
+Install methods: pip venv / npm|bun prefix / curl GitHub zip / go install (no pacman/apt in code).
+:lsp → LspPicker catalog → Enter → LspInstaller::request(..., force=true)
+
+################################################################
+PART L — RUNTIME LOOKUP (agar expected behaviour na mile)
+################################################################
+
+  Binding missing → config.json keybindings
+  when clause → UI::when_context flags vs binding.when
+  Prefix stuck → pending vector; Esc / clear_chord
+  LSP → LspSessionState Starting vs Running; untitled; language match
+  clangd flags → .clangd / compile_commands.json (Noni generate nahi karta)
+  Install dirs unwritable → fallback <ws>/.noni/… or /tmp/noni-*-<uid>
+  Logs → :logs / logs/*.log (noni.log truncate on restart)
+  config.json → cwd, then exe dir, then ~/.config/noni/
+  vim keys → editor.cpp, JSON me nahi
+
+################################################################
+PART M — HOW TO CHANGE THE PRODUCT SAFELY
+################################################################
+
+Shortcut: config.json keybindings (AppConfig::defaults empty).
+New workbench action: UI::register_actions + config.json bind. Optional Commands::* in command.hpp.
+Vim: src/components/editor.cpp
+LSP servers: config.json lsp.servers[]
+C++ analysis: .clangd / compile_commands.json
+Split huge files: simpletodo.txt + .cursor/rules/file-size.mdc
+Makefile auto-picks src/**/*.cpp
+
+################################################################
+PART N — CODE MAP (kis folder mein kya)
+################################################################
+
+  src/ui/            shell: layout, input, commands glue
+  src/components/    visual widgets
+  src/editor/        buffer, tabs, motions helpers, ex, core
+  src/lsp/           LSP client + installer
+  src/syntax/        tree-sitter + lexer highlight
+  src/scm/           git status/diff
+  src/workspace/     root, session, recovery, recent
+  src/terminal/      pty + vt + screen
+  src/configs/       json + keybindings
+  src/commands/      command registry
+  src/extensions/    plugins
+  src/help/          :help pages
+  src/utils/         logger, fs, fuzzy, async, clipboard, …
+  src/sidebar/       DirScanner
+  includes/          headers mirroring src
+  noni.cpp           main
+
+################################################################
+PART O — ONE-PAGE “NONI DOES THIS”
+################################################################
+
+Noni is a keyboard-first terminal IDE-lite:
+  open a project, edit with vim muscles, jump with LSP, see git hunks,
+  run a shell beside the buffer, remember your tabs, color code with
+  tree-sitter, and configure workbench keys entirely from config.json.
+
+Sources for PART A–O: noni.cpp, Makefile, src/ui/ui.cpp, includes/ui/ui.hpp,
+includes/editor/*, src/editor/*, src/lsp/*, src/syntax/*, src/scm/*, src/workspace/*,
+src/terminal/*, src/configs/*, src/commands/*, src/extensions/*, src/help/help_docs.cpp,
+src/utils/logger.cpp, src/utils/git.hpp, config.json, simpletodo.txt, .clangd,
+.cursor/rules/file-size.mdc, keybinds.txt (not loaded).
+
+################################################################
+PART P — BUILD & DEPENDENCIES
+################################################################
+
+App build system: handwritten Makefile (repo root). App CMake nahi.
+pkg-config: Makefile/src/includes me use nahi.
+.clangd: CompileFlags Add -std=c++23 only (no extra -I; Makefile -Iincludes).
+
+Compiler
+  CXX = g++                          Makefile:1
+  CXXFLAGS_BASE = -Wall -Wextra -std=c++23 -g -MMD -MP -Iincludes
+  CXXFLAGS = $(CXXFLAGS_BASE) -O2
+  C++ standard: C++23 (g++ 16.2.1; __cpp_lib_expected=202211, print, flat_map, move_only_function present)
+  -g always; -O2 default; make debug → -O0 via recursive $(MAKE)
+  -MMD -MP + -include $(OBJ:.o=.d): header change pe rebuild
+  -DNCURSES_WIDECHAR / _XOPEN_SOURCE_EXTENDED: Makefile me nahi
+  LTO: not enabled (T7.8)
+
+Link (exact order)
+  $(CXX) $(OBJ) -o $@ $(LDFLAGS)
+  LDFLAGS = -lncursesw -pthread -lutil -ltree-sitter -ldl
+
+Libraries
+  ncursesw     #include <ncurses.h>  ui.hpp, theme.hpp, UIComponent.hpp, keybindings.cpp, terminal_panel.cpp
+  libgit2      NOT linked (T0; no #include <git2.h>; SCM git CLI via utils/git.hpp)
+  pthread      std::thread: Logger writer, LspProcess reader, PtySession reader, Background workers
+  libutil      forkpty; pty_session.cpp includes <pty.h> else <util.h>
+  tree-sitter  #include <tree_sitter/api.h> tree_highlighter.cpp:5  (system lib; grammars dlopen .so)
+  dl           dlopen grammar .so  tree_highlighter.cpp:7, :408
+
+third_party/: exist nahi.
+Vendored grammar trees (.grammar-test/, .noni/tree-sitter/src/) app compile me include nahi (Makefile sirf *.cpp + src/**/*.cpp).
+
+Sources
+  SRC := $(wildcard *.cpp) $(shell find src -type f -name '*.cpp')   Makefile:9
+  OBJ := build/%.o mirroring source tree
+  Root noni.cpp → build/noni.o
+  src/lsp/lsp_installer_detail.hpp header-only (compile nahi)
+  -include $(OBJ:.o=.d)
+
+Targets
+  all (default)     → build/bin/app
+  $(TARGET)         link all OBJ
+  build/%.o         compile
+  debug             $(MAKE) all with -O0
+  run               build then ./$(TARGET) (cwd)
+  clean             rm -rf build
+  .PHONY            all run clean debug
+
+No test target. tests/ directory + tests/p0_data_safety.cpp: nahi (R4).
+test/ (no s): sample files; .gitignore test/
+
+Output
+  App: build/bin/app
+  Objects: build/noni.o, build/src/.../*.o
+  Depfiles: build/**/*.d (gitignore *.d)
+
+.gitignore no longer ignores repo-root Makefile (T0; CMake would emit Makefile under already-ignored build/).
+
+Sources for PART P: Makefile, .clangd, .gitignore, src/terminal/pty_session.cpp,
+src/syntax/tree_highlighter.cpp, src/utils/git.hpp, src/scm/scm_git.hpp, noni.cpp.
+
+################################################################
+PART Q — FILE-BY-FILE MAP
+################################################################
+
+Format: path | kaam | classes/structs | public-ish functions | depends
+
+----- root -----
+noni.cpp | entry Logger+Args+UI::run | main | main | ui.hpp, args.hpp, logger.hpp
+
+----- ui -----
+includes/ui/ui.hpp | TUI orchestrator decls | Dimentions, Focus, SideView, ConfirmIntent, PromptIntent, UI | ctor, run, request_quit, ex_*, getters | almost everything
+src/ui/ui.cpp | UI impl (layout/input/commands/LSP/SCM/session) | UI methods | same | ui.hpp + listed includes ui.cpp:1-34
+includes/ui/UIComponent.hpp | ncurses WINDOW base | UIComponent | create resize draw(pure) clear get_window | ncurses
+src/ui/UIComponent.cpp | WINDOW lifecycle | UIComponent | dtor create resize clear | UIComponent.hpp
+includes/ui/theme.hpp | color pair ids 1–90 | ns Theme | init + constexpr ids | ncurses
+src/ui/theme.cpp | init_pair / RGB | Theme::init | Theme::init | theme.hpp, logger
+includes/ui/icons.hpp | Codicons wchar + filename map | ns Icons | Icons::for_file | HEADER-ONLY
+
+----- components -----
+includes/components/editor.hpp | modal editor view | PendingOperator, Editor | bind_core bind draw handle_input undo redo paste_clipboard apply_completion | EditorCore, motion, UIComponent
+src/components/editor.cpp | motions/operators/draw | Editor | same | diagnostics, syntax, theme, clipboard, messages, text_metrics
+includes/components/sidebar.hpp | explorer tree | VisibleRow, SidebarAction, SidebarClipboardMode, Sidebar | draw handle_input CRUD | UIComponent, FS, DirScanner
+src/components/sidebar.cpp | explorer impl | Sidebar | same | icons, theme
+includes/components/statusbar.hpp | mode/file/cursor/echo | Statusbar | draw set_mode set_filename set_cursor_position set_scm_badge set_echo | UIComponent
+src/components/statusbar.cpp | draw | Statusbar | same | theme
+includes/components/header.hpp | SCM branch title | Header | draw set_branch branch | UIComponent
+src/components/header.cpp | draw | Header | same | theme, icons
+includes/components/tab_bar.hpp | tab strip | TabBar | set_manager draw | BufferManager
+src/components/tab_bar.cpp | draw | TabBar | same | icons, theme
+includes/components/commandline.hpp | : / ? prompt | CommandLine | open close handle_input get_input | UIComponent
+src/components/commandline.cpp | draw/input | CommandLine | same | theme
+includes/components/line_number.hpp | gutter diag/scm | LineNumber | draw sync | diagnostics, scm_diff
+src/components/line_number.cpp | gutter draw | LineNumber | same | theme
+includes/components/file_picker.hpp | fuzzy file open | FilePicker | open warm poll handle_input take_selection | FileIndex
+src/components/file_picker.cpp | picker | FilePicker | same | icons, theme
+includes/components/buffer_picker.hpp | fuzzy tabs | BufferPicker | bind open handle_input take_selection | BufferManager, fuzzy
+src/components/buffer_picker.cpp | picker | BufferPicker | same | theme
+includes/components/lsp_picker.hpp | LSP lists | LspPicker | open_locations open_symbols open_actions take_* | lsp_models, fuzzy
+src/components/lsp_picker.cpp | picker | LspPicker | same | theme
+includes/components/completion_picker.hpp | completion popup | CompletionPicker | open handle_input take_selection | completion.hpp
+src/components/completion_picker.cpp | UI | CompletionPicker | same | theme
+includes/components/messages_panel.hpp | :messages overlay | MessagesPanel | open close handle_input draw | UIComponent
+src/components/messages_panel.cpp | overlay | MessagesPanel | same | theme, Messages
+includes/components/search_panel.hpp | find-in-files | SearchField, SearchPanelAction, SearchPanel | set_root handle_input results | TextSearch
+src/components/search_panel.cpp | panel | SearchPanel | same | theme, str
+includes/components/confirm_prompt.hpp | yes/no/cancel | ConfirmChoice, ConfirmPrompt | open handle_input | UIComponent
+src/components/confirm_prompt.cpp | UI | ConfirmPrompt | same | theme
+includes/components/input_prompt.hpp | text prompt | InputPrompt | open handle_input get_input | UIComponent
+src/components/input_prompt.cpp | UI | InputPrompt | same | theme
+includes/components/terminal_panel.hpp | ncurses terminal view | TerminalPanel | apply_config ensure_started handle_input poll | TerminalSession
+src/components/terminal_panel.cpp | draw/input | TerminalPanel | same | theme, ncurses
+
+----- editor -----
+includes/editor/buffer.hpp | document + undo + syntax + diags | BufferLoadState, Buffer | load/save/edit/undo/syntax/diagnostics | undo, diagnostics, tree_highlighter, fs
+src/editor/buffer.cpp | Buffer impl | Buffer | same | logger, text_metrics
+includes/editor/buffer_manager.hpp | owns Buffers+tabs | BufferManager | open_file close_active switch_to next_tab active | editor_tab
+src/editor/buffer_manager.cpp | impl | BufferManager | same | logger, messages
+includes/editor/editor_tab.hpp | tab = layout + mode | EditorMode, EditorTab | display_name is_untitled accessors | buffer, window, window_layout
+src/editor/editor_tab.cpp | name helpers | EditorTab | display_name is_untitled | editor_tab.hpp
+includes/editor/editor_core.hpp | engine | EditorCore | accessors attach_lsp_document splits search_* | buffers, lsp, scm, workspace, …
+src/editor/editor_core.cpp | search/replace + jumps | EditorCore | search_start search_next replace_* | editor_core.hpp, text_metrics
+includes/editor/window.hpp | view onto Buffer | Window | bind/cursor/scroll/selection | HEADER-ONLY
+includes/editor/window_layout.hpp | split tree | SplitOrientation, WindowRect, LayoutNode, WindowLayout | split/close/focus/resize/compute_rects | HEADER-ONLY
+includes/editor/undo.hpp | edit records | TextChange, UndoTransaction, UndoResult | data | HEADER-ONLY
+includes/editor/motion.hpp | vim motions | MotionResult, ns Motion | left/right/up/down/word_*/file_* | HEADER-ONLY
+includes/editor/selection.hpp | visual ranges | SelectionKind, Selection, TextRange | helpers inline | HEADER-ONLY
+includes/editor/marks.hpp | a-z marks | Mark, MarkTable | set get invalidate_buffer | HEADER-ONLY
+includes/editor/jumps.hpp | jump list | JumpEntry, JumpList | push back forward | HEADER-ONLY
+includes/editor/registers.hpp | yank registers | RegisterType, RegisterValue, RegisterFile | set yank_to_pending get | HEADER-ONLY
+includes/editor/buffer_search.hpp | in-buffer search | SearchDirection, BufferSearchMatch, BufferSearchQuery, BufferSearch, BufferSearchState | find_all run step | selection, text_search
+src/editor/buffer_search.cpp | impl | BufferSearch / BufferSearchState | same | regex
+includes/editor/ex_commands.hpp | : command table | ParsedEx, ExCommand, ExCommands | instance execute parse all | UI forward
+src/editor/ex_commands.cpp | builtin :w :q :e :help … | ExCommands | same | ui.hpp, messages, str
+
+----- lsp -----
+includes/lsp/lsp_models.hpp | DTOs | LspLocation LspTextEdit LspWorkspaceEdit LspSymbol LspCodeAction LspPickerKind | data | HEADER-ONLY
+includes/lsp/completion.hpp | completion DTOs | CompletionItem, CompletionList | data | HEADER-ONLY
+includes/lsp/diagnostics.hpp | diagnostic DTOs | DiagnosticSeverity, Diagnostic, DiagnosticSnapshot | data | HEADER-ONLY
+includes/lsp/lsp_jsonrpc.hpp | Content-Length JSON-RPC | LspJsonRpc | feed make_request make_notification next_id | mini_json
+src/lsp/lsp_jsonrpc.cpp | framing | LspJsonRpc | same | logger
+includes/lsp/lsp_process.hpp | stdio child | LspProcess | start stop write_all take_stdout | threads
+src/lsp/lsp_process.cpp | pipe/fork | LspProcess | same | POSIX
+includes/lsp/lsp_edits.hpp | apply WorkspaceEdit | ns LspEdits | apply_workspace_edit | buffer, buffer_manager
+src/lsp/lsp_edits.cpp | apply | LspEdits | same | lsp_service, logger, text_metrics
+includes/lsp/lsp_service.hpp | sessions + requests | LspServerConfig LspSessionState LspDocumentState LspPendingKind LspPendingRequest LspSession LspService | notify_* request_* take_* | many
+src/lsp/lsp_service.cpp | JSON-RPC client | LspSession, LspService | same | installer, logger, messages, text_metrics
+includes/lsp/lsp_installer.hpp | LS bootstrap | LspInstaller + Status CatalogEntry | set_auto_install user_dir resolve request catalog | filesystem
+src/lsp/lsp_installer.cpp | queue/status/paths | LspInstaller | same | detail.hpp, async, logger, messages
+src/lsp/lsp_installer_detail.hpp | private install API | lsp_install_detail::Method Spec | spec_for install_one catalog_specs run_cmd | NOT public include
+src/lsp/lsp_installer_util.cpp | PATH, catalog, run_cmd | lsp_install_detail | catalog_specs exe_ok run_cmd link_bin | detail.hpp, logger
+src/lsp/lsp_installer_backends.cpp | pip/npm/curl/go | lsp_install_detail | install_one backends | detail.hpp, messages
+
+----- syntax -----
+includes/syntax/syntax.hpp | langs + lexer tokens | Language TokenKind SyntaxToken HighlightState LanguageDefinition ns Syntax | detect_language highlight_line theme_pair |
+src/syntax/syntax.cpp | lexer | Syntax | same | theme.hpp
+includes/syntax/tree_highlighter.hpp | TS + lexer fallback | TreeHighlighter | notify_edit sync tokens_for_line | undo, syntax
+src/syntax/tree_highlighter.cpp | dlopen grammars | TreeHighlighter | same | grammar_installer, tree_sitter/api.h, dlfcn
+includes/syntax/grammar_installer.hpp | download/compile grammars | GrammarInstaller | set_auto_install user_dir find_grammar request | syntax.hpp
+src/syntax/grammar_installer.cpp | curl/git + cc → .so | GrammarInstaller | same | async, logger, messages
+
+----- scm -----
+includes/scm/scm_types.hpp | status DTOs | ScmPathState ScmFileStatus ScmRepoSnapshot | data | HEADER-ONLY
+includes/scm/scm_diff.hpp | unified-diff → gutter | ScmLineChange ScmHunk ScmFileDiff ns ScmDiff | parse_unified untracked_all_added |
+src/scm/scm_diff.cpp | parse unified | ScmDiff | same |
+includes/scm/scm_git.hpp | git CLI backend | ns ScmGit | find_repository_root collect stage_path diff_vs_head | git.hpp
+src/scm/scm_git.cpp | porcelain parser | ScmGit | same | logger
+includes/scm/scm_service.hpp | async SCM cache | ScmService | request_refresh status_for request_file_diff stage/unstage/discard_worktree |
+src/scm/scm_service.cpp | impl | ScmService | same | scm_git, async, git, logger
+
+----- workspace -----
+includes/workspace/workspace.hpp | project root | Workspace | detect_root open set_root root |
+src/workspace/workspace.cpp | marker walk + git root | Workspace | same | scm_git
+includes/workspace/session.hpp | session.json schema | SessionTabState SessionState ns SessionStore | save load |
+src/workspace/session.cpp | session IO | SessionStore | same | mini_json, fs, logger
+includes/workspace/recovery.hpp | crash snapshots | RecoveryEntry ns RecoveryStore | write_snapshot list read_lines |
+src/workspace/recovery.cpp | recovery IO | RecoveryStore | same | mini_json, fs, logger, str
+includes/workspace/recent_files.hpp | MRU | RecentFiles | touch list |
+src/workspace/recent_files.cpp | impl | RecentFiles | same |
+
+----- terminal -----
+includes/terminal/terminal_cell.hpp | cell attrs | TerminalAttrs TerminalCell cell_is_empty | data | HEADER-ONLY
+includes/terminal/terminal_screen.hpp | grid + scrollback | TerminalScreen | put/erase/scroll/snapshot |
+src/terminal/terminal_screen.cpp | emulator grid | TerminalScreen | same | text_metrics
+includes/terminal/vt_parser.hpp | ANSI/VT parser | VtParser | feed reset |
+src/terminal/vt_parser.cpp | CSI/SGR/OSC | VtParser | same |
+includes/terminal/pty_session.hpp | PTY + shell child | PtyLifecycle PtySession | start stop write_* take_output |
+src/terminal/pty_session.cpp | forkpty + reader | PtySession | same | pty.h/util.h
+includes/terminal/terminal_session.hpp | PTY+parser+screen | TerminalSessionState TerminalSessionConfig TerminalSession | start pump write_* |
+src/terminal/terminal_session.cpp | glue | TerminalSession | same | logger
+
+----- configs -----
+includes/configs/config.hpp | AppConfig schema | Keybinding LspServerConfigFile TerminalConfig AppConfig | defaults load | mini_json
+src/configs/config.cpp | JSON load | AppConfig | defaults load | logger
+includes/configs/mini_json.hpp | tiny JSON DOM | MiniJson::Value Object/Array | parse stringify getters |
+src/configs/mini_json.cpp | recursive descent | MiniJson | parse/stringify |
+includes/configs/keybindings.hpp | chord resolver | KeyToken ResolvedBinding KeybindingEngine | load resolve parse_key when_matches | command.hpp, config.hpp
+src/configs/keybindings.cpp | key parse + when | KeybindingEngine | same | ncurses KEY_F(*), str
+
+----- commands -----
+includes/commands/command.hpp | CommandId constants + InputContext | CommandId ns Commands InputContext ResolveStatus ResolveResult | context_allows_leader context_is_literal | HEADER-ONLY
+includes/commands/command_registry.hpp | id → handler | CommandRegistry | register_command execute diagnose | mostly inline
+src/commands/command_registry.cpp | diagnose unbound/unknown | CommandRegistry | diagnose | logger
+
+----- extensions -----
+includes/extensions/editor_events.hpp | buffer event bus | EditorEvents | on_buffer_* emit_* unsubscribe |
+src/extensions/editor_events.cpp | multicast | EditorEvents | same |
+includes/extensions/extension_context.hpp | extension API | ExtensionContext | register_command add_keybinding on_buffer_* extension_config |
+src/extensions/extension_context.cpp | impl | ExtensionContext | same | logger, messages
+includes/extensions/extension_manager.hpp | static host | ExtensionState Extension ExtensionManager | add activate_all deactivate_all |
+src/extensions/extension_manager.cpp | activate loop | ExtensionManager | same | logger
+includes/extensions/builtin_hello.hpp | sample factory | — | make_hello_extension |
+src/extensions/builtin_hello.cpp | HelloExtension | HelloExtension (anon ns) | make_hello_extension | logger
+
+----- help -----
+includes/help/help_docs.hpp | :help pages | ns HelpDocs | topic_ids build | config, ex_commands
+src/help/help_docs.cpp | help text | HelpDocs | same | str
+
+----- sidebar -----
+includes/sidebar/dirscanner.hpp | async dir tree | ScanedEntry DirScanner | scan_dirs_async get_entries | fs, logger
+src/sidebar/dirscanner.cpp | impl | DirScanner | same | async
+
+----- utils -----
+includes/utils/fs.hpp | filesystem wrapper | FsReadResult FS | create/write/read/list/paths |
+src/utils/fs.cpp | atomic write | FS | same | logger, POSIX
+includes/utils/git.hpp | git subprocess | Git | is_repo current_branch status_porcelain_z run |
+src/utils/git.cpp | popen git | Git | same |
+includes/utils/logger.hpp | file logger | Logger | init info error warning debug |
+src/utils/logger.cpp | async writer → logs/noni.log | Logger | same |
+includes/utils/args.hpp | CLI argv[1] | Args | get_file_path |
+src/utils/args.cpp | parse argv | Args | same | logger
+includes/utils/cursor.hpp | line+byte cursor | Cursor | data | HEADER-ONLY
+includes/utils/str.hpp | string helpers | ns StrUtils | trim/split/join/… |
+src/utils/str.cpp | impl | StrUtils | same |
+includes/utils/clipboard.hpp | system clipboard read | ns Clipboard | read only (no write API) |
+src/utils/clipboard.cpp | wl-paste/xclip/xsel | Clipboard | read | logger
+includes/utils/fuzzy.hpp | fuzzy + FileIndex | FuzzyMatch ns Fuzzy FileIndex | score filter rebuild_async |
+src/utils/fuzzy.cpp | fuzzy + indexer | Fuzzy, FileIndex | same | async, logger
+includes/utils/text_search.hpp | workspace grep | TextMatch TextSearchOptions TextSearch | search_async results |
+src/utils/text_search.cpp | async grep | TextSearch | same | async, logger, regex
+includes/utils/text_metrics.hpp | UTF-8 / display / UTF-16 | ns TextMetrics | decode byte↔display byte↔utf16 |
+src/utils/text_metrics.cpp | widths | TextMetrics | remaining | cwchar
+includes/utils/async.hpp | 2-worker job pool | Background | instance start post next_token |
+src/utils/async.cpp | thread pool | Background | same |
+includes/utils/fs_watcher.hpp | inotify | FsEventKind FsEvent FsWatcher | watch poll set_workspace |
+src/utils/fs_watcher.cpp | inotify impl | FsWatcher | same | logger, sys/inotify.h
+includes/utils/messages.hpp | in-app ring | Messages | info warning error set_lines echo_snapshot |
+src/utils/messages.cpp | impl | Messages | same |
+
+----- tests -----
+(none; R4, T0 removed Makefile test target)
+
+Skipped (not app compile units): .grammar-test/** , .noni/tree-sitter/src/**
+
+Sources for PART Q: glob of src/ includes/ noni.cpp Makefile; each file's header/impl.
+
+################################################################
+PART R — CLASS / DATA STRUCTURE REFERENCE
+################################################################
+
+Ownership (value members unless noted):
+
+  main (noni.cpp)
+    Logger (static writer thread)
+    UI  (owns widgets + engine)
+      Header, TabBar, Sidebar, SearchPanel, LineNumber, Editor,
+      MessagesPanel, FilePicker, BufferPicker, LspPicker, CompletionPicker,
+      Statusbar, CommandLine, ConfirmPrompt, InputPrompt, TerminalPanel
+      EditorCore core
+        BufferManager buffers_  → unique_ptr<Buffer>[] + EditorTab[]
+        RegisterFile, MarkTable, JumpList, BufferSearchState
+        ScmService, LspService, EditorEvents, Workspace, RecentFiles
+      CommandRegistry, ExtensionManager, AppConfig, KeybindingEngine
+      FsWatcher
+
+UI (includes/ui/ui.hpp, src/ui/ui.cpp)
+  Members: widgets above; layout ints sidebar_width line_number_width terminal_height;
+    Focus focus; SideView side_view; scm_diff_cache_; pending_recovery_; fs_watcher_.
+  Lifetime: main stack (noni.cpp:14-16). Dtor ui.cpp:152-162: save_session, deactivate extensions,
+    stop watcher/terminal/LSP/Background, endwin().
+  Thread: main/ncurses. Async polled in run/render.
+  Key: init run render resize handle_inputs register_actions when_context.
+
+EditorCore (editor_core.hpp / editor_core.cpp)
+  No ncurses. Owns BufferManager, registers/marks/jumps, search, ScmService, LspService,
+    EditorEvents, Workspace, RecentFiles, editor_area_w_/h_.
+  attach_lsp_document: Buffer listeners → lsp_.notify_* + events_.emit_* (editor_core.hpp:73).
+  Thread: main (LSP/SCM have their locks).
+  Key: search_start search_next replace_*; split/focus/resize wrappers on WindowLayout.
+
+BufferManager (buffer_manager.hpp / .cpp)
+  Owns vector<unique_ptr<Buffer>> + vector<EditorTab>. Tabs/windows Buffer* hold; destroy_buffer
+    only if unreferenced (buffer_manager.cpp:17-42).
+  Key: open_untitled open_file close_active switch_to next_tab prev_tab.
+
+Buffer (buffer.hpp / buffer.cpp)
+  content lines; undo/redo stacks kMaxUndo=256; TreeHighlighter; DiagnosticSnapshot;
+    change_listener_/reload_listener_ non-owning; disk_mtime_. Non-copyable.
+  Mutations via record_change (buffer.cpp:431). Thread: main only (no mutex on content).
+
+EditorTab (editor_tab.hpp)
+  WindowLayout layout + EditorMode mode. Buffer lifetime BufferManager.
+
+Window (window.hpp HEADER-ONLY)
+  Buffer* non-owning. Owns Cursor, scroll, Selection, preferred_column_. Splits share Buffer.
+
+Editor component (editor.hpp / editor.cpp)
+  EditorCore* core_; EditorTab* tab (non-owning). Pending j/g/m/operators.
+  Key: handle_input → handle_normal_input / handle_visual_input / handle_insert_input;
+    draw → draw_window_pane; undo redo apply_completion.
+
+Sidebar (sidebar.hpp / .cpp)
+  Owns DirScanner + cached ScanedEntry tree, expansion set, clipboard. poll() version snapshot.
+
+Terminal stack
+  TerminalPanel owns TerminalSession (main draw/input; poll pumps).
+  TerminalSession owns PtySession, TerminalScreen, VtParser (main pump).
+  PtySession: master fd, child pid, reader std::thread, out_buf under out_mu.
+  VtParser / TerminalScreen: main during pump.
+
+LspService / LspSession / LspProcess
+  LspService: mu_; sessions_ unique_ptr map; documents_ by Buffer*; ready_* optionals (lsp_service.hpp:147+).
+  LspSession: LspProcess process_, LspJsonRpc rpc_, write_mu_, pending_opens_, initialize_id_;
+    owner LspService* non-owning. state_ atomic LspSessionState.
+  LspProcess: pipes, reader thread, out_mu_/out_buf_. pump on main take_stdout.
+
+LspInstaller — static class. Status map + queue under g_mu. Jobs → Background.
+  user_dir: $HOME/.local/share/noni/lsp → <ws>/.noni/lsp → /tmp/noni-lsp-<uid>
+  Header comment "XDG"; XDG_DATA_HOME env unused.
+
+ScmService — cache + mutex. request_refresh / request_file_diff → Background.
+  stage/unstage/discard_worktree: sync git on main, then request_refresh.
+
+Workspace — single root_. detect_root: git then markers (workspace.cpp:6-65).
+
+FileIndex — owned by FilePicker. Mutex + entries; rebuild_async → Background; UI poll version.
+
+DirScanner — owned by Sidebar. scan_dirs_async → Background.
+
+FsWatcher — NO thread. inotify IN_NONBLOCK. UI start/poll on main. Mutex for watch maps.
+
+KeybindingEngine — bindings + pending vector. resolve returns CommandId; does not execute.
+
+CommandRegistry — CommandId → std::function<void()> + owner. execute on main. No description field.
+
+AppConfig — load config.json MiniJson. See PART S.
+
+MiniJson — recursive-descent parse/stringify. Variant Value.
+
+Theme — constexpr pair ids 1–90. Theme::init start_color + init_pair. Custom colors from id 16 if can_change_color().
+
+ExtensionManager — unique_ptr<Extension> + ExtensionContext. activate_all in UI ctor. Currently make_hello_extension().
+
+Logger — static. Writer thread + queue. Path logs/noni.log. Format two lines per event (logger.cpp:151-166).
+  init truncates; writer_loop ensure_open uses app.
+
+Background — singleton. UI starts 2 workers (ui.cpp:74). post if not started runs job sync (async.cpp:66-69). next_token stale results.
+
+Compact others
+  SearchPanel owns TextSearch engine.
+  Statusbar mode/filename/cursor/scm badge/echo TTL.
+  TabBar non-owning const BufferManager*.
+  CommandLine prompt : / ?
+  FilePicker owns FileIndex.
+  BufferPicker non-owning BufferManager*.
+  LspPicker locations/symbols/actions/install catalog.
+  CompletionPicker holds CompletionList.
+  ConfirmPrompt Yes/No/Cancel.
+  InputPrompt prefix + input.
+  MessagesPanel reads Messages history.
+  WindowLayout binary tree unique_ptr<Window> leaves.
+  Selection on Window, not Buffer.
+  Undo structs in undo.hpp; stacks on Buffer.
+  Marks a–z, buffer_id pointer cast.
+  Registers unnamed + a–z.
+  Jumps max 100.
+  Motion namespace no state.
+  RecoveryStore / SessionStore / HelpDocs namespaces.
+  GrammarInstaller static like LspInstaller.
+  TreeHighlighter per-Buffer.
+  Syntax language detect / lexer / theme_pair.
+  ScmGit namespace git subprocess.
+  ScmDiff parse unified -U0.
+  DiagnosticSnapshot on Buffer version-gated.
+  Header branch string + mutex.
+  LineNumber non-owning diags + ScmFileDiff*.
+  Messages static history + echo seq, mutex.
+  Clipboard::read only (wl-paste, xclip, xsel).
+
+Sources for PART R: listed headers/impls, ui.hpp members, noni.cpp, async.hpp, logger.cpp.
+
+################################################################
+PART S — CONFIG SCHEMA (config.json)
+################################################################
+
+Load: AppConfig::load() from UI::load_config (ui.cpp). Search order (first existing regular file):
+  1) $PWD/config.json
+  2) directory of /proc/self/exe / config.json
+  3) $HOME/.config/noni/config.json
+Missing all: Logger::warning + AppConfig::load_message; return defaults() (keybindings empty).
+Parse fail of the chosen file: Logger::error; defaults + load_message (no partial apply). Statusbar set_echo(load_message) after init.
+Success: loaded_from set; ctor logs "loaded N bindings from PATH, M commands registered, unbound: ...".
+defaults() (config.cpp): in-class initializers; keybindings = {}.
+App never writes config.json.
+
+TOP-LEVEL KEYS
+
+JSON name | C++ | type | default | reader | effect
+appName | app_name | string | "noni" config.hpp:31 | config.cpp:35 | load ke baad koi reader nahi (stored only)
+sidebarWidth | sidebar_width | int | 25 config.hpp:32 | ui.cpp:194; layout 617-623, 2431-2484 | explorer columns; Search view min 36
+lineNumberWidth | line_number_width | int | 5 config.hpp:33 (repo config.json has 7) | ui.cpp:195; gutter | gutter columns
+escDelayMs | esc_delay_ms | int | 25 | ui.cpp:171 set_escdelay; <=0 → 25 | ncurses Esc vs CSI delay
+syntaxAutoInstall | syntax_auto_install | bool | true | only if JSON bool config.cpp:39-40; GrammarInstaller::set_auto_install ui.cpp:204 | missing grammar background install
+keybindings | keybindings | array | {} | KeybindingEngine::load ui.cpp:203 | command chords; C++ defaults empty
+lsp | object | — | — | config.cpp:56-88 | autoInstall + servers; missing → autoInstall true, servers empty
+terminal | object | TerminalConfig | see below | config.cpp:91-96; ui.cpp:224-229 | PTY shell/height/scrollback
+extensions | map id→JSON object | empty | config.cpp:98-103; ExtensionContext::extension_config | per-extension settings
+
+keybindings[] item
+  key     string  skipped if empty  chord spec parse_key
+  command string  skipped if empty  CommandId execute
+  when    string  default ""        empty = always (keybindings.cpp:305-306); && / || vs when_context
+If keybindings present as array: vector cleared then rebuilt (config.cpp:42-54).
+
+lsp object
+  lsp.autoInstall  bool  default true  LspInstaller::set_auto_install ui.cpp:205
+  lsp.servers      array default empty  copied to LspServerConfig ui.cpp:207-220
+
+lsp.servers[] (LspServerConfigFile config.hpp:15-20)
+  language    string  must non-empty  match Syntax::language_definition().name; C/Cpp fallback "cpp" or "c" (lsp_service.cpp:980-989)
+  command     string[]  argv; [0] resolved PATH/installer then LspProcess::start
+  rootMarkers string[]  copied to LspServerConfig.root_markers (lsp_service.hpp:31) — session_for read nahi karta; workspace = Workspace root
+
+Ship sample config.json: cpp ["clangd"] markers compile_commands.json,.git ; python ["pylsp"] pyproject.toml,.git
+
+terminal
+  shell       string  "" → $SHELL → /bin/sh (pty_session.cpp:59-64; comment config.hpp:24)
+  height      int     12; ui.cpp std::max(5, …)
+  scrollback  int     5000; std::max(0, …)
+
+extensions.*
+  Any object key = extension id; value MiniJson::Value kept.
+  Lookup: config_.extensions[extension_id_] else empty object (extension_context.cpp:62-67).
+  Sample: extensions.noni.hello.greet string → HelloExtension::activate ctx.info(greet) if non-empty.
+
+Unknown top-level JSON keys ignored (no iteration of all keys).
+Wrong types: get_string/get_int fallback to default; autoInstall requires is_bool().
+
+MiniJson (mini_json.cpp)
+  objects, arrays, strings, true/false, null, numbers optional - and . fraction. No exponent.
+  No comments. No trailing commas. Duplicate keys: emplace first wins.
+  Strings: \" \\ \/ \n \t \r; unknown escape pushes escaped char; no \uXXXX decode on parse.
+  Trailing junk: "Trailing JSON content". Empty: "Invalid JSON".
+  stringify used for JSON-RPC, not writing config.json.
+
+Sources for PART S: includes/configs/config.hpp, src/configs/config.cpp, src/configs/mini_json.cpp,
+config.json, src/ui/ui.cpp load_config/init, lsp_service.cpp session_for, grammar_installer.hpp,
+lsp_installer.hpp, extension_context.cpp, builtin_hello.cpp, pty_session.cpp.
+
+
+################################################################
+PART T — KEYBINDINGS COMPLETE TABLE
+################################################################
+
+T1) config.json keybindings[]  (config.json:32-313)
+First matching binding in load order wins (KeybindingEngine::resolve_pending).
+
+chord | when | command id
+escape | "" (always) | noni.mode.normal
+ctrl+s | editorFocus | workbench.action.files.save
+ctrl+w | editorFocus && normalMode | workbench.action.closeActiveEditor
+ctrl+p | editorFocus && normalMode || sidebarFocus || searchFocus | noni.search.files
+ctrl+shift+f | editorFocus && normalMode || searchFocus || sidebarFocus | workbench.action.findInFiles
+space shift+f | same | workbench.action.findInFiles
+ctrl+b | editorFocus && normalMode || sidebarFocus || searchFocus | workbench.action.toggleSidebarVisibility
+ctrl+t | editorFocus && normalMode || terminalFocus || sidebarFocus || searchFocus | workbench.action.terminal.toggle
+ctrl+y | editorFocus && normalMode | editor.action.redo
+ctrl+v | editorFocus && normalMode | editor.action.clipboardPasteAction
+ctrl+space | editorFocus | editor.action.triggerSuggest
+ctrl+backslash | editorFocus && normalMode | workbench.action.splitEditorRight
+ctrl+k s | editorFocus && normalMode | workbench.action.splitEditorDown
+ctrl+k q | editorFocus && normalMode | workbench.action.closeActiveEditorGroup
+ctrl+k h | editorFocus && normalMode | workbench.action.focusLeftGroup
+ctrl+k l | editorFocus && normalMode | workbench.action.focusRightGroup
+ctrl+k k | editorFocus && normalMode | workbench.action.focusAboveGroup
+ctrl+k j | editorFocus && normalMode | workbench.action.focusBelowGroup
+ctrl+k leftbracket | editorFocus && normalMode | workbench.action.decreaseViewWidth
+ctrl+k rightbracket | editorFocus && normalMode | workbench.action.increaseViewWidth
+ctrl+k underscore | editorFocus && normalMode | workbench.action.decreaseViewHeight
+ctrl+k equals | editorFocus && normalMode | workbench.action.increaseViewHeight
+space ; | editorFocus && normalMode || sidebarFocus || searchFocus | workbench.action.showAllEditors
+space o | editorFocus && normalMode || sidebarFocus || searchFocus | workbench.action.openWorkspace
+space . | editorFocus && normalMode | noni.explorer.revealActive
+space e | editorFocus && normalMode || searchFocus | workbench.view.explorer
+space e | sidebarFocus | noni.focus.editor
+tab | editorFocus && normalMode || sidebarFocus | noni.focus.toggleSidebar
+: | editorFocus && normalMode | noni.command.open
+g t | editorFocus && normalMode | workbench.action.nextEditor
+g g | editorFocus && normalMode | editor.action.goToFileStart
+g shift+t | editorFocus && normalMode | workbench.action.previousEditor
+u | editorFocus && normalMode | editor.action.undo
+space g r | editorFocus && normalMode || sidebarFocus | git.refresh
+space g s | editorFocus && normalMode || sidebarFocus | git.showStatus
+space g a | editorFocus && normalMode || sidebarFocus | git.stage
+space g u | editorFocus && normalMode || sidebarFocus | git.unstage
+space g x | editorFocus && normalMode | git.discard
+space g d | editorFocus && normalMode | git.showDiff
+space g f | editorFocus && normalMode | git.refreshDiff
+space m s | editorFocus && normalMode | workbench.action.saveSession
+space m r | editorFocus && normalMode | workbench.action.restoreSession
+space l s | editorFocus && normalMode | lsp.showStatus
+space l r | editorFocus && normalMode | lsp.restart
+space l c | editorFocus && normalMode | editor.action.triggerSuggest
+f12 | editorFocus && normalMode | editor.action.revealDefinition
+g d | editorFocus && normalMode | editor.action.revealDefinition
+g shift+d | editorFocus && normalMode | editor.action.revealDeclaration
+g y | editorFocus && normalMode | editor.action.goToTypeDefinition
+shift+f12 | editorFocus && normalMode | editor.action.goToReferences
+g r | editorFocus && normalMode | editor.action.goToReferences
+space l o | editorFocus && normalMode | workbench.action.gotoSymbol
+space l w | editorFocus && normalMode | workbench.action.showAllSymbols
+f2 | editorFocus && normalMode | editor.action.rename
+space l n | editorFocus && normalMode | editor.action.rename
+space l a | editorFocus && normalMode | editor.action.quickFix
+
+C++ defaults empty: KeybindingEngine::load copies config.keybindings (keybindings.cpp:109-127).
+
+-------------------------------------------------------------------
+T2) KeybindingEngine chord parsing + when-flags
+-------------------------------------------------------------------
+
+parse_key / parse_single (keybindings.cpp:293-301, 19-106)
+  Chord = whitespace-separated tokens. Example "ctrl+k s" → [ctrl+k, s].
+  Each token: zero or more mod+ prefixes then key name. Spec lowercased.
+  Unknown names leave code==0 (binding dropped if chord empty).
+
+Modifiers:
+  ctrl / control / c  → ctrl
+  alt / option / a    → alt
+  shift / s           → shift
+
+Named keys → stored code:
+  escape/esc=27  tab='\t'  enter/return='\n'  space=' '  backspace/bs=127
+  f2…f12 = KEY_F(2)…KEY_F(12)  — parse_single me f1 nahi
+  ` / backtick / grave
+  \ / backslash
+  [ / leftbracket   ] / rightbracket
+  - / minus   = / equals / plus   _ / underscore
+  single ASCII letter; shift+x → 'X' and shift=true; uppercase also sets shift
+
+Leader: first token is leader iff !ctrl && !alt && code==' ' (is_leader_token, keybindings.cpp:164-167). Flag ResolvedBinding.leader.
+
+from_raw (keybindings.cpp:178-291) — getch → KeyToken:
+
+raw | token
+27 | Esc code=27
+'\t' | Tab
+'\n' or KEY_ENTER | Enter code='\n'
+KEY_BACKSPACE / 127 / 8 | Backspace 127
+KEY_F(2)…KEY_F(12) | F-keys, shift bit nahi
+1–26 | ctrl + 'a'…'z'
+28 | ctrl + '\\'   (Ctrl+\)
+0 | ctrl + space  (NUL; comment: Ctrl+Space / Ctrl+@)
+'A'–'Z' | shift + that letter
+else | code = raw_key unchanged (arrows stay KEY_UP etc.)
+
+from_raw Alt set nahi karta. parse_single alt parse karta hai. meta(stdscr, TRUE) on (ui.cpp:183).
+from_raw me raw 29 (Ctrl+]) ko ctrl+']' map nahi. Terminal focus ch==29 leave (ui.cpp:3307).
+shift+f12 spec: parse sets shift=true + KEY_F(12). from_raw(KEY_F(12)) shift nahi set karta — equality shift match maangti hai.
+
+when_matches (keybindings.cpp:303-342)
+  empty when → always true
+  || of && clauses
+  token matches as whole word in " " + context + " "
+  negation / ! nahi
+
+Flags SET only in UI::when_context() (ui.cpp:548-590):
+
+flag | set when
+editorFocus | focus == Focus::Editor
+sidebarFocus | Focus::Sidebar
+searchFocus | Focus::Search
+commandFocus | Focus::Command
+messagesFocus | Focus::Messages
+fileSearchFocus | Focus::FileSearch
+bufferSearchFocus | Focus::BufferSearch
+lspPickerFocus | Focus::LspPicker
+completionFocus | Focus::Completion
+confirmFocus | Focus::Confirm
+promptFocus | Focus::Prompt
+terminalFocus | Focus::Terminal
+normalMode | editor.get_mode() == EditorMode::Normal (focus editor na ho tab bhi)
+insertMode | EditorMode::Insert
+visualMode | Visual OR VisualLine (ek flag dono ke liye)
+sidebarVisible / sidebarHidden | sidebar_visible
+terminalVisible / terminalHidden | terminal_visible
+
+-------------------------------------------------------------------
+T4) Prefix / chord mechanism
+-------------------------------------------------------------------
+
+State: KeybindingEngine::pending vector (keybindings.hpp:59). Chord TIMEOUT nahi.
+
+Related timers (Prefix ke liye nahi):
+  set_escdelay(config.esc_delay_ms) ui.cpp:171 — ncurses Esc vs CSI
+  timeout(50) ui.cpp:184 — getch ERR after 50ms so UI refresh; handle_inputs ERR pe return WITHOUT clear_chord → Prefix idle pe persist
+
+Reset pending:
+  full match → pending.clear() (keybindings.cpp:375)
+  no prefix match → pending.clear() (386-398)
+  literal context that would become Prefix → force Unmatched + clear (427-430)
+  KeybindingEngine::clear_chord() (159-162) — focus changes, command line open, return_to_normal etc.
+
+resolve flow (405-438 → resolve_pending 344-403):
+  1. from_raw
+  2. Literal contexts (CommandLine, PromptInput, Picker, Terminal, Confirm, SearchText, EditorInsert — command.hpp:130-144) and no pending:
+     Space → Unmatched (leader start nahi)
+     Non-controlish (controlish = Esc OR KEY_F(4) OR tok.ctrl) with leader disallowed: try single-key only; if Prefix → Unmatched
+     Comment 413 "F-keys"; code sirf KEY_F(4) controlish hai, F2/F12 nahi
+  3. Else append to pending
+  4. Scan bindings when-match AND (if leader) context_allows_leader (EditorNormal, EditorVisual, Sidebar, SearchResults — command.hpp:115-127)
+  5. Exact chord → Matched, clear, command_id
+  6. Proper prefix → ResolveStatus::Prefix (consumed; no timer)
+  7. Else Unmatched, clear. pending.size()>1 → whole chord drop; last key replay as fresh start nahi. UI us last raw key ko component ko deta hai.
+
+any_leader_prefix assigned (348, 382-383) aur kabhi read nahi.
+
+UI::handle_inputs Search branch dispatch_resolved(..., SearchResults) — SearchText path input_context_for me hai (ui.cpp:59-60) lekin Search handle_inputs SearchResults pass karta hai (agent: 3322).
+
+-------------------------------------------------------------------
+T3) Hardcoded keys (mode-wise)
+-------------------------------------------------------------------
+
+Dispatch: UI::handle_inputs ui.cpp:3186-3508. KEY_RESIZE global 3193-3196. ERR ignore.
+
+Command line Focus::Command  (3210-3226 + CommandLine::handle_input commandline.cpp:41-59)
+  Esc 27 / Ctrl-C 3 | dispatch then return (escape → noni.mode.normal) | handle_inputs 3212-3215
+  Enter | UI::execute_command | 3217-3220, execute_command 2745
+  Backspace 127/8 | pop | CommandLine::handle_input 50-54
+  printable 32-126 | append | 57-58
+  Esc inside CommandLine close — UI pehle return karta hai jab config escape exist kare | 43-47
+
+Messages Focus::Messages (3228-3238 + messages_panel.cpp:77-109)
+  Esc / Ctrl-C | dispatch then return
+  k / Up | scroll up 1 | 92-93
+  j / Down | scroll down | 95-96
+  PgUp / PgDn | page | 98-102
+  g / G | top / bottom | 104-108
+
+File picker Focus::FileSearch (3241-3254) — keys.resolve nahi. FilePicker::handle_input file_picker.cpp:213-273
+  Esc / Ctrl-C | cancel close_file_search(false)
+  Enter | accept
+  Up/Down | move
+  PgUp/PgDn | page
+  Home/End | first/last
+  Backspace | pop query refilter
+  printable | append query
+
+Buffer picker Focus::BufferSearch (3257-3270 + buffer_picker.cpp:152-196)
+  Same Esc/Enter. Up/Down wrap. Home/End nahi. Backspace + printable filter.
+
+LSP picker Focus::LspPicker (3273-3286 + lsp_picker.cpp:167-213)
+  Same as buffer picker (wrap Up/Down, page, backspace, printable).
+
+Completion Focus::Completion (3289-3302 + completion_picker.cpp:68-94)
+  Esc / Ctrl-C | cancel
+  Enter / Tab | accept
+  Up / Down | wrap
+  PgUp / PgDn | page
+  other | ignored (type-to-filter nahi)
+
+Terminal Focus::Terminal (3305-3316 + terminal_panel.cpp:263-335)
+  Esc 27 / 29 (Ctrl+]) | return_to_normal (PTY ko Esc nahi) | 3307-3310
+  resolved bindings | e.g. ctrl+t | dispatch_resolved 3313
+  PgUp / PgDn | scrollback | 271-279
+  Enter | send \r | 289-292
+  Backspace | send 127 | 293-297
+  Delete | \033[3~ | 298-300
+  arrows | \033OA…D | 301-312
+  Home / End | \033OH / \033OF | 313-318
+  Tab | \t | 319-321
+  Esc send \033 | TerminalPanel me; UI steal kare to unreachable | 322-324
+  Ctrl-A…Z 1-26 | send byte | 326-329
+  printable | send | 331-332
+
+Search panel Focus::Search (3319-3350 + search_panel.cpp:192-327)
+  Always dispatch_resolved(..., SearchResults) first — leader allowed while typing Query/Replace.
+  All fields:
+    F6 match case, F7 whole word, F8 regex | 196-216
+    Tab Query→Replace→Results→Query | 218-227
+    Shift-Tab KEY_BTAB reverse | 229-238
+  Query/Replace (240-275):
+    Enter Query | run search, go Results
+    Enter Replace | ReplaceAll
+    Esc | FocusEditor → return_to_normal
+    Backspace | pop; live search if Query
+    printable | append; live search if Query
+  Results (277-323):
+    Esc / q | FocusEditor
+    k/Up j/Down | move
+    PgUp/PgDn | page
+    g/Home G/End | first/last
+    Enter / o | OpenMatch
+    r | ReplaceAll
+
+Confirm Focus::Confirm — keys.resolve nahi (3353-3358). confirm_prompt.cpp:45-61
+  Esc / Ctrl-C | Cancel
+  y/Y | Yes
+  n/N | No
+  c/C/q/Q | Cancel
+  else | Pending
+  Then UI::resolve_save_confirm
+
+Input prompt Focus::Prompt (3361-3392 + input_prompt.cpp:45-63)
+  Enter | resolve_sidebar_prompt
+  Esc / Ctrl-C | try command resolve; if still active, prompt closes; back to Sidebar
+  Backspace | pop
+  printable | append
+
+Sidebar Focus::Sidebar (3395-3497 + sidebar.cpp:293-420)
+  Esc / Ctrl-C | return_to_normal before resolve | 3397-3400
+  then dispatch_resolved(..., Sidebar) leader allowed
+  k/Up j/Down | move | 306-315
+  PgUp/PgDn | page | 316-323
+  g/Home G/End | first/last | 324-331
+  h/Left | collapse or parent | 332-354
+  l/Right | expand / open file | 355-372
+  Enter / o | toggle dir / open file | 373-389
+  Space | toggle dir expand — aksar leader prefix steal | 390-396
+  a AddFile | A AddFolder | r Rename | d Delete | 397-404
+  x Cut / c Copy / p Paste | 405-410
+  R refresh | 411-415
+  q FocusEditor | 416-417
+
+Editor dispatcher (3500-3507): dispatch_resolved EditorNormal/Insert/Visual then Editor::handle_input (editor.cpp:1757-1768).
+Config bindings with editorFocus && normalMode engine pehle chalte hain: u, tab, :, g g, g t, g T, g d, g r, g y, Space, Ctrl-*.
+
+Normal handle_normal_input editor.cpp:1276-1633  (editor-internal prefixes, KeybindingEngine se alag)
+  " | start register prefix | 1282-1288
+  after " | a-z/A-Z/" set pending register | 1290-1296
+  after m | a-z set mark | 1298-1304
+  after ' | a-z jump mark | 1306-1319
+  after g | g file start; t next tab; T prev tab | 1321-1351 (tab callbacks ui.cpp:107-115)
+  Esc operator-pending | cancel op | 1357-1360
+  dd/cc/yy | linewise | 1363-1376
+  h j k l / arrows | motion
+  w b e | word
+  0 ^ $ | line
+  G | file end
+  g | set pending_g
+  PgUp/PgDn | page
+  Ctrl-D 4 / Ctrl-U 21 | half page
+  v / V | visual char / line
+  / ? | open cmdline (ui.cpp:116-128)
+  n / N | search next/prev
+  d c y | pending operators
+  m ' | mark set / jump
+  o O | open line + insert
+  i I a A | insert variants
+  s S C | substitute / change line / change to eol
+  x | delete char yank
+  p P | paste after/before
+  KEY_SIC if defined | paste clipboard
+  u | undo (normal me config shadow)
+  Ctrl-R 18 | redo
+  Ctrl-O 15 | jump back
+  Tab / Ctrl-I 9 | jump forward (normal me tab sidebar toggle shadow)
+
+Visual / Visual-Line handle_visual_input editor.cpp:1176-1274
+  Esc leave visual | 1181-1185
+  v / V toggle kind | 1188-1202
+  d/x delete | c/s change | y yank | 1205-1218
+  p/P leave + paste | 1221-1225
+  motion keys extend | 1228-1233
+  g then g file start | 1236-1251
+  Ctrl-D/U PgUp/PgDn scroll | 1254-1272
+
+Insert handle_insert_input editor.cpp:1635-1755
+  Insert is context_is_literal → Space leader blocked. Esc config escape pehle match.
+  j then j | delete first j, leave insert | 1640-1658
+  Esc | leave_insert_mode (usually shadowed) | 1663-1665
+  arrows | move split undo | 1666-1685
+  PgUp/PgDn | page | 1686-1695
+  Backspace | delete before / join | 1696-1715
+  Delete | delete at | 1716-1719
+  Tab | insert \t | 1720-1724
+  Enter | newline | 1725-1731
+  KEY_SIC | paste clipboard | 1732-1736
+  printable | insert; pending_j if j | 1738-1744
+
+mousemask / KEY_MOUSE: src/includes me nahi.
+
+Sources for PART T: config.json, includes/configs/keybindings.hpp, src/configs/keybindings.cpp,
+includes/commands/command.hpp, src/ui/ui.cpp handle_inputs/when_context/init,
+src/components/editor.cpp, sidebar.cpp, search_panel.cpp, terminal_panel.cpp,
+commandline.cpp, confirm_prompt.cpp, input_prompt.cpp, messages_panel.cpp,
+file_picker.cpp, buffer_picker.cpp, lsp_picker.cpp, completion_picker.cpp.
+
+################################################################
+PART U — COMMAND REGISTRY LIST
+################################################################
+
+No description field on CommandRegistry (command_registry.hpp). IDs: includes/commands/command.hpp.
+Core handlers: lambdas UI::register_actions src/ui/ui.cpp:232-546.
+Extra: extension.hello.ping builtin_hello.cpp:18.
+
+id | handler (what it calls) | registered | config.json bound
+noni.mode.normal | UI::return_to_normal | ui.cpp:234 | yes (escape)
+workbench.action.files.save | UI::save_active_buffer | 236 | yes
+workbench.action.closeActiveEditor | UI::close_active_tab(false) | 242 | yes
+workbench.action.nextEditor | BufferManager::next_tab | 246 | yes (g t)
+workbench.action.previousEditor | prev_tab | 251 | yes (g shift+t)
+noni.focus.toggleSidebar | lambda 256-277 | 256 | yes (tab)
+noni.focus.sidebar | open_sidebar(true) | 279 | no
+noni.focus.editor | return_to_normal | 283 | yes (space e when sidebar)
+workbench.action.toggleSidebarVisibility | toggle_sidebar | 287 | yes
+workbench.action.closeSidebar | close_sidebar | 291 | no
+workbench.view.explorer | open_explorer_view(true) | 295 | yes (space e)
+workbench.view.search | open_search_view(true) | 299 | no
+workbench.action.findInFiles | open_search_view(true) | 303 | yes
+noni.command.open | command_line.open | 307 | yes (:)
+workbench.action.quit | ex_quit(false) | 314 | no
+workbench.action.quickOpen | open_file_search | 318 | no
+noni.search.files | open_file_search | 322 | yes (ctrl+p)
+workbench.action.showAllEditors | open_buffer_search | 326 | yes (space ;)
+workbench.action.openWorkspace | open_workspace_prompt | 330 | yes (space o)
+noni.explorer.revealActive | lambda 334-345 | 334 | yes (space .)
+workbench.action.terminal.toggle | toggle_terminal | 347 | yes
+workbench.action.terminal.focus | open_terminal(true) | 351 | no
+workbench.action.terminal.clear | terminal.clear_screen | 355 | no
+workbench.action.terminal.scrollUp | terminal.scroll_up | 361 | no
+workbench.action.terminal.scrollDown | terminal.scroll_down | 367 | no
+workbench.action.terminal.kill | terminal.stop | 373 | no
+editor.action.clipboardPasteAction | editor.paste_clipboard | 378 | yes (ctrl+v normal)
+editor.action.undo | editor.undo | 385 | yes (u)
+editor.action.goToFileStart | editor.set_cursor_position(0,0) | 392 | yes (g g)
+editor.action.redo | editor.redo | 398 | yes (ctrl+y)
+workbench.action.splitEditorRight | core.split_vertical | 405 | yes
+workbench.action.splitEditorDown | core.split_horizontal | 409 | yes
+workbench.action.closeActiveEditorGroup | core.close_window | 413 | yes
+workbench.action.focusLeftGroup | core.focus_left | 417 | yes
+workbench.action.focusRightGroup | core.focus_right | 418 | yes
+workbench.action.focusAboveGroup | core.focus_up | 419 | yes
+workbench.action.focusBelowGroup | core.focus_down | 420 | yes
+workbench.action.decreaseViewWidth | core.resize_left | 421 | yes
+workbench.action.increaseViewWidth | core.resize_right | 422 | yes
+workbench.action.decreaseViewHeight | core.resize_up | 423 | yes
+workbench.action.increaseViewHeight | core.resize_down | 424 | yes
+editor.action.nextMatchFindAction | core.search_next(false) | 426 | no
+editor.action.previousMatchFindAction | core.search_next(true) | 431 | no
+editor.action.replaceOne | core.replace_current | 436 | no
+editor.action.replaceAll | apply_replace_all / core.replace_all | 446 | no
+git.refresh | refresh_scm | 460 | yes
+git.showStatus | lambda 465-484 | 465 | yes
+git.stage | scm_stage_active | 486 | yes
+git.unstage | scm_unstage_active | 487 | yes
+git.discard | scm_discard_active_confirm | 488 | yes
+git.showDiff | scm_show_diff_summary | 489 | yes
+git.refreshDiff | lambda 490-495 | 490 | yes
+lsp.showStatus | core.lsp().status_summary | 497 | yes
+lsp.installServers | open_lsp_install_picker | 502 | no
+lsp.restart | lambda 506-511 | 506 | yes
+editor.action.triggerSuggest | trigger_completion | 514 | yes
+editor.action.revealDefinition | request_lsp_definition | 518 | yes
+editor.action.revealDeclaration | request_lsp_declaration | 519 | yes
+editor.action.goToTypeDefinition | request_lsp_type_definition | 520 | yes
+editor.action.goToReferences | request_lsp_references | 521 | yes
+workbench.action.gotoSymbol | request_lsp_document_symbols | 522 | yes
+workbench.action.showAllSymbols | request_lsp_workspace_symbols_prompt | 523 | yes
+editor.action.rename | request_lsp_rename_prompt | 526 | yes
+editor.action.quickFix | request_lsp_code_actions | 527 | yes
+workbench.action.saveSession | save_session | 529 | yes
+workbench.action.restoreSession | restore_session_if_available | 533 | yes
+extension.showStatus | extensions.status_summary | 543 | no
+extension.hello.ping | HelloExtension lambda | builtin_hello.cpp:18 | no
+
+Startup diagnose: commands.diagnose(keys.bound_commands()) ui.cpp:141-147 — unknown → Logger::warning; unbound → Logger::debug.
+
+Sources for PART U: includes/commands/command.hpp, includes/commands/command_registry.hpp,
+src/commands/command_registry.cpp, src/ui/ui.cpp:232-546, src/extensions/builtin_hello.cpp, config.json.
+
+################################################################
+PART V — EX COMMANDS
+################################################################
+
+Registry: ExCommands::register_builtins src/editor/ex_commands.cpp:184-488.
+Parse: name + optional ! + args (parse 72-107). Unique prefix abbreviation (resolve 109-150).
+Ranges % . $ digits skipped, used nahi ("for future use" comment line 79).
+Empty run bodies: none. TODOs in ex_commands.cpp: none.
+
+syntax | args | handler | status
+:q[uit][!] | 0; bang | UI::ex_quit ui.cpp:2779 via ex_commands.cpp:189-202 | working: extra tabs close_active_tab; sole dirty save confirm; else request_quit
+:w[rite][!] [file] | 0-1; bang allowed | UI::ex_write 2795 | working save/save-as. bang ignored ((void)bang 2797)
+:wq[!] [file] aliases x | 0-1; bang | UI::ex_write_quit 2843 | working. bang allows quit with no filename; save errors abort
+:e[dit][!] [file] | 0-1; bang | UI::ex_edit 2881 | working reload or open_file. Dirty+no path+no bang → E37. Lines 2906-2909 dirty-sole-buffer comment empty body — open still proceeds
+:bn[ext] | 0 | UI::ex_bnext 2920 | working
+:bp[revious] aliases bp,bprev | 0 | UI::ex_bprevious 2926 | working
+:bd[elete][!] | 0; bang | UI::ex_bdelete 2932 | working → close_active_tab
+:mes[sages] | 0 | UI::ex_messages 2937 | working messages panel
+:log[s] [noni|lsp|install|grammar] | 0-1 | UI::ex_logs 2943 | working last ~80 lines; unknown key → E149
+:find aliases Files,files | 0 | UI::ex_find 3036 | working file picker
+:buffers aliases ls,filesopen | 0 | UI::ex_buffers 3041 | working buffer picker
+:workspace [path] aliases ws,cd | 0-1 | UI::ex_workspace 3046 | working: no arg prints root; else apply_workspace_root
+:sidebar [open|close|toggle] aliases sb | 0-1 | UI::ex_sidebar 3023 | working; also show/on/hide/off; bad arg usage error
+:search alias grep | 0 | UI::ex_search 3060 | working search sidebar
+:term[inal] [open|close|toggle|kill|clear] | 0-1 | UI::ex_terminal 3134 | working. empty/open → open_terminal(true); toggle → toggle_terminal
+:u[ndo] | 0 | UI::ex_undo 3065 | working
+:redo | 0 | UI::ex_redo 3073 | working
+:com[mands] | 0 | ui.ex_help("ex") ex_commands.cpp:444-456 | working help topic ex
+:lsp aliases LspInstall,lsps | 0 | UI::ex_lsp 1502 → open_lsp_install_picker | working
+:h[elp] [topic|command|all] | 0-1 | UI::ex_help 3007 | working HelpDocs::build
+
+Colon line opened by noni.command.open, not an ex command.
+/ and ? buffer search, not ex (execute_command 2754-2770).
+Decls: includes/ui/ui.hpp:237-256.
+
+Sources for PART V: includes/editor/ex_commands.hpp, src/editor/ex_commands.cpp, src/ui/ui.cpp ex_*, includes/ui/ui.hpp.
+
+
+################################################################
+PART W — INPUT & TERMINAL SETUP
+################################################################
+
+ncurses init — UI::init src/ui/ui.cpp:164-198
+
+step | call | line
+locale | setlocale(LC_ALL, "") | 166
+screen | initscr() | 167
+input mode | raw()  (cbreak nahi) | 169
+echo | noecho() | 170
+ESC delay | set_escdelay(config.esc_delay_ms > 0 ? that : 25) | 171
+signals | SIGINT / SIGPIPE → SIG_IGN | 172-173
+termios | clear IXON|IXOFF|IXANY | 175-180
+keypad | keypad(stdscr, TRUE) | 182
+meta | meta(stdscr, TRUE) | 183
+timeout | timeout(50)  (halfdelay nahi) | 184
+cursor | curs_set(0) | 185
+colors | if (has_colors()) Theme::init() | 187-188
+bg | wbkgd(stdscr, COLOR_PAIR(Theme::Editor)); erase(); refresh() | 190-192
+then | sidebar_width/line_number_width from config; resize() | 194-197
+
+Code me nahi: cbreak, halfdelay, mousemask, KEY_MOUSE.
+
+getch → KeyToken: PART T2 from_raw table. Extra:
+  arrows / KEY_PPAGE etc. fall through as ncurses codes; components handle after unmatched resolve
+  KEY_RESIZE intercepted before from_raw (ui.cpp:3193-3196)
+  Ctrl+] ASCII 29: from_raw me ctrl+']' nahi; Terminal focus raw 29 leave
+  F1: parse_single aur from_raw me KEY_F(1) case nahi
+  Alt: from_raw kabhi t.alt=true nahi
+
+handle_inputs order: PART F + PART T3.
+
+Sources for PART W: src/ui/ui.cpp UI::init / handle_inputs, src/configs/keybindings.cpp from_raw,
+includes/ui/theme.hpp, src/ui/theme.cpp.
+
+################################################################
+PART X — LSP DETAILED
+################################################################
+
+Server states LspSessionState (lsp_service.hpp:34-41)
+  Idle     default construct (atomic init hpp:130)
+  Starting process spawned; initialize sent
+  Running  initialized sent; textDocument/* allowed
+  Failed   launch/init fail, or child died while Running
+  Stopped  after stop()
+
+Transitions (lsp_service.cpp):
+  Idle → Starting  LspSession::start after nonempty command (339-346)
+  Starting → Failed  empty command; process_.start fail; initialize write fail; initialize error
+  Starting → Running  initialize result → send_initialized (496-498, 459-465)
+  Starting/Running → Stopped  stop() (426-435)
+  Running → Failed  pump sees !process_.alive() (446-449)
+  Failed/Stopped sessions dropped/recreated in session_for (959-964)
+
+Installer alag enum LspInstaller::Status: Missing Installing Ready Failed (lsp_installer.hpp:16-22).
+
+Spawn sequence
+1. LspService::session_for (950-1008): language_id_for; match configs_; C/Cpp fallback "cpp"/"c";
+   LspInstaller::resolve(command[0]); empty → request + return nullptr; replace argv[0] abs path;
+   LspSession(config, workspace_root_, this); start()
+2. LspProcess::start (lsp_process.cpp:19-100):
+   stop previous; pipe in + pipe out; fork
+   Child: dup2 stdin/stdout; stderr logs/lsp.stderr.log O_APPEND else /dev/null; close fds;
+     chdir(cwd)=workspace root; execvp; fail _exit(127)
+   Parent: keep write stdin / read stdout; running_=true; reader_ thread 4KiB read → out_buf_
+3. Handshake start (339-423): state_=Starting; build caps; initialize_id_=rpc_.next_id();
+   send initialize processId=getpid(), rootUri, capabilities, clientInfo {name:"noni", version:"0.1"}
+   didOpen nahi — comment ~467 no textDocument/* until initialize+initialized
+4. initialize result → send_initialized {} notification; state_=Running; flush pending_opens_ didOpen
+5. didOpen while Starting (574-598): queue pending_opens_ (replace same URI). Ignored unless Starting/Running
+6. stop: if Running/Starting send request shutdown (response wait nahi) then notification exit;
+   process_.stop(); state_=Stopped
+   LspProcess::stop: SIGTERM, waitpid WNOHANG 20×50ms=1s, then SIGKILL + blocking waitpid
+
+JSON-RPC (lsp_jsonrpc.cpp)
+  Outbound: Content-Length: <size>\r\n\r\n<body>  — Content-Type nahi
+  Request: id number, method, params
+  Notification: no id
+  Response: id, result  / error {code, message}
+  Inbound feed: find \r\n\r\n; case-insensitive content-length:; other headers ignore;
+    no Content-Length or stoul throw → drop headers continue; MiniJson::parse; malformed JSON log skip
+  IDs: next_id_ starts 1, ++ under id_mu_ (integer only)
+
+Pending map LspService::pending_ unordered_map<int, LspPendingRequest> (hpp:215)
+  Kinds: Completion Definition Declaration TypeDefinition References DocumentSymbol WorkspaceSymbol Rename CodeAction
+  Fields: kind, buffer_id=uintptr_t Buffer*, doc_version, trigger Cursor
+  initialize_id_ matching response pending_ me nahi (491-509)
+  on_response (1484-1601): lookup erase; drop if doc_version mismatch except WorkspaceSymbol
+  cancel_pending (1212-1216) map+ready clear; $/cancelRequest send nahi
+  notify_close pending for buffer erase
+  Pending-request timeout: nahi
+  Completion while Starting returns -1 (1167-1168)
+
+Client → server requests
+  initialize, shutdown (response ignored)
+  textDocument/completion, definition, declaration, typeDefinition
+  textDocument/references (includeDeclaration true)
+  textDocument/documentSymbol, workspace/symbol
+  textDocument/rename, textDocument/codeAction (context.diagnostics [])
+
+Client → server notifications
+  initialized, exit
+  textDocument/didOpen, didChange (full or incremental), didSave (no text payload), didClose
+  didChange: incremental UTF-16 if change one line; multi-line delete → full contentChanges [{text}] (1076-1080)
+
+Server → client requests handled
+  workspace/configuration → []
+  client/registerCapability / unregisterCapability → {}
+  window/workDoneProgress/create → null
+  workspace/applyEdit → {applied:true/false}; edit stashed for UI
+  other request (has id) → error -32601 "Method not implemented" (lsp_service.cpp:556)
+
+Server → client notifications handled
+  window/logMessage, window/showMessage → log params.message
+  textDocument/publishDiagnostics → on_publish_diagnostics
+  unknown notifications (no id): silently dropped
+
+Code-action commands parsed (has_command) lekin execute nahi (ui.cpp:1567-1569; comment lsp_models.hpp:53).
+command_args_json never filled (lsp_models.hpp:56).
+documentChanges: only TextDocumentEdit (uri+edits). CreateFile/RenameFile/DeleteFile skipped (uri.empty continue).
+
+Client capabilities (LspSession::start 357-408) — PART X lists above in initialize params.
+No workspaceFolders, locale, trace, initializationOptions.
+synchronization: didSave true, dynamicRegistration false — willSave / didChange kind advertise nahi; dono full+incremental send hote hain.
+
+UTF-16
+  TextMetrics::byte_to_utf16 text_metrics.cpp:191
+  TextMetrics::utf16_to_byte text_metrics.cpp:209
+  utf16_on_line lsp_service.cpp:37
+  LspService::lsp_pos_to_cursor :810
+  parse_completion_item / parse_text_edit_utf16 / parse_location / flatten_document_symbol
+  did_change_incremental send UTF-16 character
+  notify_change utf16_on_line
+  request_completion / position / rename / codeAction
+  on_publish_diagnostics lsp_pos_to_cursor
+  LspEdits convert_edits_utf16_to_bytes lsp_edits.cpp:12
+  UI::goto_lsp_location ui.cpp:1404
+  advance_pos (lsp_service.cpp:21) bytes count — multi-line delete detect only
+
+Installer catalog (lsp_installer_util.cpp:27-33)
+binary | method | package | extra
+pylsp | PipVenv via pip | python-lsp-server | ""
+typescript-language-server | NpmPrefix npm/bun | typescript-language-server | extra pkg typescript
+clangd | CurlGithubZip curl | clangd/clangd | tag 19.1.2
+gopls | GoInstall go | golang.org/x/tools/gopls | latest
+rust-analyzer | CurlGithubZip curl | rust-lang/rust-analyzer | 2024-12-30
+
+Install root LspInstaller::user_dir (lsp_installer.cpp:133-174) first writable:
+  1. $HOME/.local/share/noni/lsp (no HOME → /tmp/noni-lsp)
+  2. <workspace>/.noni/lsp
+  3. /tmp/noni-lsp-<uid>
+Binaries user_dir()/bin/<binary>. Packages user_dir()/pkg/<binary>/
+Resolve: PATH → bin_dir()/name → XDG-style HOME bin → workspace bin (181-204)
+
+config.json wires clangd/cpp and pylsp/python. Catalog entries without lsp.servers[].language :lsp se installable, auto-spawn nahi.
+rootMarkers stored, session_for unused.
+
+Timeouts
+  JSON-RPC pending | none
+  SIGTERM grace | 20×50ms = 1s then SIGKILL  lsp_process.cpp:115-129
+  Install fail retry | 120s  lsp_installer.cpp:26 kFailedRetry
+  curl rust-analyzer | --max-time 180  lsp_installer_backends.cpp:89
+  curl clangd | --max-time 300  :113
+  npm/pip/go system() | none (wait)
+  ncurses timeout(50) | UI poll, not LSP
+
+Sources for PART X: includes/lsp/*, src/lsp/lsp_service.cpp, lsp_process.cpp, lsp_jsonrpc.cpp,
+lsp_edits.cpp, lsp_installer.cpp, lsp_installer_backends.cpp, lsp_installer_util.cpp,
+lsp_installer_detail.hpp, src/utils/text_metrics.cpp, src/ui/ui.cpp LSP methods, config.json.
+
+################################################################
+PART Y — SYNTAX / TREE-SITTER DETAILED
+################################################################
+
+Language detection Syntax::detect_language (syntax.cpp:554-591) extension lowercased:
+
+ext/name | Language
+.c .h | C
+.cpp .cc .cxx .hpp .hh .hxx .ipp .tpp | Cpp
+.py .pyw .pyi | Python
+.rs | Rust
+.go | Go
+.js .mjs .cjs .jsx | JavaScript
+.ts .tsx | TypeScript
+.json .jsonc | JSON
+.sh .bash .zsh OR filename Makefile/makefile/Dockerfile | Shell
+.lua | Lua
+.java | Java
+.cs | CSharp
+.md .markdown | Markdown
+else | Plain
+
+LanguageDefinition.name LSP languageId (594-642): plain c cpp python rust go javascript typescript json shell lua java csharp markdown
+
+Grammar lookup find_grammar (grammar_installer.cpp:619-648)
+  1. /usr/lib/tree_sitter/<so>
+  2. $HOME/.local/share/noni/tree-sitter/<so> (no HOME → /tmp/noni-tree-sitter/<so>)
+  3. <workspace>/.noni/tree-sitter/<so>
+  4. user_dir()/<so> (writable: XDG if writable else ws .noni else /tmp/noni-tree-sitter-<uid>)
+  5. /tmp/noni-tree-sitter-<uid>/<so>
+Install write order = user_dir() chain only (not /usr/lib). XDG_DATA_HOME env unused.
+
+GrammarInstaller::request (668-738)
+  so_for_language (110-139): c.so cpp.so python.so javascript.so (JS AND TS) rust.so bash.so json.so lua.so markdown.so go.so java.so
+  CSharp and Plain → nullptr, no install
+  If .so found → Ready
+  If auto_install off, already queued/installing, or Failed within 60s (kFailedRetry line 30) → return
+  Status Installing; Background::post install_one
+
+install_one (464-537)
+  root=user_dir(), cache root/src/<repo-basename>, output root/<so>
+  parser.c already under src_rel or src/ → reuse
+  else download: curl+tar GitHub/GitLab archive first (download_tarball --max-time 120, revision then master then main), then git clone --filter=blob:none fallback --depth 1
+  Skip git if GIT_DIR/GIT_INDEX_FILE set (322-337)
+  compile_parser: parser.c + optional scanner.c/.cc/.cpp; cc/gcc/clang or c++/g++/clang++; -Os -std=c11 -shared -fPIC or C++14 -lstdc++; .so.tmp then rename
+  Success bump generation; fail Failed retry 60s
+  cmds wrapped >>logs/grammar-install.log 2>&1 (line 182)
+
+Install specs (86-101): nvim-style url + src dir + branch. Markdown tree-sitter-markdown/src branch split_parser. Lua tree-sitter-grammars/tree-sitter-lua main.
+
+Highlight queries: embedded C strings in tree_highlighter.cpp — disk queries/highlights.scm load nahi.
+
+Lang | so / symbol | query const
+C | c.so tree_sitter_c | kQueryC lines ~27-48
+Cpp | cpp.so | same kQueryC; load fail → retry c.so (457-461); request(Cpp) and request(C)
+Lua | lua.so | kQueryLua
+Markdown | markdown.so | kQueryMarkdown
+Python | python.so | kQueryPython
+JS and TS | javascript.so | kQueryJS
+Rust | rust.so | kQueryRust
+Shell | bash.so | kQueryBash
+JSON | json.so | kQueryJson
+Go / Java: installer can build go.so/java.so; highlighter spec_for default nullptr (201-203) — dlopen nahi, lexer only
+CSharp: no install spec, no TS spec
+
+Capture → TokenKind capture_to_kind (206-233): substring comment/string/number/constant|boolean/function/type/preprocessor|directive/keyword|conditional|repeat/operator/punctuation else Text
+TokenKind → Theme pair Syntax::theme_pair (syntax.cpp:697-734) — Theme::Comment 61 … Punctuation 82; Text → Theme::Editor 1
+Paint: editor.cpp:817,840
+
+Fallback lexer highlight_line (645-694)
+  Plain: whole line Text
+  Markdown: # headings + `code` (239-268)
+  Cpp C Python Rust Go JS TS JSON Shell Lua Java CSharp: highlight_generic
+  JSON uses C-style comments in lexer (uses_c_comments includes JSON)
+  Python triple-quotes string_rawish continuation
+
+Incremental re-parse
+  notify_edit (tree_highlighter.cpp:357-365): needs_sync_=true, push TextChange pending_edits_, lower dirty_from_
+  Called Buffer::record_change / insert_text after content update (buffer.cpp:450,470,481,543)
+  invalidate_all (367-383): force_full_, clear pending, drop tree. From Buffer::load (95), undo (722), redo (744)
+  Actual parse Buffer::sync_syntax (183-185) → TreeHighlighter::sync. Callers: editor paint (editor.cpp:804) every redraw; apply_recovered_content (842)
+  sync early-out (660-665) if !needs_sync_ && !force_full_ && !meta_changed && revision match && line count match
+  meta_changed: language, path, or GrammarInstaller::generation() (655-658)
+  If TS active, not force_full_, pending nonempty: ts_tree_edit per change then parse incremental; else full ts_parser_parse_string old=nullptr
+  TS fail → rehighlight_lexer_from dirty_from_
+  Plain or empty file: lexer full, skip TS (678-683)
+
+Sources for PART Y: includes/syntax/*, src/syntax/syntax.cpp, tree_highlighter.cpp, grammar_installer.cpp,
+src/editor/buffer.cpp, src/components/editor.cpp, includes/ui/theme.hpp.
+
+################################################################
+PART Z — PER-FEATURE CALL CHAINS
+################################################################
+
+Sab UI::run → handle_inputs se start (except recovery tick in render). Poll/draw har tick.
+
+1. Insert mode typing
+   handle_inputs (ui.cpp:3500) → KeybindingEngine::resolve (literal insert: most unmatched)
+   → Editor::handle_input (editor.cpp:1757) → handle_insert_input (1635)
+   → Buffer::insert_char (buffer.cpp:494) → record_change (431)
+   → change_listener_ → EditorCore::attach_lsp_document lambda (editor_core.hpp:75)
+   → LspService::notify_change
+   → next render Editor::draw (858) → draw_window_pane (789)
+   Enter insert: normal i/a/… → enter_insert_mode (931) → Buffer::begin_edit
+   Esc → config noni.mode.normal → return_to_normal / leave_insert_mode
+
+2. Save
+   workbench.action.files.save → register_actions (ui.cpp:236) → UI::save_active_buffer (2043)
+   → Buffer::save → statusbar.set_filename → Messages::info → clear_recovery_for_buffer
+   → ScmService::request_refresh → LspService::notify_save → EditorCore::notify_buffer_saved
+   Ex :w → Command Enter → execute_command (2745) → ExCommands::execute → UI::ex_write (2795)
+
+3. Ctrl+P open file
+   noni.search.files (config ctrl+p) → open_file_search (1765) → FilePicker::open (file_picker.cpp:167)
+   → FileIndex::rebuild_async. Typing file_picker.handle_input.
+   Enter close_file_search(true) (1787) → take_selection → BufferManager::open_file → sync_active_tab → editor.draw
+
+4. Sidebar open file
+   Focus Sidebar → sidebar.handle_input → SidebarAction::OpenFile (ui.cpp:~3407)
+   → BufferManager::open_file → note_opened_file → sync_active_tab → enter_normal_mode → refresh_scm → focus=Editor
+
+5. Buffer search (/)
+   Normal / → handle_normal_input case '/' (editor.cpp:1461) → on_search_forward_ (bound ui.cpp:116-122)
+   → command_line.open('/') → focus=Command
+   Enter execute_command (2745) → EditorCore::search_start (editor_core.cpp:46)
+   → BufferSearchState::run → move_active_to_match
+   Highlight Editor::draw_search_highlight (editor.cpp:674) during draw
+
+6. Project search
+   workbench.action.findInFiles (ui.cpp:303) → open_search_view (640) → SearchPanel::open + set_root
+   Typing SearchPanel::handle_input → run_search (search_panel.cpp:47) → TextSearch::search_async (text_search.cpp:256) → Background
+   UI::run search_panel.poll() → draw cached
+   Enter OpenMatch → open_file + set_cursor_position (ui.cpp:3331-3342)
+
+7. Completion
+   editor.action.triggerSuggest (ui.cpp:514) → trigger_completion (1862) → LspService::request_completion
+   Reader thread stdout; render lsp.pump (850) → take_completion_result via poll_completion_result (1906)
+   → CompletionPicker::open → focus=Completion
+   Enter close_completion(true) → Editor::apply_completion (1007)
+
+8. Go to definition
+   editor.action.revealDefinition (ui.cpp:518) → request_lsp_definition (1627) → LspService::request_definition
+   Later poll_lsp_results (1582) → open_lsp_locations (1425)
+   1 item goto_lsp_location (1389) → open_file + lsp_pos_to_cursor + set_cursor_position
+   many → LspPicker
+
+9. Diagnostics display
+   Server publishDiagnostics → reader → pump → on_message → LspService::on_publish_diagnostics (1423)
+   → Buffer::set_diagnostics
+   Render: line_number.sync diags (ui.cpp:2591) → LineNumber::draw gutter
+   Editor::draw_diagnostics_overlay (editor.cpp:718) after search/selection (844-847)
+
+10. Rename
+    editor.action.rename (ui.cpp:526) → request_lsp_rename_prompt (1699) → InputPrompt
+    Enter resolve_sidebar_prompt (2191) PromptIntent::RenameSymbol (2218) → LspService::request_rename
+    poll_lsp_results take_rename_result → apply_lsp_workspace_edit (1412) → LspEdits::apply_workspace_edit
+
+11. Code action
+    editor.action.quickFix (ui.cpp:527) → request_lsp_code_actions (1712)
+    poll_lsp_results → open_lsp_actions (1456) → LspPicker
+    Accept close_lsp_picker (1563) → apply_lsp_workspace_edit or warning command-only (1567-1569)
+
+12. Git status refresh
+    git.refresh (ui.cpp:460) → refresh_scm (819) → ScmService::set_workspace_root + request_refresh (scm_service.cpp:88)
+    → Background ScmGit::collect → apply_snapshot
+    Main render sync_scm_ui (1724) → Header::set_branch + Statusbar::set_scm_badge
+
+13. Git gutter draw
+    render sync_scm_diff (834) → ScmService::request_file_diff (Background diff_vs_head / ScmDiff::parse_unified)
+    Cache scm_diff_cache_ (ui.cpp:2570-2582) → line_number.sync(..., diff_ptr)
+    → LineNumber::draw scm_diff_->line_change + Theme::GutterAdded/Modified/Deleted (line_number.cpp:69-80)
+
+14. Stage / unstage
+    git.stage / git.unstage (ui.cpp:486-487) → scm_stage_active / scm_unstage_active (858, 877)
+    → ScmService::stage/unstage (scm_service.cpp:192, 212) sync ScmGit::stage_path/unstage_path
+    then request_refresh + sync_scm_diff
+
+15. Terminal toggle + typing
+    workbench.action.terminal.toggle (ui.cpp:347) → toggle_terminal (3081) → open_terminal (3098)
+    → resize + TerminalPanel::ensure_started (218) → TerminalSession::start → PtySession::start + reader thread
+    Focus Terminal handle_inputs (3305) Esc/29 leave; else terminal.handle_input (263) → session_.write_bytes
+    Output: run terminal.poll (232) → TerminalSession::pump (80) → VtParser::feed → TerminalPanel::draw
+
+16. Session save
+    workbench.action.saveSession (ui.cpp:529) or ~UI / request_quit → save_session (1047)
+    → capture_session_state (1022) → SessionStore::save (session.cpp:44)
+
+17. Session restore
+    Ctor (ui.cpp:84-99) or workbench.action.restoreSession (533) → restore_session_if_available (1057)
+    → SessionStore::load → close tabs → open_file per tab + restore cursor/scroll → switch_to
+    File argv path: restore_session_if_available(false) — tabs replace nahi, recent/UI flags
+
+18. Recovery snapshot
+    Every render tick_recovery_snapshots (1190): dirty buffers, ≥2s, RecoveryStore::write_snapshot
+    Startup queue_recovery_prompts (1118) → confirm → resolve_recovery_confirm (1143) → Buffer::apply_recovered_content
+    Save clear_recovery_for_buffer
+
+19. Split create/focus/resize
+    register_actions (ui.cpp:405-424) → EditorCore::split_vertical/horizontal, focus_*, resize_*
+    (editor_core.hpp:171-242) → WindowLayout::*
+    Draw Editor::draw compute_rects (editor.cpp:877) + separators + draw_window_pane
+
+20. Undo / redo
+    editor.action.undo (ui.cpp:385) → Editor::undo (1064) → Buffer::undo → restore cursor
+    Same redo (1090). Ex :undo/:redo → ex_undo/ex_redo (ui.cpp:3065, 3073)
+    Insert Ctrl-R hardcoded redo; config ctrl+y also redo in normal
+
+Sources for PART Z: src/ui/ui.cpp, src/components/editor.cpp, src/editor/buffer.cpp,
+editor_core.cpp / .hpp, src/lsp/lsp_service.cpp, src/scm/scm_service.cpp,
+src/workspace/session.cpp recovery.cpp, src/terminal/*, src/components/search_panel.cpp,
+file_picker.cpp, sidebar.cpp, completion_picker.cpp, line_number.cpp.
+
+################################################################
+PART AA — RENDERING
+################################################################
+
+Frame order UI::render ui.cpp:2543-2715
+  Early out if !core.buffers().has_tabs()
+  Pre-draw: sync_scm_ui, sync_scm_diff, tick_recovery_snapshots, lsp.pump, poll_completion_result, poll_lsp_results,
+    statusbar cursor/mode/echo, line_number.sync
+  Paint (NO full werase(stdscr) — comment 2598-2599):
+    header → tab_bar → sidebar OR search_panel → line_number → editor
+    → messages_panel if active → pickers → completion → statusbar → terminal if visible
+    → command XOR confirm XOR input
+  Editor pane internals (editor.cpp:844-847): syntax → search highlight → selection → diagnostics → cursor wmove
+  Z-order wnoutrefresh: later wins. Overlays after editor (2663-2712). Then doupdate().
+
+Layout UI::resize ui.cpp:2422-2541
+  height/width = getmaxyx(stdscr) get_editor_dim ~3510
+  sb = effective_sidebar_width()  0 if hidden; max(sidebar_width,36) if Search (617-623)
+  bottom_rows = 2 if cmd/confirm/prompt else 1
+  term_h = clamp(terminal_height, 5, (height-bottom-3)/2) if visible
+  pane_height = height - 1 - bottom_rows - term_h
+  header:     (1, width) at (0,0)
+  sidebar/search: (pane_height, sb) at (1,0)
+  tab_bar:    (1, width-sb) at (1, sb)
+  line_number:(editor_height, line_number_width) at (2, sb)
+  editor:     (editor_height, width-sb-lnw) at (2, sb+lnw)
+  messages:   same rect as editor+gutter
+  pickers:    centered overlay max 22×80
+  completion: near cursor in editor
+  statusbar:  y = height-bottom_rows (or height-2 if prompt row)
+  terminal:   (term_h, width) just above status
+  command/confirm/input: bottom row
+  core.set_editor_area in Editor::draw (editor.cpp:874-875) for split neighbor math
+  Invalid if height<5 or width<=sb+line_number_width: mvprintw INVALID DIMENSIONS
+
+Color pairs Theme::init theme.cpp:196-297
+  Pairs 1–90 (theme.hpp). make_color: custom init_color from 16 if can_change_color, else 256-cube/gray, else 8-color (159-186)
+  set_pair skips if pair >= COLOR_PAIRS
+
+Who redraws: every frame while running, all visible components draw().
+  Dirty tracking per-widget nahi except FilePicker/SearchPanel/Sidebar poll version, Terminal pump, LSP/SCM generation skip extra copies.
+  Hidden sidebar: resize(0,0,0,0); render skips draw if !sidebar_visible.
+
+Sources for PART AA: src/ui/ui.cpp render/resize, src/components/editor.cpp draw, src/ui/theme.cpp,
+includes/ui/theme.hpp, src/components/line_number.cpp.
+
+################################################################
+PART AB — THREADING & ASYNC
+################################################################
+
+Threads
+  main | noni.cpp main | ncurses, all UI, LSP pump, inotify poll
+  Background workers (2) | Background::start(2) ui.cpp:74 | job queue
+  Logger writer | Logger::init logger.cpp:130 | write logs/noni.log
+  PTY reader | PtySession::start pty_session.cpp:81 | read master → out_buf
+  LSP reader (per session) | LspProcess::start lsp_process.cpp:98 | read stdout → out_buf_
+  LSP/PTY child processes | fork | not editor threads
+  FsWatcher: NO thread — IN_NONBLOCK drained on main (fs_watcher.hpp:28-29)
+  DirScanner / FileIndex: work on Background, own thread nahi
+
+Jobs on Background
+  DirScanner::scan_dirs_async (dirscanner.cpp:177)
+  FileIndex::rebuild_async (fuzzy.cpp:216)
+  TextSearch::search_async (text_search.cpp:277)
+  ScmService::request_refresh (scm_service.cpp:99)
+  ScmService::request_file_diff (scm_service.cpp:132)
+  GrammarInstaller::request (grammar_installer.cpp:715)
+  LspInstaller::request (lsp_installer.cpp:268)
+  Stale results dropped via next_token / job_token
+  Background::post if pool not started: job runs sync on caller (async.cpp:66-69)
+
+Results back to main
+  Background | mutex + atomic version/generation; main polls
+  PTY | out_mu + take_output() in TerminalSession::pump from UI::run
+  LSP stdout | out_mu_ + take_stdout() in LspSession::pump from UI::render
+  LSP ready lists | optionals under mu_; take_* on main
+  Logger | separate queue; not UI
+  Messages | Messages::mu; echo_snapshot polled sync_messages_echo
+  inotify | FsWatcher::poll nonblocking
+
+Main loop ui.cpp:2717-2736: poll pickers/search/terminal/fs/sidebar → render → handle_inputs (getch 50ms)
+
+Shared state (locks)
+  Background::{mu, jobs, cv}
+  Logger::{queue_mu, log_file}
+  PtySession::{out_mu, master_fd atomic, running}
+  LspProcess::{out_mu_}
+  LspSession::write_mu_ (stdin writes)
+  LspService::mu_ (sessions, docs, ready) — pump holds while parsing; on_publish_diagnostics "mu_ already held"
+  ScmService::mu_
+  DirScanner::mu, FileIndex::mu, TextSearch::mu
+  FsWatcher::mu_
+  RecentFiles::mu_, Header::mu_, Messages::mu
+  Grammar/LSP installer g_mu
+  Buffer content mutex nahi — mutations main thread
+
+Sources for PART AB: includes/utils/async.hpp src/utils/async.cpp, logger.cpp, lsp_process.cpp,
+pty_session.cpp, fs_watcher.hpp/.cpp, scm_service.cpp, dirscanner.cpp, fuzzy.cpp,
+text_search.cpp, grammar_installer.cpp, lsp_installer.cpp, lsp_service.cpp, src/ui/ui.cpp run.
+
+################################################################
+PART AC — ON-DISK FILES & LOG FORMATS
+################################################################
+
+session.json — SessionStore  path <workspace>/.noni/session.json (session.cpp:29-41)
+Write session.cpp:63-95; load 141-175. Untitled tabs skipped (76-77). Missing file → nullopt (121).
+
+{
+  "version": 1,
+  "workspace": "<path>",
+  "activeIndex": 0,
+  "sidebarVisible": true,
+  "terminalVisible": false,
+  "tabs": [
+    { "path": "...", "cursorLine": 0, "cursorColumn": 0, "scrollY": 0, "scrollX": 0 }
+  ],
+  "recent": ["..."]
+}
+
+Recovery — recovery.cpp  dir <workspace>/.noni/recovery/ (33-37)
+  <id>.txt  snapshot lines FS::write_file (81)
+  <id>.meta.json  {"id","path","lines"} (88-93)
+  id = %016llx of hash(canonical path) (40-50)
+  Never overwrites source files (recovery.hpp:10-11)
+  Tick every ≥2s dirty buffers (ui.cpp:1190-1213); clean → clear_snapshot
+
+Logs (cwd-relative, not workspace)
+  logs/noni.log | Logger | Logger::init truncates (logger.cpp:124 ios::out|trunc); then writer thread appends via ensure_open app
+    Format two lines per event:
+      [YYYY-MM-DD HH:MM:SS] [LEVEL] message
+      [YYYY-MM-DD HH:MM:SS] [LEVEL] file:line in function
+  logs/lsp.stderr.log | LSP child stderr lsp_process.cpp:63-64 | append raw; fail → /dev/null
+  logs/lsp-install.log | run_cmd wrap >>logs/lsp-install.log 2>&1  lsp_installer_util.cpp:72-73
+  logs/grammar-install.log | grammar cmds wrap >>logs/grammar-install.log 2>&1  grammar_installer.cpp:182
+  :logs keys ui.cpp ~2955: noni, lsp, install, grammar
+
+Tree-sitter dirs — PART Y find_grammar / user_dir
+LSP dirs — PART X user_dir / bin_dir / resolve
+
+Sources for PART AC: src/workspace/session.cpp includes/workspace/session.hpp,
+src/workspace/recovery.cpp includes/workspace/recovery.hpp, src/utils/logger.cpp,
+src/lsp/lsp_process.cpp, src/lsp/lsp_installer.cpp, src/lsp/lsp_installer_util.cpp,
+src/syntax/grammar_installer.cpp, src/ui/ui.cpp tick_recovery / ex_logs.
+
+################################################################
+PART AD — STUBS / UNIMPLEMENTED INVENTORY
+################################################################
+
+Grep src/, includes/, noni.cpp, tests/ for TODO / FIXME / stub / not implemented / unimplemented / not yet.
+Skipped .grammar-test and .noni/tree-sitter.
+
+file:line | comment / string se kya hona tha
+src/lsp/lsp_service.cpp:556 | JSON-RPC error -32601 "Method not implemented" for unhandled server-originated requests
+includes/lsp/lsp_models.hpp:53 | LspCodeAction server command: "applied only when no edit, via controlled path later"
+src/ui/ui.cpp:1568-1569 | user-visible "Code action command not executed: {}" when action has command but no edit
+src/editor/ex_commands.cpp:79 | "Skip optional range tokens like %, ., 1,10 for future use"
+src/utils/fs.cpp:55 | mkstemp pattern ".noni.XXXXXX" (XXX grep hit; temp-file template, task marker nahi)
+includes/ui/icons.hpp:442 | lang_hack Nerd Font glyph
+includes/ui/icons.hpp:502 | lang_todo Nerd Font glyph
+includes/ui/icons.hpp:846-847 | filenames todo / todo.md / todos.md → todo icon
+includes/ui/icons.hpp:1082-1083 | extension .hack → hack-lang icon
+
+tests/ directory: no source files. Makefile test target removed (T0 / R4).
+noni.cpp: matching comments nahi.
+Empty { return; } / stub function bodies matching those keywords: grep me none.
+LspCodeAction::command_args_json (lsp_models.hpp:56) never assigned (comment nahi).
+Ex range tokens parse skip, handlers use nahi.
+
+Sources for PART AD: grep over src/ includes/ noni.cpp; listed files.
+
+################################################################
+END OF sys.txt
+################################################################

@@ -33,12 +33,20 @@ struct AppConfig
     int line_number_width = 5;
     int esc_delay_ms = 25;
     bool syntax_auto_install = true;
+    bool lsp_auto_install = true;
     std::vector<Keybinding> keybindings;
     std::vector<LspServerConfigFile> lsp_servers;
     TerminalConfig terminal;
     // Namespaced extension settings: extensions.<id> → JSON object
     std::map<std::string, MiniJson::Value> extensions;
 
+    // Set by load(): path used, or empty if none found.
+    std::string loaded_from;
+    // User-facing warning/error (missing file or parse fail). Empty if ok.
+    std::string load_message;
+
     static AppConfig defaults();
-    static AppConfig load(const std::string &path = "config.json");
+    // cwd/config.json → exe dir → $HOME/.config/noni/config.json
+    static AppConfig load();
+    static AppConfig load_file(const std::string &path);
 };

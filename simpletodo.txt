@@ -1,0 +1,89 @@
+NONI — FILE SPLIT TODO
+=======================
+Goal: har .cpp / .hpp ~200–250 lines max (soft). Prefer feature split, same class OK across .cpp files.
+Rule: .cursor/rules/file-size.mdc  |  Update THIS file jab tum khud split karo.
+
+How to update (user):
+  [ ] pending
+  [x] done
+  [~] in progress
+  Notes: short comment after item if needed
+
+------------------------------------------------
+PHASE 0 — TRACKING
+------------------------------------------------
+[x] Create simpletodo.txt (this file)
+[x] Add Cursor rule: max ~250 lines per source file
+
+------------------------------------------------
+PHASE 1 — ui.cpp (~3369)  PRIORITY
+------------------------------------------------
+Keep: includes/ui/ui.hpp (shared class)
+Split src/ui/ui.cpp into:
+
+[ ] ui.cpp              — ctor/dtor/init/run/resize/render
+[ ] ui_commands.cpp     — register_actions, when_context
+[ ] ui_scm.cpp          — git stage/unstage/discard/diff/sync
+[ ] ui_session.cpp      — session save/restore + recovery
+[ ] ui_lsp.cpp          — LSP goto/symbols/rename/actions/poll
+[ ] ui_completion.cpp   — trigger/close/poll completion
+[ ] ui_sidebar.cpp      — explorer prompts, delete, workspace UI
+[ ] ui_search.cpp       — file/buffer search, replace_all
+[ ] ui_tabs.cpp         — sync_active_tab, close, save confirm
+[ ] ui_ex.cpp           — all ex_* commands
+[ ] ui_terminal.cpp     — terminal open/close/ex_terminal
+[ ] ui_input.cpp        — handle_inputs
+[ ] ui_fs.cpp           — fs watcher sync/poll
+
+After each extract: make && mark [x] here.
+
+------------------------------------------------
+PHASE 2 — editor.cpp (~1803)
+------------------------------------------------
+[ ] editor.cpp            — bind, scroll, mode glue
+[ ] editor_draw.cpp       — draw / highlight
+[ ] editor_insert.cpp     — insert mode
+[ ] editor_normal.cpp     — normal motions/operators
+[ ] editor_visual.cpp     — visual mode
+[ ] editor_completion.cpp — apply_completion + related
+
+------------------------------------------------
+PHASE 3 — lsp_service.cpp (~1574)
+------------------------------------------------
+[ ] lsp_service.cpp   — public API + demux glue
+[ ] lsp_session.cpp   — session lifecycle, did_open/change
+[ ] lsp_requests.cpp  — completion/def/refs/rename/actions
+[ ] lsp_parse.cpp     — JSON → models helpers
+
+------------------------------------------------
+PHASE 4 — OTHER LARGE FILES (when needed)
+------------------------------------------------
+[ ] buffer.cpp (~849)           → buffer_io / buffer_edit / buffer_undo
+[ ] sidebar.cpp (~775)          → draw / keys / tree ops
+[ ] tree_highlighter.cpp (~770) → split by concern
+[ ] syntax.cpp (~735)           → lexer vs highlight
+[ ] fs.cpp (~648)               → path ops vs read/write
+[ ] grammar_installer.cpp (~563)
+[ ] help_docs.cpp (~481)        → one page_* file or group pages
+[ ] ex_commands.cpp (~458)
+[ ] keybindings.cpp (~421)
+[ ] terminal_screen.cpp (~410)
+[ ] vt_parser.cpp (~403)
+[ ] mini_json.cpp (~376)
+[ ] search_panel.cpp (~354)
+[ ] scm_git.cpp (~336)
+[ ] terminal_panel.cpp (~335)
+[ ] icons.hpp (~1370)           → icons_files.hpp / icons_folders.hpp (data)
+
+SKIP (already ~OK):
+  pty_session.cpp (~260) — leave as one unit
+
+------------------------------------------------
+RULES WHILE SPLITTING
+------------------------------------------------
+- Cut-paste only; no behavior change in same commit if possible
+- Same class methods may live in multiple .cpp (include ui.hpp)
+- Makefile auto-picks src/**/*.cpp — no Makefile edit needed
+- Do NOT invent new architecture during split
+- Soft limit 250; hard smell at 300+
+- After split: update this file yourself ([x] + note)

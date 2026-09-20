@@ -3,8 +3,10 @@
 
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <format>
 #include <signal.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <utility>
@@ -55,7 +57,20 @@ bool LspProcess::start(const std::vector<std::string> &argv, const std::string &
         // Child: stdin <- in_pipe[0], stdout -> out_pipe[1]
         dup2(in_pipe[0], STDIN_FILENO);
         dup2(out_pipe[1], STDOUT_FILENO);
-        // Leave stderr to parent terminal/log for server diagnostics.
+
+        // NEVER leave stderr on the TTY — clangd (and friends) spam I[...] lines
+        // that corrupt ncurses. Park them in a file (or /dev/null).
+        (void)mkdir("logs", 0755);
+        int err_fd = open("logs/lsp.stderr.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+        if (err_fd < 0)
+            err_fd = open("/dev/null", O_WRONLY);
+        if (err_fd >= 0)
+        {
+            dup2(err_fd, STDERR_FILENO);
+            if (err_fd != STDERR_FILENO)
+                close(err_fd);
+        }
+
         close(in_pipe[0]);
         close(in_pipe[1]);
         close(out_pipe[0]);

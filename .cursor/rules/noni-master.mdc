@@ -1,0 +1,72 @@
+---
+description: Noni standing rules R1–R10 — read PROGRESS.md first and continue the work queue
+alwaysApply: true
+---
+
+# Noni master standing rules
+
+Naya chat: pehle `PROGRESS.md` padho, phir yahan se continue. Source of truth: `sys.txt` (code contradict kare to CODE sahi, sys.txt fix). Repo root. Branch: `noni-master`.
+
+## R1 — AUTONOMOUS LOOP
+
+- WORK QUEUE tasks order me, khud chalao. Har task ke baad "aage badhun?" mat pucho.
+- Loop: (a) PROGRESS.md "doing" → (b) code + sys.txt PART → (c) implement → (d) `make` clean build, zero errors, zero NEW warnings → (e) sys.txt affected PARTs update → (f) git commit `<taskid>: <short what/why>` → (g) PROGRESS.md "done" → (h) agla task.
+- RUKO sirf: (i) build fail 3 attempts ke baad, (ii) unspecified user-visible behaviour change, (iii) destructive action (file delete, history rewrite). Baaki khud decide; PROGRESS.md me ek line.
+- Ek time me ek task. Tasks mila ke mat likho.
+
+## R2 — C++23
+
+- Makefile `-std=c++23` (compiler na chale to `-std=c++2b` + report). Sirf installed libstdc++ features (feature-test macros). Guess mat karo.
+- Fit ho to: `std::expected`, `string_view`, `span`, ranges, `[[nodiscard]]`, constexpr tables, `optional`, structured bindings, `move_only_function`, deducing this. Feature-showing nahi.
+- Raw new/delete nahi. RAII. Naye code me macros nahi.
+
+## R3 — 200-LINE AUTO-SPLIT
+
+- Koi `.cpp`/`.hpp` 200 lines se upar nahi (comments/blanks count). Edit 200 cross kare to usi task me split.
+- Cohesion se split, arbitrary cut nahi. Layout: `src/<mod>/name_part.cpp` + `includes/<mod>/name_part.hpp`. UI god-class: method groups alag .cpp.
+- Split = pure move; usi commit me feature/bugfix nahi. Ek source file split = ek commit, build pass.
+- Data tables category-wise. Makefile `find src -name '*.cpp'` auto-picks.
+
+## R4 — NO TESTS
+
+- Test file/target/harness/mock nahi. Verification = clean build + code reading + logs.
+- Exception: `NONI_KEYLOG=1` raw getch log (logging, test nahi).
+
+## R5 — ROOT CAUSE
+
+- Band-aid nahi. Symptom → root cause (file:line) → fix. Claim = evidence. Verify na ho to "UNVERIFIED".
+- Naye features sirf prompt/PROGRESS.md queue. Scope creep nahi.
+
+## R6 — QUANT-GRADE PERF
+
+- Correctness pehle. Hot path: key decode, Buffer/undo, text metrics, syntax visible lines, render, LSP JSON, search/fuzzy, PTY parse.
+- Per-key/frame heap allocation nahi jahan avoidable. `wnoutrefresh` + ek `doupdate`. Dirty flags.
+- Default `-O2 -g`; `make debug` = `-O0 -g`. `-Wall -Wextra`; naye warnings zero.
+
+## R7 — SAFETY
+
+- `~/.config/nvim`, `~/.config/Code`, repo ke bahar EDIT nahi.
+- Destructive (delete, history rewrite, force push) user se puchke.
+- Har task ek commit, sirf `noni-master`. Atomic writes; data-loss path nahi.
+
+## R8 — NO SILENT FAILURES
+
+- Config/keybind/command/LSP/clipboard/format fail → Logger + statusbar/Messages jahan user dekhna chahiye.
+
+## R9 — CODE STYLE
+
+- Existing naming. Comments = kyun, kya nahi. Related dead code hatao. Public rename = saare call sites usi commit.
+
+## R10 — REPORTING
+
+- Beech me chhoti PROGRESS.md entries. User ko message: RUKO cases ya queue khatam. Final: kya badla, root causes, UNVERIFIED.
+
+## Locked keymap v1 (override catalog KEEP?)
+
+Startup Normal. Esc = Normal. Insert `jk` = Esc (`jj` hatao).
+
+- Engine (ctrl/alt/F/Space only; when=editorFocus for ctrl): ctrl+s save, p quick open, b sidebar, t terminal, z undo, y redo, f find, g go to line, space completion, f2 rename, f12 definition, / comment, a select all, c copy, x cut, v paste, e copy line down. alt+j/k/down/up move lines. ctrl+d Insert=delete line, Normal=half-page down (ctrl+u half-page up). Window focus Normal only: ctrl+arrows. ctrl+h/j/k/l tabhi bind jab raw bytes Backspace/Enter se alag.
+- Vim layer = `editor.cpp` only: hjkl w b 0 $ gg G i a o O x dd yy p u ctrl+r v V / n N :w :q ctrl+d/u gd gD gi gy gr K [d ]d gcc gc H/L gt/gT Visual <> indent. Prefix owner editor.cpp: g u m ' " [ ] d/c/y. Engine inhe intercept nahi.
+- Space leader (Normal/Visual/Sidebar/SearchResults): Space Space / f f quick open, f g grep, f w grep-word (id only), f b buffers, f r recent, e explorer, o explorer focus, b n/b b buffers, b d close, w save, q q quit, r n rename, c a code action, c f format, l d/r/s/w/R/S lsp, x x diagnostics, g s/a/u/x/d/f/R/p git, t t terminal, s s/w session. HATAO: ctrl+k chords, tab sidebar, ctrl+shift+f, shift+f12, space shift+f, space m, space w window, space o openWorkspace.
+
+PHASE 5 later (abhi nahi): surround, hunk nav/preview, Space f w impl, mouse.

@@ -1,0 +1,29 @@
+---
+description: Hard 200-line limit per C++ source/header; split by cohesion
+alwaysApply: true
+---
+
+# File size limit (Noni)
+
+Hard max **200 lines** per `.cpp` / `.hpp` (comments and blank lines count). Generated/data tables also split by category — no 200+ exceptions.
+
+## When adding or editing code
+
+- If a file is already **>200 lines**, extract by **feature** (same class OK across translation units).
+- Do **not** grow god-files (`ui.cpp`, `editor.cpp`, `lsp_service.cpp`) — put new methods in the matching split file (see `PROGRESS.md` T2).
+- If an edit would push a file over 200, split in the **same task**.
+- Split = cut/paste + `make`; no drive-by refactors. Split commit = pure move, no feature/bugfix mix. One source file split per commit.
+
+## Pattern
+
+```text
+includes/foo/bar.hpp     ← declarations
+src/foo/bar.cpp          ← core
+src/foo/bar_feature.cpp  ← UI::feature_* or Bar::feature_*
+```
+
+Internal helpers: anonymous namespace or `*_detail.hpp`. Public API/behavior stays the same.
+
+## Tracking
+
+Queue and file list: repo-root `PROGRESS.md`. After a planned split, mark that T2 item done there.

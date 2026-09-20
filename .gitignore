@@ -42,7 +42,6 @@ build-*/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
-Makefile
 install_manifest.txt
 compile_commands.json
 # Temporary files
@@ -63,3 +62,6 @@ test/
 # Noni workspace state
 .noni/session.json
 .noni/recovery/
+
+# Local grammar build scratch
+.grammar-test/

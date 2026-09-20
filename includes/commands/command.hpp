@@ -64,6 +64,7 @@ namespace Commands
     // P13 LSP
     inline constexpr const char *LspRestart = "lsp.restart";
     inline constexpr const char *LspShowStatus = "lsp.showStatus";
+    inline constexpr const char *LspInstall = "lsp.installServers";
 
     // P14 completion
     inline constexpr const char *TriggerSuggest = "editor.action.triggerSuggest";

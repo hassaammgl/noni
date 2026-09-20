@@ -298,11 +298,26 @@ void ExCommands::register_builtins()
         .min_args = 0,
         .max_args = 0,
         .usage = ":mes[sages]",
-        .description = "Show message history",
+        .description = "Show statusbar Messages ring (not file logs)",
         .run =
             [](UI &ui, const ParsedEx &)
         {
             ui.ex_messages();
+        },
+    });
+
+    add({
+        .name = "logs",
+        .aliases = {"log"},
+        .bang_allowed = false,
+        .min_args = 0,
+        .max_args = 1,
+        .usage = ":log[s] [noni|lsp|install|grammar]",
+        .description = "View file logs (logs/*.log) in the messages panel",
+        .run =
+            [](UI &ui, const ParsedEx &cmd)
+        {
+            ui.ex_logs(cmd.args.empty() ? "" : cmd.args[0]);
         },
     });
 
@@ -438,6 +453,21 @@ void ExCommands::register_builtins()
             [](UI &ui, const ParsedEx &)
         {
             ui.ex_help("ex");
+        },
+    });
+
+    add({
+        .name = "lsp",
+        .aliases = {"LspInstall", "lsps"},
+        .bang_allowed = false,
+        .min_args = 0,
+        .max_args = 0,
+        .usage = ":lsp",
+        .description = "Open LSP install panel (Enter installs selected server)",
+        .run =
+            [](UI &ui, const ParsedEx &)
+        {
+            ui.ex_lsp();
         },
     });
 
