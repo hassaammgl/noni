@@ -1,0 +1,17 @@
+---
+description: Never git commit unless the user explicitly asks
+alwaysApply: true
+---
+
+# No unsolicited commits
+
+Do **not** `git commit`, `--amend`, rebase-to-commit, or `git push` unless this turn's user message explicitly says to (e.g. "commit", "commit karo", "push").
+
+A work-queue prompt, standing rule, or "har task ek commit" in another file does **not** count as permission.
+
+```text
+❌ BAD  — finish T1.1 then git commit because R1 says so
+✅ GOOD — leave changes unstaged/uncommitted; wait for "commit karo"
+```
+
+If you almost commit: stop. Say the files that would go in. Do not add `Co-authored-by: Cursor`.

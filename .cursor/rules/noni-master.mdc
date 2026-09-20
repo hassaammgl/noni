@@ -10,7 +10,8 @@ Naya chat: pehle `PROGRESS.md` padho, phir yahan se continue. Source of truth: `
 ## R1 — AUTONOMOUS LOOP
 
 - WORK QUEUE tasks order me, khud chalao. Har task ke baad "aage badhun?" mat pucho.
-- Loop: (a) PROGRESS.md "doing" → (b) code + sys.txt PART → (c) implement → (d) `make` clean build, zero errors, zero NEW warnings → (e) sys.txt affected PARTs update → (f) git commit `<taskid>: <short what/why>` → (g) PROGRESS.md "done" → (h) agla task.
+- Loop: (a) PROGRESS.md "doing" → (b) code + sys.txt PART → (c) implement → (d) `make` clean build, zero errors, zero NEW warnings → (e) sys.txt affected PARTs update → (f) PROGRESS.md "done" → (g) agla task.
+- **Git commit/push mat karo** jab tak user is turn me explicitly na kahe. See `.cursor/rules/no-commit.mdc`.
 - RUKO sirf: (i) build fail 3 attempts ke baad, (ii) unspecified user-visible behaviour change, (iii) destructive action (file delete, history rewrite). Baaki khud decide; PROGRESS.md me ek line.
 - Ek time me ek task. Tasks mila ke mat likho.
 
@@ -24,7 +25,7 @@ Naya chat: pehle `PROGRESS.md` padho, phir yahan se continue. Source of truth: `
 
 - Koi `.cpp`/`.hpp` 200 lines se upar nahi (comments/blanks count). Edit 200 cross kare to usi task me split.
 - Cohesion se split, arbitrary cut nahi. Layout: `src/<mod>/name_part.cpp` + `includes/<mod>/name_part.hpp`. UI god-class: method groups alag .cpp.
-- Split = pure move; usi commit me feature/bugfix nahi. Ek source file split = ek commit, build pass.
+- Split = pure move; usi change me feature/bugfix nahi. User commit maange to ek source file split = ek commit, build pass.
 - Data tables category-wise. Makefile `find src -name '*.cpp'` auto-picks.
 
 ## R4 — NO TESTS
@@ -47,7 +48,7 @@ Naya chat: pehle `PROGRESS.md` padho, phir yahan se continue. Source of truth: `
 
 - `~/.config/nvim`, `~/.config/Code`, repo ke bahar EDIT nahi.
 - Destructive (delete, history rewrite, force push) user se puchke.
-- Har task ek commit, sirf `noni-master`. Atomic writes; data-loss path nahi.
+- Commit tabhi jab user bole. Atomic writes; data-loss path nahi.
 
 ## R8 — NO SILENT FAILURES
 
@@ -55,7 +56,7 @@ Naya chat: pehle `PROGRESS.md` padho, phir yahan se continue. Source of truth: `
 
 ## R9 — CODE STYLE
 
-- Existing naming. Comments = kyun, kya nahi. Related dead code hatao. Public rename = saare call sites usi commit.
+- Existing naming. Comments = kyun, kya nahi. Related dead code hatao. Public rename = saare call sites usi change me.
 
 ## R10 — REPORTING
 
