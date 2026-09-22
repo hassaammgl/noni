@@ -5,6 +5,7 @@
 #include <utils/fuzzy.hpp>
 
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -38,6 +39,7 @@ public:
     bool is_active() const { return active_; }
 
     void handle_input(int key);
+    void insert_utf8(std::string_view utf8);
 
     bool take_location(LspLocation &out);
     bool take_symbol(LspSymbol &out);

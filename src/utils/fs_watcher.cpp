@@ -7,33 +7,9 @@
 #include <sys/inotify.h>
 #include <unistd.h>
 
-namespace
-{
-    uint32_t mask_for(const fs::path &path, bool is_dir)
-    {
-        (void)path;
-        if (is_dir)
-        {
-            return IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO |
-                   IN_ATTRIB | IN_DELETE_SELF | IN_MOVE_SELF;
-        }
-        return IN_MODIFY | IN_CLOSE_WRITE | IN_ATTRIB | IN_DELETE_SELF |
-               IN_MOVE_SELF | IN_MOVED_FROM | IN_MOVED_TO;
-    }
+#include "fs_watcher_detail.hpp"
 
-    FsEventKind kind_from(uint32_t mask)
-    {
-        if (mask & (IN_DELETE | IN_DELETE_SELF))
-            return FsEventKind::Deleted;
-        if (mask & (IN_MOVED_FROM | IN_MOVED_TO | IN_MOVE_SELF))
-            return FsEventKind::Moved;
-        if (mask & IN_CREATE)
-            return FsEventKind::Created;
-        if (mask & (IN_MODIFY | IN_CLOSE_WRITE | IN_ATTRIB))
-            return FsEventKind::Modified;
-        return FsEventKind::Other;
-    }
-}
+using namespace fs_watcher_detail;
 
 FsWatcher::~FsWatcher()
 {
@@ -195,58 +171,3 @@ void FsWatcher::set_workspace(const fs::path &root)
         workspace_ = canon;
 }
 
-std::vector<FsEvent> FsWatcher::poll()
-{
-    std::vector<FsEvent> out;
-    if (fd_ < 0)
-        return out;
-
-    alignas(struct inotify_event) char buf[8192];
-    while (true)
-    {
-        const ssize_t n = ::read(fd_, buf, sizeof(buf));
-        if (n < 0)
-        {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
-                break;
-            Logger::warning(std::format("FsWatcher: read failed: {}", std::strerror(errno)));
-            break;
-        }
-        if (n == 0)
-            break;
-
-        std::lock_guard lock(mu_);
-        for (ssize_t off = 0; off < n;)
-        {
-            const auto *ev = reinterpret_cast<const struct inotify_event *>(buf + off);
-            off += static_cast<ssize_t>(sizeof(struct inotify_event) + ev->len);
-
-            if (ev->mask & IN_Q_OVERFLOW)
-            {
-                Logger::warning("FsWatcher: event queue overflow");
-                continue;
-            }
-
-            auto it = wd_to_path_.find(ev->wd);
-            if (it == wd_to_path_.end())
-                continue;
-
-            fs::path full = it->second;
-            if (ev->len > 0 && ev->name[0] != '\0')
-                full /= ev->name;
-
-            if (should_ignore(full) || should_ignore(full.filename()))
-                continue;
-
-            FsEvent fe;
-            fe.kind = kind_from(ev->mask);
-            fe.path = std::move(full);
-            fe.is_dir = (ev->mask & IN_ISDIR) != 0;
-            out.push_back(std::move(fe));
-
-            if (ev->mask & (IN_DELETE_SELF | IN_MOVE_SELF | IN_IGNORED))
-                remove_wd_unlocked(ev->wd);
-        }
-    }
-    return out;
-}

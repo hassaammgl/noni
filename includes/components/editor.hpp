@@ -8,6 +8,7 @@
 
 #include <functional>
 #include <string>
+#include <string_view>
 
 enum class PendingOperator
 {
@@ -47,6 +48,9 @@ private:
     void update_scroll();
     void clamp_cursor();
     void handle_normal_input(int key);
+    bool handle_normal_prefix(int key);
+    void handle_normal_commands(int key);
+    void handle_normal_edits(int key);
     void handle_visual_input(int key);
     void handle_insert_input(int key);
     void leave_insert_mode();
@@ -108,6 +112,7 @@ public:
 
     void draw() override;
     void handle_input(int key);
+    void insert_utf8(std::string_view utf8);
 
     void set_cursor_position(int line, int column);
     int get_scroll_y() const;

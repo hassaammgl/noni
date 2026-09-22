@@ -32,21 +32,61 @@ Warnings (fill after first build).
 | id | status | note | commit |
 |----|--------|------|--------|
 | T1.1 | done | cwd→exe→~/.config/noni; parse fail no partial; statusbar + "loaded N bindings, M commands, unbound: …" (ui.cpp ctor, config.cpp load). Symptom: cwd-only load + empty defaults unbound all chords. | |
-| T1.2 | todo | engine vs editor prefix (confirm; full fix T4) | |
-| T1.3 | todo | Search panel Space swallow | |
-| T1.4 | todo | Terminal Esc/Alt/F-keys | |
+| T1.2 | done | CONFIRMED steal, fix T4. Engine first (ui.cpp:3517-3523): Prefix/Matched never reach editor. config.json: `g t/g g/g T/g d/g D/g y/g r` + `u` (editorFocus&&normalMode). resolve_pending (keybindings.cpp:354-412) has no editor-modal skip (`any_leader_prefix` unused). `g`=Prefix → editor.pending_g never sets; `gi`/`dgg`/`ygg` break (second key Unmatched, not re-injected). `u`=Matched engine undo. `m`/`'`/`"` not in config.json → editor tak pahunchte hain. | |
+| T1.3 | done | Query/Replace always used SearchResults (ui.cpp Search branch) so Space = leader Prefix, never inserted (search_panel.cpp:267 printable). Fix: in_text_field() → SearchText; Results still SearchResults. Code path: command.hpp context_is_literal Space unmatched; build pass. | |
+| T1.4 | done | Esc 27 UI leave (ui.cpp Terminal) + empty-when `escape` would steal; case 27 in panel unreachable. Leave now 29 Ctrl+] (ctrl+t still toggle). F1–F12 were dropped (default only 1–26/32–126). Forward xterm seqs. 8-bit meta UNVERIFIED. | |
 | T1.5 | done | stale objects — T0 -MMD -MP + -include .d (confirm: ui.d lists headers) | e3e2855 |
-| T1.6 | todo | LSP capabilities + rootMarkers + crash message | |
-| T1.7 | todo | UTF-8 getch vs get_wch | |
-| T1.8 | todo | other shared root causes | |
+| T1.6 | done | initialize result stored (sync_kind, hover, formatting). didChange: 0 skip / 1 full / 2 incremental. rootMarkers walk from file path (session_for file_hint). Crash Starting|Running → Messages::error once. Client now advertises hover+formatting. | |
+| T1.7 | done | getch() ASCII-only; widgets `key>=32 && key<=126` dropped UTF-8 bytes. Fix: get_wch; cp>126 → UTF-8 insert_focused_utf8; KeyToken.codepoint; Backspace pop_codepoint. -DNCURSES_WIDECHAR=1. | |
+| T1.8 | done | Insert still `jj` Esc not `jk` (editor.cpp:1640, T4). Engine Prefix no timeout (T3). empty-when `escape` matches all contexts (terminal special-cased T1.4). when_context concatenates focus+mode every key (not stale). any_leader_prefix unused leftover (T4). | |
 
 ## T2 — SPLIT PASS (200 lines)
 
-File list after `wc -l` (T2 start). One file = one commit. T3 blocked until this is done.
+File list after `wc -l` (T2 start / HEAD). Split = pure move. No commit until you ask. All listed files now ≤200. T3 blocked until you confirm `make` is clean.
 
 | file | lines | status | commit |
 |------|------:|--------|--------|
-| | | todo | |
+| src/ui/ui.cpp | 3532 | done | |
+| src/components/editor.cpp | 1803 | done | |
+| src/lsp/lsp_service.cpp | 1653 | done | |
+| includes/ui/icons.hpp | 1370 | done | |
+| src/editor/buffer.cpp | 849 | done | |
+| src/components/sidebar.cpp | 775 | done | |
+| src/syntax/tree_highlighter.cpp | 770 | done | |
+| src/syntax/grammar_installer.cpp | 739 | done | |
+| src/syntax/syntax.cpp | 735 | done | |
+| src/utils/fs.cpp | 648 | done | |
+| src/help/help_docs.cpp | 496 | done | |
+| src/editor/ex_commands.cpp | 488 | done | |
+| includes/editor/motion.hpp | 456 | done | |
+| src/configs/keybindings.cpp | 448 | done | |
+| src/terminal/terminal_screen.cpp | 410 | done | |
+| src/terminal/vt_parser.cpp | 403 | done | |
+| src/configs/mini_json.cpp | 376 | done | |
+| src/components/search_panel.cpp | 354 | done | |
+| includes/editor/window_layout.hpp | 338 | done | |
+| src/scm/scm_git.cpp | 336 | done | |
+| src/lsp/lsp_installer.cpp | 335 | done | |
+| src/components/terminal_panel.cpp | 335 | done | |
+| src/utils/text_search.cpp | 305 | done | |
+| src/ui/theme.cpp | 298 | done | |
+| src/scm/scm_service.cpp | 294 | done | |
+| src/components/file_picker.cpp | 288 | done | |
+| src/editor/buffer_search.cpp | 277 | done | |
+| src/utils/fuzzy.cpp | 266 | done | |
+| includes/ui/ui.hpp | 264 | done | |
+| src/sidebar/dirscanner.cpp | 262 | done | |
+| src/terminal/pty_session.cpp | 260 | done | |
+| src/utils/fs_watcher.cpp | 252 | done | |
+| src/components/lsp_picker.cpp | 252 | done | |
+| includes/editor/editor_core.hpp | 243 | done | |
+| src/utils/text_metrics.cpp | 230 | done | |
+| src/utils/str.cpp | 224 | done | |
+| src/editor/buffer_manager.cpp | 224 | done | |
+| includes/lsp/lsp_service.hpp | 223 | done | |
+| src/components/buffer_picker.cpp | 214 | done | |
+| src/editor/editor_core.cpp | 209 | done | |
+| src/lsp/lsp_process.cpp | 204 | done | |
 
 ## T3 — INPUT LAYER
 
@@ -100,11 +140,12 @@ File list after `wc -l` (T2 start). One file = one commit. T3 blocked until this
 
 ## UNVERIFIED
 
-(none yet)
+- T1.4: 8-bit meta (`key >= 128 && key < KEY_MIN` → ESC+(key&0x7f)). Split ESC+key path verified by code (first getch 27 now reaches PTY). Combined-meta path UNVERIFIED on this terminal.
+- T1.7: get_wch + UTF-8 insert compiled; runtime é/Urdu/emoji in TUI UNVERIFIED (no interactive run).
 
 ## Pause
 
-User asked to stop after T1.1 (2026-09-21). Next: T1.2 engine vs editor prefix.
+User asked to stop after T1.1 (2026-09-21); resumed 2026-09-22 (T1.2+).
 
 ## Existing warnings
 

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -61,4 +62,39 @@ namespace TextMetrics
     // LSP uses UTF-16 code units for Position.character (not display columns).
     int byte_to_utf16(std::string_view line, std::size_t byte);
     std::size_t utf16_to_byte(std::string_view line, int utf16_col);
+
+    // Encode one codepoint to UTF-8 in out[8]. Returns byte length (1–4).
+    inline int encode_utf8(char32_t cp, char out[8])
+    {
+        int n = 0;
+        if (cp <= 0x7F)
+            out[n++] = static_cast<char>(cp);
+        else if (cp <= 0x7FF)
+        {
+            out[n++] = static_cast<char>(0xC0 | (cp >> 6));
+            out[n++] = static_cast<char>(0x80 | (cp & 0x3F));
+        }
+        else if (cp <= 0xFFFF)
+        {
+            out[n++] = static_cast<char>(0xE0 | (cp >> 12));
+            out[n++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            out[n++] = static_cast<char>(0x80 | (cp & 0x3F));
+        }
+        else
+        {
+            out[n++] = static_cast<char>(0xF0 | ((cp >> 18) & 0x07));
+            out[n++] = static_cast<char>(0x80 | ((cp >> 12) & 0x3F));
+            out[n++] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            out[n++] = static_cast<char>(0x80 | (cp & 0x3F));
+        }
+        out[n] = 0;
+        return n;
+    }
+
+    inline void pop_codepoint(std::string &s)
+    {
+        if (s.empty())
+            return;
+        s.resize(prev_cp(s, s.size()));
+    }
 }

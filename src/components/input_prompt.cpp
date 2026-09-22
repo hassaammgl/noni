@@ -1,7 +1,9 @@
 #include <components/input_prompt.hpp>
 #include <ui/theme.hpp>
+#include <utils/text_metrics.hpp>
 
 #include <algorithm>
+#include <string_view>
 
 void InputPrompt::draw()
 {
@@ -54,12 +56,19 @@ void InputPrompt::handle_input(int key)
     if (key == KEY_BACKSPACE || key == 127 || key == 8)
     {
         if (!input.empty())
-            input.pop_back();
+            TextMetrics::pop_codepoint(input);
         return;
     }
 
     if (key >= 32 && key <= 126)
         input += static_cast<char>(key);
+}
+
+void InputPrompt::insert_utf8(std::string_view utf8)
+{
+    if (!active || utf8.empty())
+        return;
+    input.append(utf8.data(), utf8.size());
 }
 
 void InputPrompt::clear_input()

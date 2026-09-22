@@ -1,6 +1,6 @@
 CXX = g++
 
-CXXFLAGS_BASE = -Wall -Wextra -std=c++23 -g -MMD -MP -Iincludes
+CXXFLAGS_BASE = -Wall -Wextra -std=c++23 -g -MMD -MP -Iincludes -DNCURSES_WIDECHAR=1
 CXXFLAGS = $(CXXFLAGS_BASE) -O2
 LDFLAGS = -lncursesw -pthread -lutil -ltree-sitter -ldl
 

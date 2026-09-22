@@ -44,6 +44,8 @@ private:
     ExCommands() = default;
 
     void register_builtins();
+    void register_ex_core();
+    void register_ex_more();
     void add(ExCommand cmd);
 
     bool registered = false;

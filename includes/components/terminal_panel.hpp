@@ -4,6 +4,7 @@
 #include <ui/UIComponent.hpp>
 
 #include <string>
+#include <string_view>
 
 // ncurses view over a TerminalSession. Does not parse VT or own the shell.
 class TerminalPanel : public UIComponent
@@ -34,6 +35,7 @@ public:
 
     void on_resized();
     void handle_input(int key);
+    void insert_utf8(std::string_view utf8);
 
     void clear_screen();
     void scroll_up();

@@ -12,6 +12,7 @@ struct KeyToken
     bool alt = false;
     bool shift = false;
     int code = 0;
+    char32_t codepoint = 0;
 
     bool operator==(const KeyToken &o) const
     {

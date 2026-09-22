@@ -5,13 +5,11 @@
 #include <editor/undo.hpp>
 #include <lsp/completion.hpp>
 #include <lsp/diagnostics.hpp>
-#include <lsp/lsp_jsonrpc.hpp>
 #include <lsp/lsp_models.hpp>
-#include <lsp/lsp_process.hpp>
+#include <lsp/lsp_session.hpp>
 #include <syntax/syntax.hpp>
 #include <utils/cursor.hpp>
 
-#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -19,130 +17,9 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace fs = std::filesystem;
-
-struct LspServerConfig
-{
-    std::string language;
-    std::vector<std::string> command;
-    std::vector<std::string> root_markers;
-};
-
-enum class LspSessionState
-{
-    Idle,
-    Starting,
-    Running,
-    Failed,
-    Stopped,
-};
-
-struct LspDocumentState
-{
-    std::string uri;
-    int version = 0;
-    Language language = Language::Plain;
-    bool open = false;
-    Buffer *buffer = nullptr;
-};
-
-enum class LspPendingKind
-{
-    Completion,
-    Definition,
-    Declaration,
-    TypeDefinition,
-    References,
-    DocumentSymbol,
-    WorkspaceSymbol,
-    Rename,
-    CodeAction,
-};
-
-struct LspPendingRequest
-{
-    LspPendingKind kind = LspPendingKind::Completion;
-    std::uintptr_t buffer_id = 0;
-    int doc_version = 0;
-    Cursor trigger{};
-};
-
-class LspService;
-
-class LspSession
-{
-public:
-    explicit LspSession(LspServerConfig config, fs::path root, LspService *owner);
-    ~LspSession();
-
-    LspSession(const LspSession &) = delete;
-    LspSession &operator=(const LspSession &) = delete;
-
-    bool start();
-    void stop();
-    void pump();
-
-    LspSessionState state() const { return state_; }
-    const std::string &language() const { return config_.language; }
-    const fs::path &root() const { return root_; }
-
-    void did_open(const std::string &uri, const std::string &language_id, int version, const std::string &text);
-    void did_change_full(const std::string &uri, int version, const std::string &text);
-    void did_change_incremental(
-        const std::string &uri,
-        int version,
-        int start_line,
-        int start_utf16,
-        int end_line,
-        int end_utf16,
-        const std::string &text);
-    void did_save(const std::string &uri);
-    void did_close(const std::string &uri);
-
-    int request_completion(const std::string &uri, int line, int character);
-    int request_position(const std::string &method, const std::string &uri, int line, int character);
-    int request_references(const std::string &uri, int line, int character);
-    int request_document_symbol(const std::string &uri);
-    int request_workspace_symbol(const std::string &query);
-    int request_rename(const std::string &uri, int line, int character, const std::string &new_name);
-    int request_code_action(
-        const std::string &uri,
-        int start_line,
-        int start_character,
-        int end_line,
-        int end_character);
-
-    bool is_document_open(const std::string &uri) const;
-    bool send_raw(const std::string &framed);
-
-private:
-    void on_message(const MiniJson::Value &msg);
-    void send_initialized();
-
-    LspServerConfig config_;
-    fs::path root_;
-    LspService *owner_ = nullptr;
-    LspProcess process_;
-    LspJsonRpc rpc_;
-    std::atomic<LspSessionState> state_{LspSessionState::Idle};
-    std::mutex write_mu_;
-    std::unordered_set<std::string> open_uris_;
-    struct PendingOpen
-    {
-        std::string uri;
-        std::string language_id;
-        int version = 1;
-        std::string text;
-    };
-    std::vector<PendingOpen> pending_opens_;
-    int initialize_id_ = 0;
-    bool initialized_sent_ = false;
-
-    void flush_did_open(const PendingOpen &doc);
-};
 
 class LspService
 {
@@ -184,7 +61,6 @@ public:
     void on_response(int id, const MiniJson::Value &result);
     void on_workspace_apply_edit(const MiniJson::Value &params);
 
-    // Last server-initiated applyEdit (UI may apply via LspEdits).
     std::optional<LspWorkspaceEdit> take_server_apply_edit();
 
     void shutdown_all();
@@ -200,7 +76,7 @@ public:
     Buffer *buffer_for_uri(const std::string &uri);
 
 private:
-    LspSession *session_for(Language lang);
+    LspSession *session_for(Language lang, const fs::path &file_hint = {});
     LspDocumentState *doc_for(Buffer &buffer);
     int begin_position_request(Buffer &buffer, int line, int byte_col, LspPendingKind kind, const char *method);
     void clear_ready();

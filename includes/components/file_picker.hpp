@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -42,6 +43,7 @@ public:
     bool poll();
 
     void handle_input(int key);
+    void insert_utf8(std::string_view utf8);
     bool take_selection(fs::path &out_path);
 
     const std::string &get_query() const;

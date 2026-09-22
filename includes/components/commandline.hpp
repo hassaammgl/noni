@@ -2,6 +2,7 @@
 
 #include <ui/UIComponent.hpp>
 #include <string>
+#include <string_view>
 
 class CommandLine : public UIComponent
 {
@@ -19,6 +20,7 @@ public:
     char prompt() const;
 
     void handle_input(int key);
+    void insert_utf8(std::string_view utf8);
     void clear_input();
 
     const std::string &get_input() const;

@@ -154,7 +154,7 @@ Async: Background pool 2 workers (UI ctor: Background::instance().start(2), src/
 PART F — INPUT PIPELINE (key dabane pe kya hota hai)
 ################################################################
 
-  ncurses getch  (timeout 50 ms → ERR = no key, Prefix survive)
+  ncurses get_wch (T1.7; timeout 50 ms → ERR = no key, Prefix survive)
        │
        ▼
   UI::handle_inputs (src/ui/ui.cpp:3186)
@@ -205,7 +205,7 @@ G4. LSP
 -------------------------------------------------------------------
 LspProcess pipes + fork + execvp; stderr → logs/lsp.stderr.log (append) else /dev/null.
 JSON-RPC Content-Length framing. initialize THEN initialized THEN didOpen (queued while Starting).
-LspInstaller if binary missing + autoInstall. rootMarkers config me parse hote hain, session_for unhe read nahi karta — workspace = Workspace root.
+LspInstaller if binary missing + autoInstall. rootMarkers: session_for walks from buffer path then workspace (T1.6). initialize result stores textDocumentSync kind, hoverProvider, documentFormattingProvider. didChange follows sync kind (0 none / 1 full / 2 incremental). Server exit Starting/Running → Failed + Messages::error.
 
 -------------------------------------------------------------------
 G5. SCM / GIT
@@ -230,7 +230,7 @@ Pickers: FilePicker (FileIndex), BufferPicker.
 -------------------------------------------------------------------
 G8. TERMINAL
 -------------------------------------------------------------------
-PtySession forkpty + reader thread. TerminalSession::pump on main. Leave: Esc or ch==29 (Ctrl+]).
+PtySession forkpty + reader thread. TerminalSession::pump on main. Leave: Ctrl+] (29) or ctrl+t toggle. Esc forwarded to PTY (T1.4).
 
 -------------------------------------------------------------------
 G9. SESSION / RECOVERY
@@ -305,7 +305,7 @@ UI::run (src/ui/ui.cpp:2718):
     poll_fs_events()
     sidebar.poll() (optional reveal_path)
     render()          // scm sync, recovery tick, lsp.pump, poll completion/lsp, draw, doupdate
-    handle_inputs()   // getch timeout 50ms; ERR → return, Prefix persist
+    handle_inputs()   // get_wch timeout 50ms; ERR → return, Prefix persist; Unicode → insert_focused_utf8
 
 ################################################################
 PART J — KEYS & BINDINGS (summary)
@@ -824,7 +824,7 @@ lsp object
 lsp.servers[] (LspServerConfigFile config.hpp:15-20)
   language    string  must non-empty  match Syntax::language_definition().name; C/Cpp fallback "cpp" or "c" (lsp_service.cpp:980-989)
   command     string[]  argv; [0] resolved PATH/installer then LspProcess::start
-  rootMarkers string[]  copied to LspServerConfig.root_markers (lsp_service.hpp:31) — session_for read nahi karta; workspace = Workspace root
+  rootMarkers string[]  copied to LspServerConfig.root_markers — session_for walks file_hint then workspace (T1.6)
 
 Ship sample config.json: cpp ["clangd"] markers compile_commands.json,.git ; python ["pylsp"] pyproject.toml,.git
 
@@ -1020,7 +1020,7 @@ resolve flow (405-438 → resolve_pending 344-403):
 
 any_leader_prefix assigned (348, 382-383) aur kabhi read nahi.
 
-UI::handle_inputs Search branch dispatch_resolved(..., SearchResults) — SearchText path input_context_for me hai (ui.cpp:59-60) lekin Search handle_inputs SearchResults pass karta hai (agent: 3322).
+UI::handle_inputs Search: Query/Replace → SearchText (leader off, Space literal); Results → SearchResults (leader OK). SearchPanel::in_text_field().
 
 -------------------------------------------------------------------
 T3) Hardcoded keys (mode-wise)
@@ -1064,22 +1064,24 @@ Completion Focus::Completion (3289-3302 + completion_picker.cpp:68-94)
   PgUp / PgDn | page
   other | ignored (type-to-filter nahi)
 
-Terminal Focus::Terminal (3305-3316 + terminal_panel.cpp:263-335)
-  Esc 27 / 29 (Ctrl+]) | return_to_normal (PTY ko Esc nahi) | 3307-3310
-  resolved bindings | e.g. ctrl+t | dispatch_resolved 3313
-  PgUp / PgDn | scrollback | 271-279
-  Enter | send \r | 289-292
-  Backspace | send 127 | 293-297
-  Delete | \033[3~ | 298-300
-  arrows | \033OA…D | 301-312
-  Home / End | \033OH / \033OF | 313-318
-  Tab | \t | 319-321
-  Esc send \033 | TerminalPanel me; UI steal kare to unreachable | 322-324
-  Ctrl-A…Z 1-26 | send byte | 326-329
-  printable | send | 331-332
+Terminal Focus::Terminal (ui.cpp + terminal_panel.cpp handle_input)
+  Leave: 29 Ctrl+] return_to_normal. Esc 27 NOT stolen (empty-when escape binding skip via ch!=27 before resolve).
+  resolved bindings | e.g. ctrl+t | dispatch_resolved except Esc
+  PgUp / PgDn | scrollback
+  Enter | send \r
+  Backspace | send 127
+  Delete | \033[3~
+  arrows | \033OA…D
+  Home / End | \033OH / \033OF
+  Tab | \t
+  Esc | send \033 to PTY
+  F1–F12 | xterm SS3/CSI
+  Ctrl-A…Z 1-26 | send byte
+  printable | send
+  8-bit meta 128..KEY_MIN | ESC + (key&0x7f)  UNVERIFIED vs split ESC+key (depends on ESCDELAY/meta)
 
-Search panel Focus::Search (3319-3350 + search_panel.cpp:192-327)
-  Always dispatch_resolved(..., SearchResults) first — leader allowed while typing Query/Replace.
+Search panel Focus::Search (ui.cpp Search branch + search_panel.cpp:192+)
+  Query/Replace: dispatch_resolved(..., SearchText) — Space literal (T1.3). Results: SearchResults, leader OK.
   All fields:
     F6 match case, F7 whole word, F8 regex | 196-216
     Tab Query→Replace→Results→Query | 218-227
@@ -1127,8 +1129,9 @@ Sidebar Focus::Sidebar (3395-3497 + sidebar.cpp:293-420)
   R refresh | 411-415
   q FocusEditor | 416-417
 
-Editor dispatcher (3500-3507): dispatch_resolved EditorNormal/Insert/Visual then Editor::handle_input (editor.cpp:1757-1768).
-Config bindings with editorFocus && normalMode engine pehle chalte hain: u, tab, :, g g, g t, g T, g d, g r, g y, Space, Ctrl-*.
+Editor dispatcher (ui.cpp:3517-3523): dispatch_resolved then Editor::handle_input. Prefix/Matched consume key (ResolveStatus::Prefix = consume, command.hpp:150).
+T1.2 CONFIRMED: config.json g-chords + `u` (editorFocus && normalMode) engine pehle: `g` Prefix → editor.pending_g set nahi; `gi`/`dgg`/`ygg` toot. Full ownership fix T4. `m`/`'`/`"` config me nahi, editor tak jaate hain.
+Config bindings with editorFocus && normalMode engine pehle: u, tab, :, g g, g t, g T, g d, g r, g y, Space, Ctrl-*.
 
 Normal handle_normal_input editor.cpp:1276-1633  (editor-internal prefixes, KeybindingEngine se alag)
   " | start register prefix | 1282-1288

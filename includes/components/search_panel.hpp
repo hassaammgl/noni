@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -55,6 +56,12 @@ public:
 
     bool poll();
     SearchPanelAction handle_input(int key);
+    void insert_utf8(std::string_view utf8);
+
+    bool in_text_field() const
+    {
+        return field == SearchField::Query || field == SearchField::Replace;
+    }
 
     TextMatch selected_match() const;
     std::vector<TextMatch> results() const;
