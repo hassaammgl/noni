@@ -157,13 +157,16 @@ PART F — INPUT PIPELINE (key dabane pe kya hota hai)
   ncurses get_wch (T1.7; timeout 50 ms → ERR = no key, Prefix survive)
        │
        ▼
-  UI::handle_inputs (src/ui/ui.cpp:3186)
+  UI::handle_inputs (src/ui/ui_input.cpp)
        │
+       ├─ NONI_KEYLOG=1 → Logger raw get_wch (keyname)
+       ├─ Unicode cp>126 → insert_focused_utf8
        ├─ KEY_RESIZE → resize()
+       ├─ Esc (not KEY_CODE, not Terminal) + peek(esc_delay_ms) → Alt+follow-up
        ├─ overlay focus? Esc/Enter hardcoded + component input
-       ├─ keys.resolve(raw, when_context, InputContext)
+       ├─ keys.resolve_token (from_raw or Alt token)
        │     Matched  → commands.execute(command_id)
-       │     Prefix   → consume, wait next key (NO timeout)
+       │     Prefix   → consume, wait next key (NO timeout); statusbar chord_
        │     Unmatched│
        └─ Editor / Sidebar / Terminal / Search handle_input
              (HARDCODED modal / panel keys)
@@ -924,7 +927,7 @@ C++ defaults empty: KeybindingEngine::load copies config.keybindings (keybinding
 T2) KeybindingEngine chord parsing + when-flags
 -------------------------------------------------------------------
 
-parse_key / parse_single (keybindings.cpp:293-301, 19-106)
+parse_key / parse_single (keybindings_part2.cpp + keybindings_detail.hpp)
   Chord = whitespace-separated tokens. Example "ctrl+k s" → [ctrl+k, s].
   Each token: zero or more mod+ prefixes then key name. Spec lowercased.
   Unknown names leave code==0 (binding dropped if chord empty).
@@ -936,32 +939,42 @@ Modifiers:
 
 Named keys → stored code:
   escape/esc=27  tab='\t'  enter/return='\n'  space=' '  backspace/bs=127
-  f2…f12 = KEY_F(2)…KEY_F(12)  — parse_single me f1 nahi
+  up/down/left/right  pageup/pgup  pagedown/pgdn  home/end  delete/del  insert/ins
+  f1…f12 = KEY_F(1)…KEY_F(12)
+  slash=/  period/dot=.  comma=,  semicolon=;  colon=:
+  quote/doublequote="  apostrophe/squote='  question=?  bang/exclaim=!
   ` / backtick / grave
   \ / backslash
   [ / leftbracket   ] / rightbracket
   - / minus   = / equals / plus   _ / underscore
   single ASCII letter; shift+x → 'X' and shift=true; uppercase also sets shift
 
-Leader: first token is leader iff !ctrl && !alt && code==' ' (is_leader_token, keybindings.cpp:164-167). Flag ResolvedBinding.leader.
+Leader: first token is leader iff !ctrl && !alt && code==' ' (is_leader_token). Flag ResolvedBinding.leader.
 
-from_raw (keybindings.cpp:178-291) — getch → KeyToken:
+from_raw (keybindings_raw.cpp) — get_wch → KeyToken. First: keybindings_ext::apply_extended
+  (define_key CSI 1;3 Alt / 1;5 Ctrl / 1;7 Ctrl+Alt arrows+home/end/pg/del/ins).
 
 raw | token
 27 | Esc code=27
 '\t' | Tab
-'\n' or KEY_ENTER | Enter code='\n'
-KEY_BACKSPACE / 127 / 8 | Backspace 127
-KEY_F(2)…KEY_F(12) | F-keys, shift bit nahi
+KEY_ENTER or '\r' (13) | Enter code='\n'   (nonl(); CR ≠ LF)
+'\n' (10) | ctrl + 'j'
+KEY_BACKSPACE / 127 | Backspace 127
+8 | ctrl + 'h'
+KEY_F(1)…KEY_F(12) | F-keys
+KEY_F(13)…KEY_F(24) | shift + KEY_F(1)…KEY_F(12)
 1–26 | ctrl + 'a'…'z'
-28 | ctrl + '\\'   (Ctrl+\)
-0 | ctrl + space  (NUL; comment: Ctrl+Space / Ctrl+@)
+28 | ctrl + '\\'
+29 | ctrl + ']'
+31 | ctrl + '/'   (often also Ctrl+_)
+0 | ctrl + space
 'A'–'Z' | shift + that letter
 else | code = raw_key unchanged (arrows stay KEY_UP etc.)
 
-from_raw Alt set nahi karta. parse_single alt parse karta hai. meta(stdscr, TRUE) on (ui.cpp:183).
-from_raw me raw 29 (Ctrl+]) ko ctrl+']' map nahi. Terminal focus ch==29 leave (ui.cpp:3307).
-shift+f12 spec: parse sets shift=true + KEY_F(12). from_raw(KEY_F(12)) shift nahi set karta — equality shift match maangti hai.
+Alt: from_raw sets t.alt only via apply_extended (CSI). Esc+key peek in ui_input.cpp
+  sets alt on the follow-up token (skipped when focus==Terminal so PTY gets ESC).
+meta(stdscr, TRUE) on (ui_init.cpp). Terminal leave still raw 29 before resolve.
+shift+f12: parse and from_raw(KEY_F(24)) both shift + KEY_F(12).
 
 when_matches (keybindings.cpp:303-342)
   empty when → always true
@@ -997,8 +1010,9 @@ T4) Prefix / chord mechanism
 State: KeybindingEngine::pending vector (keybindings.hpp:59). Chord TIMEOUT nahi.
 
 Related timers (Prefix ke liye nahi):
-  set_escdelay(config.esc_delay_ms) ui.cpp:171 — ncurses Esc vs CSI
-  timeout(50) ui.cpp:184 — getch ERR after 50ms so UI refresh; handle_inputs ERR pe return WITHOUT clear_chord → Prefix idle pe persist
+  set_escdelay(config.esc_delay_ms) ui_init.cpp — ncurses Esc vs CSI
+  timeout(50) ui_init.cpp — getch ERR after 50ms so UI refresh; handle_inputs ERR pe return WITHOUT clear_chord → Prefix idle pe persist
+  Esc-peek timeout(esc_delay_ms) ui_input.cpp — Alt composition only; Prefix chord timeout nahi
 
 Reset pending:
   full match → pending.clear() (keybindings.cpp:375)
@@ -1010,8 +1024,7 @@ resolve flow (405-438 → resolve_pending 344-403):
   1. from_raw
   2. Literal contexts (CommandLine, PromptInput, Picker, Terminal, Confirm, SearchText, EditorInsert — command.hpp:130-144) and no pending:
      Space → Unmatched (leader start nahi)
-     Non-controlish (controlish = Esc OR KEY_F(4) OR tok.ctrl) with leader disallowed: try single-key only; if Prefix → Unmatched
-     Comment 413 "F-keys"; code sirf KEY_F(4) controlish hai, F2/F12 nahi
+     Non-controlish (controlish = Esc OR F1–F12 OR tok.ctrl OR tok.alt) with leader disallowed: try single-key only; if Prefix → Unmatched
   3. Else append to pending
   4. Scan bindings when-match AND (if leader) context_allows_leader (EditorNormal, EditorVisual, Sidebar, SearchResults — command.hpp:115-127)
   5. Exact chord → Matched, clear, command_id
@@ -1026,7 +1039,7 @@ UI::handle_inputs Search: Query/Replace → SearchText (leader off, Space litera
 T3) Hardcoded keys (mode-wise)
 -------------------------------------------------------------------
 
-Dispatch: UI::handle_inputs ui.cpp:3186-3508. KEY_RESIZE global 3193-3196. ERR ignore.
+Dispatch: UI::handle_inputs src/ui/ui_input.cpp. KEY_RESIZE global. ERR ignore. Enter widgets: KEY_ENTER | CR | LF (ui_is_enter).
 
 Command line Focus::Command  (3210-3226 + CommandLine::handle_input commandline.cpp:41-59)
   Esc 27 / Ctrl-C 3 | dispatch then return (escape → noni.mode.normal) | handle_inputs 3212-3215
@@ -1319,37 +1332,43 @@ Sources for PART V: includes/editor/ex_commands.hpp, src/editor/ex_commands.cpp,
 PART W — INPUT & TERMINAL SETUP
 ################################################################
 
-ncurses init — UI::init src/ui/ui.cpp:164-198
+ncurses init — UI::init src/ui/ui_init.cpp
 
-step | call | line
-locale | setlocale(LC_ALL, "") | 166
-screen | initscr() | 167
-input mode | raw()  (cbreak nahi) | 169
-echo | noecho() | 170
-ESC delay | set_escdelay(config.esc_delay_ms > 0 ? that : 25) | 171
-signals | SIGINT / SIGPIPE → SIG_IGN | 172-173
-termios | clear IXON|IXOFF|IXANY | 175-180
-keypad | keypad(stdscr, TRUE) | 182
-meta | meta(stdscr, TRUE) | 183
-timeout | timeout(50)  (halfdelay nahi) | 184
-cursor | curs_set(0) | 185
-colors | if (has_colors()) Theme::init() | 187-188
-bg | wbkgd(stdscr, COLOR_PAIR(Theme::Editor)); erase(); refresh() | 190-192
-then | sidebar_width/line_number_width from config; resize() | 194-197
+step | call
+locale | setlocale(LC_ALL, "")
+screen | initscr()
+input mode | raw()  (cbreak nahi)
+echo | noecho()
+ESC delay | set_escdelay(config.esc_delay_ms > 0 ? that : 25)
+signals | SIGINT / SIGPIPE → SIG_IGN
+termios | clear IXON|IXOFF|IXANY
+extended names | use_extended_names(TRUE)
+keypad | keypad(stdscr, TRUE)
+meta | meta(stdscr, TRUE)
+newline | nonl() — CR (Enter/Ctrl+M) ≠ LF (Ctrl+J)
+extended keys | KeybindingEngine::register_extended_keys() define_key CSI 1;3/1;5/1;7
+timeout | timeout(50)  (halfdelay nahi)
+cursor | curs_set(0)
+colors | if (has_colors()) Theme::init()
+bg | wbkgd(stdscr, COLOR_PAIR(Theme::Editor)); erase(); refresh()
+then | sidebar_width/line_number_width from config; resize()
 
 Code me nahi: cbreak, halfdelay, mousemask, KEY_MOUSE.
 
-getch → KeyToken: PART T2 from_raw table. Extra:
+get_wch → KeyToken: PART T2 from_raw table. Extra:
   arrows / KEY_PPAGE etc. fall through as ncurses codes; components handle after unmatched resolve
-  KEY_RESIZE intercepted before from_raw (ui.cpp:3193-3196)
-  Ctrl+] ASCII 29: from_raw me ctrl+']' nahi; Terminal focus raw 29 leave
-  F1: parse_single aur from_raw me KEY_F(1) case nahi
-  Alt: from_raw kabhi t.alt=true nahi
+  KEY_RESIZE intercepted before from_raw (ui_input.cpp)
+  Ctrl+] ASCII 29: from_raw → ctrl+']'; Terminal focus still raw 29 leave before resolve
+  F1–F12: parse_single + from_raw KEY_F(n); shift+F via KEY_F(13–24)
+  Alt: CSI via apply_extended; Esc+key peek (not Terminal)
+  Ctrl+arrows: define_key kUP5 etc.; Terminal replays seq via extended_seq()
+  KEYLOG: getenv("NONI_KEYLOG") Logger::info
+  Chord UI: Statusbar::set_chord(pending_label()) each render; no Prefix timeout
 
 handle_inputs order: PART F + PART T3.
 
-Sources for PART W: src/ui/ui.cpp UI::init / handle_inputs, src/configs/keybindings.cpp from_raw,
-includes/ui/theme.hpp, src/ui/theme.cpp.
+Sources for PART W: src/ui/ui_init.cpp, src/ui/ui_input.cpp, src/configs/keybindings_raw.cpp,
+src/configs/keybindings_ext.cpp, includes/ui/theme.hpp, src/ui/theme.cpp.
 
 ################################################################
 PART X — LSP DETAILED

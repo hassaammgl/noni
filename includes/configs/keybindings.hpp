@@ -48,12 +48,17 @@ public:
 
     void clear_chord();
     bool has_pending() const { return !pending.empty(); }
+    std::string pending_label() const;
 
     std::vector<CommandId> bound_commands() const;
 
     static KeyToken from_raw(int raw_key);
+    static void register_extended_keys();
+    // Bytes of a define_key sequence, or nullptr. Terminal replays these to the PTY.
+    static const char *extended_seq(int raw_key);
     static std::vector<KeyToken> parse_key(const std::string &spec);
     static bool when_matches(const std::string &when, const std::string &context);
+    ResolveResult resolve_token(KeyToken tok, const std::string &when_context, InputContext input_ctx);
 
 private:
     std::vector<ResolvedBinding> bindings;

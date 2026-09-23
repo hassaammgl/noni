@@ -54,28 +54,44 @@ namespace keybindings_detail
             t.code = ' ';
         else if (name == "backspace" || name == "bs")
             t.code = 127;
-        else if (name == "f2")
-            t.code = KEY_F(2);
-        else if (name == "f3")
-            t.code = KEY_F(3);
-        else if (name == "f4")
-            t.code = KEY_F(4);
-        else if (name == "f5")
-            t.code = KEY_F(5);
-        else if (name == "f6")
-            t.code = KEY_F(6);
-        else if (name == "f7")
-            t.code = KEY_F(7);
-        else if (name == "f8")
-            t.code = KEY_F(8);
-        else if (name == "f9")
-            t.code = KEY_F(9);
-        else if (name == "f10")
-            t.code = KEY_F(10);
-        else if (name == "f11")
-            t.code = KEY_F(11);
-        else if (name == "f12")
-            t.code = KEY_F(12);
+        else if (name == "up")
+            t.code = KEY_UP;
+        else if (name == "down")
+            t.code = KEY_DOWN;
+        else if (name == "left")
+            t.code = KEY_LEFT;
+        else if (name == "right")
+            t.code = KEY_RIGHT;
+        else if (name == "pageup" || name == "pgup")
+            t.code = KEY_PPAGE;
+        else if (name == "pagedown" || name == "pgdn" || name == "pgdown")
+            t.code = KEY_NPAGE;
+        else if (name == "home")
+            t.code = KEY_HOME;
+        else if (name == "end")
+            t.code = KEY_END;
+        else if (name == "delete" || name == "del")
+            t.code = KEY_DC;
+        else if (name == "insert" || name == "ins")
+            t.code = KEY_IC;
+        else if (name == "slash")
+            t.code = '/';
+        else if (name == "period" || name == "dot")
+            t.code = '.';
+        else if (name == "comma")
+            t.code = ',';
+        else if (name == "semicolon")
+            t.code = ';';
+        else if (name == "colon")
+            t.code = ':';
+        else if (name == "quote" || name == "doublequote")
+            t.code = '"';
+        else if (name == "apostrophe" || name == "squote")
+            t.code = '\'';
+        else if (name == "question")
+            t.code = '?';
+        else if (name == "bang" || name == "exclaim")
+            t.code = '!';
         else if (name == "`" || name == "backtick" || name == "grave")
             t.code = '`';
         else if (name == "\\" || name == "backslash")
@@ -90,6 +106,22 @@ namespace keybindings_detail
             t.code = '=';
         else if (name == "_" || name == "underscore")
             t.code = '_';
+        else if (name.size() >= 2 && name[0] == 'f')
+        {
+            int n = 0;
+            bool ok = true;
+            for (std::size_t i = 1; i < name.size(); ++i)
+            {
+                if (name[i] < '0' || name[i] > '9')
+                {
+                    ok = false;
+                    break;
+                }
+                n = n * 10 + (name[i] - '0');
+            }
+            if (ok && n >= 1 && n <= 12)
+                t.code = KEY_F(n);
+        }
         else if (name.size() == 1)
         {
             char c = name[0];

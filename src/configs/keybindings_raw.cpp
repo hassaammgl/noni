@@ -11,12 +11,15 @@
 #include <sstream>
 
 #include "keybindings_detail.hpp"
+#include "keybindings_ext.hpp"
 
 using namespace keybindings_detail;
 
 KeyToken KeybindingEngine::from_raw(int raw_key)
 {
     KeyToken t;
+    if (keybindings_ext::apply_extended(raw_key, t))
+        return t;
 
     if (raw_key == 27)
     {
@@ -29,70 +32,39 @@ KeyToken KeybindingEngine::from_raw(int raw_key)
         t.code = '\t';
         return t;
     }
-    if (raw_key == '\n' || raw_key == KEY_ENTER)
+    // nonl(): Enter is KEY_ENTER or CR (13). LF (10) is Ctrl+J; BS-byte 8 is Ctrl+H.
+    if (raw_key == KEY_ENTER || raw_key == '\r')
     {
         t.code = '\n';
         return t;
     }
-    if (raw_key == KEY_BACKSPACE || raw_key == 127 || raw_key == 8)
+    if (raw_key == KEY_BACKSPACE || raw_key == 127)
     {
         t.code = 127;
         return t;
     }
+    if (raw_key == 8)
+    {
+        t.ctrl = true;
+        t.code = 'h';
+        return t;
+    }
+    if (raw_key == '\n')
+    {
+        t.ctrl = true;
+        t.code = 'j';
+        return t;
+    }
 
-    if (raw_key == KEY_F(2))
+    if (raw_key >= KEY_F(1) && raw_key <= KEY_F(12))
     {
-        t.code = KEY_F(2);
+        t.code = raw_key;
         return t;
     }
-    if (raw_key == KEY_F(3))
+    if (raw_key >= KEY_F(13) && raw_key <= KEY_F(24))
     {
-        t.code = KEY_F(3);
-        return t;
-    }
-    if (raw_key == KEY_F(4))
-    {
-        t.code = KEY_F(4);
-        return t;
-    }
-    if (raw_key == KEY_F(5))
-    {
-        t.code = KEY_F(5);
-        return t;
-    }
-    if (raw_key == KEY_F(6))
-    {
-        t.code = KEY_F(6);
-        return t;
-    }
-    if (raw_key == KEY_F(7))
-    {
-        t.code = KEY_F(7);
-        return t;
-    }
-    if (raw_key == KEY_F(8))
-    {
-        t.code = KEY_F(8);
-        return t;
-    }
-    if (raw_key == KEY_F(9))
-    {
-        t.code = KEY_F(9);
-        return t;
-    }
-    if (raw_key == KEY_F(10))
-    {
-        t.code = KEY_F(10);
-        return t;
-    }
-    if (raw_key == KEY_F(11))
-    {
-        t.code = KEY_F(11);
-        return t;
-    }
-    if (raw_key == KEY_F(12))
-    {
-        t.code = KEY_F(12);
+        t.shift = true;
+        t.code = KEY_F(raw_key - KEY_F(13) + 1);
         return t;
     }
 
@@ -102,16 +74,24 @@ KeyToken KeybindingEngine::from_raw(int raw_key)
         t.code = 'a' + (raw_key - 1);
         return t;
     }
-
-    // Ctrl+\ (ASCII FS) — VS Code split binding.
     if (raw_key == 28)
     {
         t.ctrl = true;
         t.code = '\\';
         return t;
     }
-
-    // Many terminals send NUL for Ctrl+Space (and Ctrl+@).
+    if (raw_key == 29)
+    {
+        t.ctrl = true;
+        t.code = ']';
+        return t;
+    }
+    if (raw_key == 31)
+    {
+        t.ctrl = true;
+        t.code = '/';
+        return t;
+    }
     if (raw_key == 0)
     {
         t.ctrl = true;
@@ -132,4 +112,3 @@ KeyToken KeybindingEngine::from_raw(int raw_key)
         t.codepoint = static_cast<char32_t>(raw_key);
     return t;
 }
-

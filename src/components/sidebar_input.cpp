@@ -83,6 +83,7 @@ SidebarAction Sidebar::handle_input(int key)
         break;
     }
     case '\n':
+    case '\r':
     case KEY_ENTER:
     case 'o':
     {

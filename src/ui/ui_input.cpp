@@ -2,7 +2,12 @@
 
 bool UI::dispatch_resolved(int key, InputContext ctx)
 {
-    const ResolveResult result = keys.resolve(key, when_context(), ctx);
+    return dispatch_token(KeybindingEngine::from_raw(key), ctx);
+}
+
+bool UI::dispatch_token(KeyToken tok, InputContext ctx)
+{
+    const ResolveResult result = keys.resolve_token(tok, when_context(), ctx);
     if (result.status == ResolveStatus::Matched)
     {
         if (!commands.execute(result.command_id))
@@ -52,6 +57,17 @@ void UI::handle_inputs()
     if (rc == ERR)
         return;
 
+    if (std::getenv("NONI_KEYLOG"))
+    {
+        const int raw = static_cast<int>(wch);
+        const char *nm = (rc == KEY_CODE_YES) ? keyname(raw) : nullptr;
+        Logger::info(std::format(
+            "KEYLOG rc={} ch={} name={}",
+            rc,
+            raw,
+            nm ? nm : (rc == OK ? "OK" : "?")));
+    }
+
     int ch = 0;
     if (rc == KEY_CODE_YES)
     {
@@ -76,6 +92,41 @@ void UI::handle_inputs()
         return;
     }
 
+    // Esc then a follow-up key (within escDelayMs) → Alt+key. Terminal keeps raw ESC prefix.
+    KeyToken alt_tok{};
+    bool have_alt = false;
+    if (ch == 27 && rc != KEY_CODE_YES && focus != Focus::Terminal)
+    {
+        const int esc_ms = config.esc_delay_ms > 0 ? config.esc_delay_ms : 25;
+        timeout(esc_ms);
+        wint_t nxt = 0;
+        const int nrc = get_wch(&nxt);
+        timeout(50);
+        if (nrc != ERR)
+        {
+            const int nch = static_cast<int>(nxt);
+            alt_tok = KeybindingEngine::from_raw(nch);
+            alt_tok.alt = true;
+            have_alt = true;
+            if (std::getenv("NONI_KEYLOG"))
+                Logger::info(std::format("KEYLOG alt-follow ch={}", nch));
+        }
+    }
+
+    if (have_alt)
+    {
+        const InputContext ctx = ui_input_context_for(focus, editor.get_mode(), false);
+        if (focus == Focus::Editor || focus == Focus::Sidebar)
+        {
+            if (dispatch_token(alt_tok, ctx))
+                return;
+            return; // unmatched Alt+key: do not insert the follow-up
+        }
+        if (dispatch_token(alt_tok, ctx))
+            return;
+        ch = alt_tok.code;
+    }
+
     if (focus == Focus::Command)
     {
         if (ch == 27 || ch == 3)
@@ -83,7 +134,7 @@ void UI::handle_inputs()
             (void)dispatch_resolved(ch, InputContext::CommandLine);
             return;
         }
-        if (ch == '\n' || ch == KEY_ENTER)
+        if (ui_is_enter(ch))
         {
             execute_command();
             return;

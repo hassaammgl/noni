@@ -23,6 +23,7 @@ void UI::render()
         dcol = TextMetrics::byte_to_display(row, static_cast<std::size_t>(c.column)) + 1;
     }
     statusbar.set_cursor_position(c.line + 1, chr, dcol);
+    statusbar.set_chord(keys.has_pending() ? keys.pending_label() : "");
     update_statusbar_mode();
     update_cursor_visibility();
     sync_messages_echo();

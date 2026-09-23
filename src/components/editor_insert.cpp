@@ -91,6 +91,7 @@ void Editor::handle_insert_input(int key)
         tab->cursor().column++;
         break;
     case '\n':
+    case '\r':
     case KEY_ENTER:
         pending_j = false;
         tab->buffer().insert_newline(tab->cursor().line, tab->cursor().column);

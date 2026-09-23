@@ -12,6 +12,7 @@
     void handle_inputs();
     void insert_focused_utf8(std::string_view utf8);
     bool dispatch_resolved(int key, InputContext ctx);
+    bool dispatch_token(KeyToken tok, InputContext ctx);
     void handle_overlay_input(int ch);
     void handle_sidebar_input(int ch);
     void update_statusbar_mode();

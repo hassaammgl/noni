@@ -126,17 +126,16 @@ ResolveResult KeybindingEngine::resolve_pending(const std::string &when_context,
     return result;
 }
 
-ResolveResult KeybindingEngine::resolve(int raw_key, const std::string &when_context, InputContext input_ctx)
+ResolveResult KeybindingEngine::resolve_token(KeyToken tok, const std::string &when_context, InputContext input_ctx)
 {
-    const KeyToken tok = from_raw(raw_key);
-
     // Literal contexts: only allow Esc / explicit control bindings (single-key),
     // never start a Space leader chord.
     if (context_is_literal(input_ctx) && !has_pending())
     {
         // Allow Esc and F-keys to match single-key bindings.
         const bool controlish =
-            tok.code == 27 || tok.code == KEY_F(4) || tok.ctrl;
+            tok.code == 27 || tok.ctrl || tok.alt ||
+            (tok.code >= KEY_F(1) && tok.code <= KEY_F(12));
         if (!controlish && tok.code == ' ')
         {
             ResolveResult r;
@@ -159,4 +158,9 @@ ResolveResult KeybindingEngine::resolve(int raw_key, const std::string &when_con
 
     pending.push_back(tok);
     return resolve_pending(when_context, input_ctx);
+}
+
+ResolveResult KeybindingEngine::resolve(int raw_key, const std::string &when_context, InputContext input_ctx)
+{
+    return resolve_token(from_raw(raw_key), when_context, input_ctx);
 }

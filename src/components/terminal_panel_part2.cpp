@@ -1,7 +1,9 @@
 #include <components/terminal_panel.hpp>
+#include <configs/keybindings.hpp>
 #include <ui/theme.hpp>
 
 #include <algorithm>
+#include <cstring>
 #include <ncurses.h>
 #include <vector>
 
@@ -99,6 +101,7 @@ void TerminalPanel::handle_input(int key)
     {
     case KEY_ENTER:
     case '\n':
+    case '\r':
         send1('\r');
         break;
     case KEY_BACKSPACE:
@@ -135,6 +138,11 @@ void TerminalPanel::handle_input(int key)
         break;
     default:
     {
+        if (const char *seq = KeybindingEngine::extended_seq(key))
+        {
+            send(seq, std::strlen(seq));
+            break;
+        }
         if (int n = 0; const char *seq = xterm_f_seq(key, n))
         {
             send(seq, static_cast<std::size_t>(n));

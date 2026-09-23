@@ -12,6 +12,7 @@ Statuses: `todo` | `doing` | `done` | `blocked`
 - No libgit2 C API in source (`#include <git2>` none) → drop `-lgit2` (T0).
 - Repo-root `Makefile` was gitignored (`gitignore:45`); T0 stops ignoring it and tracks the handwritten Makefile.
 - C++23 libstdc++ on this machine: `__cpp_lib_expected=202211`, `__cpp_lib_print=202406`, `__cpp_lib_flat_map=202511`, `__cpp_lib_move_only_function=202110`.
+- T3 `nonl()`: Enter = KEY_ENTER or CR(13); Ctrl+J = LF(10); Ctrl+H = 8 vs Backspace 127/KEY_BACKSPACE. Ctrl+M is the same byte as Enter on CR terminals. No Prefix chord timeout.
 
 ## PART 0 — bootstrap
 
@@ -92,7 +93,7 @@ File list after `wc -l` (T2 start / HEAD). Split = pure move. No commit until yo
 
 | id | status | note | commit |
 |----|--------|------|--------|
-| T3 | todo | KEYLOG, Alt, Ctrl+arrows, mappings, nl/nonl, chord UI | |
+| T3 | done | nonl(): Enter=KEY_ENTER or CR; Ctrl+J=LF; Ctrl+H=8 vs Bs=127. KEYLOG, Esc-peek Alt (skip Terminal), define_key CSI 1;3/1;5/1;7, from_raw ctrl+]/ctrl+/, f1–f12+shift+F, punctuation names, statusbar chord_ (no Prefix timeout). | |
 
 ## T4 — KEY OWNERSHIP
 
@@ -142,6 +143,7 @@ File list after `wc -l` (T2 start / HEAD). Split = pure move. No commit until yo
 
 - T1.4: 8-bit meta (`key >= 128 && key < KEY_MIN` → ESC+(key&0x7f)). Split ESC+key path verified by code (first getch 27 now reaches PTY). Combined-meta path UNVERIFIED on this terminal.
 - T1.7: get_wch + UTF-8 insert compiled; runtime é/Urdu/emoji in TUI UNVERIFIED (no interactive run).
+- T3: Alt Esc-peek, Ctrl+arrows define_key, KEYLOG, chord statusbar — code path only; interactive TUI UNVERIFIED (no `make` this turn).
 
 ## Pause
 
@@ -151,6 +153,6 @@ User asked to stop after T1.1 (2026-09-21); resumed 2026-09-22 (T1.2+).
 
 Clean `-Wall -Wextra -std=c++23 -O2` build (code path: `make` after `make clean`; `build/bin/app` linked). One warning, not a runtime-bug class — left for T3/T4 (touches KeybindingEngine):
 
-- `src/configs/keybindings.cpp:348` `any_leader_prefix` set but not used (`-Wunused-but-set-variable`). Sets on leader prefix match; never read. `any_prefix` is what drives Prefix vs Unmatched.
+- `src/configs/keybindings_part2.cpp` `any_leader_prefix` set but not used (`-Wunused-but-set-variable`). Sets on leader prefix match; never read. `any_prefix` is what drives Prefix vs Unmatched. Left for T4.
 
 Header-dep check: `-MMD` `.d` files generated (e.g. `build/src/ui/ui.d` lists `includes/ui/ui.hpp`). `touch includes/utils/logger.hpp && make` rebuilt dependents. Do not pipe `make` to `head` (SIGPIPE mid-compile).

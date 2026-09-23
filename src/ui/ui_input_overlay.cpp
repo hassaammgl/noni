@@ -9,7 +9,7 @@ void UI::handle_overlay_input(int ch)
             close_file_search(false);
             return;
         }
-        if (ch == '\n' || ch == KEY_ENTER)
+        if (ui_is_enter(ch))
         {
             close_file_search(true);
             return;
@@ -25,7 +25,7 @@ void UI::handle_overlay_input(int ch)
             close_buffer_search(false);
             return;
         }
-        if (ch == '\n' || ch == KEY_ENTER)
+        if (ui_is_enter(ch))
         {
             close_buffer_search(true);
             return;
@@ -41,7 +41,7 @@ void UI::handle_overlay_input(int ch)
             close_lsp_picker(false);
             return;
         }
-        if (ch == '\n' || ch == KEY_ENTER)
+        if (ui_is_enter(ch))
         {
             close_lsp_picker(true);
             return;
@@ -57,7 +57,7 @@ void UI::handle_overlay_input(int ch)
             close_completion(false);
             return;
         }
-        if (ch == '\n' || ch == KEY_ENTER || ch == '\t')
+        if (ui_is_enter(ch) || ch == '\t')
         {
             close_completion(true);
             return;
@@ -126,7 +126,7 @@ void UI::handle_overlay_input(int ch)
 
     if (focus == Focus::Prompt)
     {
-        if (ch == '\n' || ch == KEY_ENTER)
+        if (ui_is_enter(ch))
         {
             resolve_sidebar_prompt();
             return;

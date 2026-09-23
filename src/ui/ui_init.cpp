@@ -18,8 +18,11 @@ void UI::init()
         tcsetattr(STDIN_FILENO, TCSANOW, &term);
     }
 
+    use_extended_names(TRUE);
     keypad(stdscr, TRUE);
     meta(stdscr, TRUE);
+    nonl(); // keep CR (Enter/Ctrl+M) distinct from LF (Ctrl+J)
+    KeybindingEngine::register_extended_keys();
     timeout(50); // let async work (index/git/scan) refresh UI without keypress
     curs_set(0);
 

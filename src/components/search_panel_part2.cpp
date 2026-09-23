@@ -83,7 +83,7 @@ SearchPanelAction SearchPanel::handle_input(int key)
     {
         std::string &target = (field == SearchField::Query) ? query : replace_text;
 
-        if (key == '\n' || key == KEY_ENTER)
+        if (key == '\n' || key == '\r' || key == KEY_ENTER)
         {
             if (field == SearchField::Query)
             {
@@ -153,6 +153,7 @@ SearchPanelAction SearchPanel::handle_input(int key)
         selected = cached.empty() ? 0 : static_cast<int>(cached.size()) - 1;
         break;
     case '\n':
+    case '\r':
     case KEY_ENTER:
     case 'o':
         if (!cached.empty())

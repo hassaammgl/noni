@@ -36,8 +36,17 @@ void Statusbar::draw()
     mvwprintw(window, 0, 1, " %s ", this->mode.c_str());
     wattroff(window, COLOR_PAIR(mode_pair));
 
+    int after_mode = 3 + static_cast<int>(this->mode.size());
+    if (!chord_.empty())
+    {
+        wattron(window, COLOR_PAIR(Theme::Notification));
+        mvwprintw(window, 0, after_mode, "%s", chord_.c_str());
+        wattroff(window, COLOR_PAIR(Theme::Notification));
+        after_mode += static_cast<int>(chord_.size()) + 1;
+    }
+
     wattron(window, COLOR_PAIR(Theme::Statusbar));
-    mvwprintw(window, 0, 15, "Ln %d, Chr %d, Col %d", line_, char_, display_col_);
+    mvwprintw(window, 0, std::max(after_mode, 15), "Ln %d, Chr %d, Col %d", line_, char_, display_col_);
 
     if (!scm_badge_.empty())
         mvwprintw(window, 0, 42, "Git %s", scm_badge_.c_str());
@@ -92,6 +101,11 @@ void Statusbar::set_cursor_position(int line, int char_pos, int display_col)
 void Statusbar::set_scm_badge(std::string badge)
 {
     scm_badge_ = std::move(badge);
+}
+
+void Statusbar::set_chord(std::string text)
+{
+    chord_ = std::move(text);
 }
 
 void Statusbar::set_echo(std::string text, int ttl_ms)

@@ -28,12 +28,18 @@
 #include <chrono>
 #include <fstream>
 #include <locale>
+#include <cstdlib>
 #include <format>
 #include <map>
 #include <regex>
 #include <termios.h>
 #include <unistd.h>
 #include <vector>
+
+inline bool ui_is_enter(int ch)
+{
+    return ch == '\n' || ch == '\r' || ch == KEY_ENTER;
+}
 
 inline InputContext ui_input_context_for(Focus focus, EditorMode mode, bool search_in_text_field)
 {
