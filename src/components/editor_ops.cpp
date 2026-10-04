@@ -1,26 +1,5 @@
 #include "editor_impl.hpp"
 
-bool Editor::yank_range(const TextRange &range)
-{
-    if (!tab || range.empty())
-        return false;
-
-    std::string text = tab->buffer().get_range_text(
-        range.start.line, range.start.column, range.end.line, range.end.column);
-
-    // Linewise yank should end with newline when not through-EOF extract already.
-    if (range.kind == SelectionKind::Line && !text.empty() && text.back() != '\n')
-    {
-        // Through-EOF extracts lack trailing newline; paste linewise still works.
-    }
-
-    RegisterValue value;
-    value.text = std::move(text);
-    value.type = (range.kind == SelectionKind::Line) ? RegisterType::Line : RegisterType::Character;
-    registers().yank_to_pending(std::move(value));
-    return true;
-}
-
 bool Editor::delete_range(const TextRange &range)
 {
     if (!tab || range.empty())

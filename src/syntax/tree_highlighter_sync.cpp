@@ -12,23 +12,48 @@ using namespace ts_hl_detail;
 void TreeHighlighter::sync(
     const fs::path &path,
     const std::vector<std::string> &lines,
-    std::uint64_t revision)
+    std::uint64_t revision,
+    int vis_lo,
+    int vis_hi)
 {
     const Language lang = Syntax::detect_language(path);
     (void)Syntax::language_definition(lang);
     const std::uint64_t grammar_gen = GrammarInstaller::generation();
+
+    if (vis_lo < 0)
+        vis_lo = 0;
+    if (vis_hi < 0 || vis_hi >= static_cast<int>(lines.size()))
+        vis_hi = lines.empty() ? -1 : static_cast<int>(lines.size()) - 1;
 
     const bool meta_changed =
         lang != cached_lang ||
         path != cached_path ||
         grammar_gen != cached_grammar_gen;
 
+    const bool vis_covered =
+        !lines.empty() &&
+        vis_lo >= synced_vis_lo_ &&
+        vis_hi <= synced_vis_hi_ &&
+        dirty_from_ > vis_hi;
+
     if (!needs_sync_ &&
         !force_full_ &&
         !meta_changed &&
         revision == cached_revision &&
         line_tokens.size() == lines.size())
+    {
+        if (ts_active || vis_covered)
+            return;
+        // Lexer path: extend tokens into newly visible lines only.
+        if (vis_hi >= 0 && (vis_hi >= dirty_from_ || vis_hi > synced_vis_hi_))
+        {
+            const int from = std::min(dirty_from_, std::max(0, synced_vis_hi_ + 1));
+            rehighlight_lexer_from(lines, lang, from, vis_hi + 1);
+            synced_vis_lo_ = std::min(synced_vis_lo_, vis_lo);
+            synced_vis_hi_ = std::max(synced_vis_hi_, vis_hi);
+        }
         return;
+    }
 
     if (meta_changed)
         force_full_ = true;
@@ -46,17 +71,17 @@ void TreeHighlighter::sync(
         pending_edits_.clear();
         force_full_ = false;
         fill_with_lexer_full(lines, lang);
+        synced_vis_lo_ = 0;
+        synced_vis_hi_ = lines.empty() ? -1 : static_cast<int>(lines.size()) - 1;
         return;
     }
 
+    // Prefer incremental tree-sitter; fall back to viewport-limited lexer (T7.4).
     const std::string source = join_source(lines);
     bool used_ts = false;
 
     if (!force_full_ && ts_active && tree && !pending_edits_.empty() && ensure_language(lang))
     {
-        // Apply pending edits to the old tree using positions in the post-edit document.
-        // start_byte is identical before/after; deleted/inserted sizes give old/new ends.
-        bool edits_ok = true;
         for (const TextChange &ch : pending_edits_)
         {
             const std::uint32_t start_byte = byte_offset(lines, ch.start_line, ch.start_col);
@@ -89,7 +114,7 @@ void TreeHighlighter::sync(
         }
 
         pending_edits_.clear();
-        if (edits_ok && parse_with_ts(source, lang, true, lines.size()))
+        if (parse_with_ts(source, lang, true, lines.size()))
         {
             used_ts = true;
             clip_tokens(lines);
@@ -109,13 +134,14 @@ void TreeHighlighter::sync(
 
     if (used_ts)
     {
-        // Mirror into line_cache for consumers that only read tokens_for_line.
         for (std::size_t i = 0; i < lines.size() && i < line_tokens.size(); ++i)
         {
             line_cache_[i].tokens = line_tokens[i];
             line_cache_[i].valid = true;
         }
         dirty_from_ = static_cast<int>(lines.size());
+        synced_vis_lo_ = 0;
+        synced_vis_hi_ = lines.empty() ? -1 : static_cast<int>(lines.size()) - 1;
         return;
     }
 
@@ -125,7 +151,11 @@ void TreeHighlighter::sync(
 
     if (dirty_from_ >= static_cast<int>(lines.size()))
         dirty_from_ = 0;
-    rehighlight_lexer_from(lines, lang, dirty_from_);
+    const int from = std::min(dirty_from_, vis_lo);
+    const int until = (vis_hi < 0) ? static_cast<int>(lines.size()) : vis_hi + 1;
+    rehighlight_lexer_from(lines, lang, from, until);
+    synced_vis_lo_ = vis_lo;
+    synced_vis_hi_ = vis_hi;
 }
 
 const std::vector<SyntaxToken> &TreeHighlighter::tokens_for_line(int line) const

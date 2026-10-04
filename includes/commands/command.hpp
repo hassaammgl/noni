@@ -93,6 +93,25 @@ namespace Commands
     // P20 session
     inline constexpr const char *SessionSave = "workbench.action.saveSession";
     inline constexpr const char *SessionRestore = "workbench.action.restoreSession";
+
+    // Locked keymap v1 (T5/T6) — ids also listed in command.hpp for config bindings
+    inline constexpr const char *Find = "actions.find";
+    inline constexpr const char *GotoLine = "workbench.action.gotoLine";
+    inline constexpr const char *CommentLine = "editor.action.commentLine";
+    inline constexpr const char *SelectAll = "editor.action.selectAll";
+    inline constexpr const char *ClipboardCopy = "editor.action.clipboardCopyAction";
+    inline constexpr const char *ClipboardCut = "editor.action.clipboardCutAction";
+    inline constexpr const char *CopyLinesDown = "editor.action.copyLinesDownAction";
+    inline constexpr const char *MoveLinesDown = "editor.action.moveLinesDownAction";
+    inline constexpr const char *MoveLinesUp = "editor.action.moveLinesUpAction";
+    inline constexpr const char *DeleteLines = "editor.action.deleteLines";
+    inline constexpr const char *HalfPageDown = "editor.action.halfPageDown";
+    inline constexpr const char *HalfPageUp = "editor.action.halfPageUp";
+    inline constexpr const char *FormatDocument = "editor.action.formatDocument";
+    inline constexpr const char *SearchRecent = "noni.search.recent";
+    inline constexpr const char *GrepWord = "noni.search.grepWord";
+    inline constexpr const char *DiagnosticsList = "noni.diagnostics.list";
+    inline constexpr const char *GitPreviewHunk = "git.previewHunk";
 }
 
 enum class InputContext

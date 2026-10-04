@@ -32,6 +32,7 @@ public:
     void ensure_started();
     void stop();
     bool poll();
+    [[nodiscard]] int poll_fd() const { return session_.poll_fd(); }
 
     void on_resized();
     void handle_input(int key);

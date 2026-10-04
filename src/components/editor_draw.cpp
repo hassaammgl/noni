@@ -14,12 +14,11 @@ void Editor::draw_window_pane(Window &w, int ox, int oy, int pw, int ph, bool is
         w.scroll_y() = 0;
     sync_horizontal_scroll(w, pw);
 
-    const auto &content = w.buffer().lines();
-    w.buffer().sync_syntax();
-    auto &syntax = w.buffer().syntax();
-
     const int sx = w.scroll_x();
     const int sy = w.scroll_y();
+    const auto &content = w.buffer().lines();
+    w.buffer().sync_syntax(sy, sy + std::max(0, ph - 1));
+    auto &syntax = w.buffer().syntax();
 
     for (int row = 0; row < ph; ++row)
     {
@@ -88,15 +87,14 @@ void Editor::draw()
     if (core_)
         core_->set_editor_area(width, height);
 
-    auto rects = tab->layout.compute_rects(0, 0, width, height);
+    tab->layout.compute_rects_into(0, 0, width, height, rects_cache_);
     Window *active = tab->layout.active();
 
     // Draw split separators.
-    for (const auto &[w, r] : rects)
+    for (const auto &[w, r] : rects_cache_)
     {
         (void)w;
-        // Vertical separator to the right of pane if another pane starts at x+width+1
-        for (const auto &[w2, r2] : rects)
+        for (const auto &[w2, r2] : rects_cache_)
         {
             if (r2.x == r.x + r.width + 1 && r2.y < r.y + r.height && r.y < r2.y + r2.height)
             {
@@ -114,7 +112,7 @@ void Editor::draw()
         }
     }
 
-    for (auto &[w, r] : rects)
+    for (auto &[w, r] : rects_cache_)
     {
         if (!w)
             continue;

@@ -7,8 +7,10 @@
     void register_actions();
     void register_workbench_actions();
     void register_nav_actions();
+    void register_keymap_actions();
     void resize();
     void render();
+    void render_paint();
     void handle_inputs();
     void insert_focused_utf8(std::string_view utf8);
     bool dispatch_resolved(int key, InputContext ctx);
@@ -89,5 +91,16 @@
     void request_lsp_workspace_symbols_prompt();
     void request_lsp_rename_prompt();
     void request_lsp_code_actions();
+    void request_lsp_hover();
+    void request_lsp_format();
+    void apply_lsp_format_edits(std::vector<LspTextEdit> edits, bool utf16_pending);
+    void open_diagnostics_picker();
+    void tick_autosave();
+    bool write_buffer_to_disk(); // save without formatOnSave
+    void mark_render_dirty() { needs_render_ = true; }
+    void mark_all_components_dirty();
+    void mark_components_from_state();
+    bool paint_and_refresh(UIComponent &c);
+    [[nodiscard]] int next_poll_timeout_ms() const;
     fs::path project_root() const;
     fs::path find_workspace_root(const fs::path &hint) const;

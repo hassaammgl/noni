@@ -10,6 +10,7 @@ protected:
     int y = 0;
     int width = 0;
     int height = 0;
+    bool dirty_ = true;
 
 public:
     UIComponent() = default;
@@ -24,4 +25,18 @@ public:
     virtual void clear();
 
     WINDOW *get_window() const;
+
+    void mark_dirty() { dirty_ = true; }
+    void clear_dirty() { dirty_ = false; }
+    [[nodiscard]] bool is_dirty() const { return dirty_; }
+
+    // draw() only when dirty; returns true if painted.
+    bool paint_if_dirty()
+    {
+        if (!dirty_)
+            return false;
+        draw();
+        dirty_ = false;
+        return true;
+    }
 };

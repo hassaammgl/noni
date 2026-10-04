@@ -10,30 +10,39 @@
 
 void SearchPanel::set_focused(bool v)
 {
+    if (focused == v)
+        return;
     focused = v;
+    mark_dirty();
 }
 
 void SearchPanel::open()
 {
     focused = true;
     field = SearchField::Query;
+    mark_dirty();
 }
 
 void SearchPanel::close()
 {
     focused = false;
+    mark_dirty();
 }
 
 bool SearchPanel::poll()
 {
     const auto before = seen_version;
     sync_results();
-    return seen_version != before || engine.is_searching();
+    const bool changed = seen_version != before || engine.is_searching();
+    if (changed)
+        mark_dirty();
+    return changed;
 }
 
 SearchPanelAction SearchPanel::handle_input(int key)
 {
     sync_results();
+    mark_dirty();
 
     if (key == KEY_F(6))
     {

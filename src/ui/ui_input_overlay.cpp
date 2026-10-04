@@ -157,4 +157,18 @@ void UI::handle_overlay_input(int ch)
         }
         return;
     }
+
+    if (focus == Focus::Hover)
+    {
+        if (ch == 27 || ch == 3 || ch == 'q')
+        {
+            hover_popup_.close();
+            return_to_normal();
+            return;
+        }
+        hover_popup_.handle_input(ch);
+        if (!hover_popup_.is_active())
+            return_to_normal();
+        return;
+    }
 }

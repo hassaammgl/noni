@@ -34,6 +34,19 @@ void Editor::handle_visual_input(int key)
         operator_on_visual(PendingOperator::Delete, false);
         return;
     }
+    if (pending_g)
+    {
+        pending_g = false;
+        if (key == 'g')
+        {
+            apply_motion(Motion::file_start(win()), true);
+            clamp_cursor();
+            update_scroll();
+        }
+        else if (key == 'c')
+            cmd_toggle_comment();
+        return;
+    }
     if (key == 'c' || key == 's')
     {
         operator_on_visual(PendingOperator::Change, true);
@@ -63,18 +76,6 @@ void Editor::handle_visual_input(int key)
     if (key == 'g')
     {
         pending_g = true;
-        return;
-    }
-
-    if (pending_g)
-    {
-        pending_g = false;
-        if (key == 'g')
-        {
-            apply_motion(Motion::file_start(win()), true);
-            clamp_cursor();
-            update_scroll();
-        }
         return;
     }
 

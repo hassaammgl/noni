@@ -96,10 +96,27 @@ struct LspRenameResult
     int doc_version = 0;
 };
 
+struct LspHoverResult
+{
+    std::string contents; // plaintext (markdown stripped lightly)
+    int request_id = 0;
+    std::uintptr_t buffer_id = 0;
+};
+
+struct LspFormatResult
+{
+    std::vector<LspTextEdit> edits;
+    bool utf16_pending = true;
+    int request_id = 0;
+    std::uintptr_t buffer_id = 0;
+    int doc_version = 0;
+};
+
 enum class LspPickerKind
 {
     Locations,
     Symbols,
     CodeActions,
     InstallServers,
+    Diagnostics,
 };

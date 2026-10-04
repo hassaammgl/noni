@@ -79,6 +79,7 @@ void TerminalSession::write_byte(char c)
 
 bool TerminalSession::pump()
 {
+    pty_.pump_readable();
     const std::string chunk = pty_.take_output();
     bool changed = false;
     if (!chunk.empty())

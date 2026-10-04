@@ -57,6 +57,18 @@ UI::UI(const fs::path file_path = "")
             keys.clear_chord();
             resize();
         });
+    editor.set_command_open_handler([this]() {
+        command_line.open(':');
+        focus = Focus::Command;
+        keys.clear_chord();
+        resize();
+    });
+    editor.set_lsp_nav_handlers(
+        [this]() { request_lsp_definition(); },
+        [this]() { request_lsp_declaration(); },
+        [this]() { request_lsp_type_definition(); },
+        [this]() { request_lsp_references(); });
+    editor.set_hover_handler([this]() { request_lsp_hover(); });
     sync_active_tab();
     load_config();
     // Config may have enabled LSP servers after first attach attempt.
@@ -107,28 +119,6 @@ UI::~UI()
     Background::instance().stop();
     endwin();
     Logger::debug("UI destructor called");
-}
-
-void UI::run()
-{
-    Logger::info("UI main loop started");
-    sync_fs_watches();
-    while (running)
-    {
-        file_picker.poll();
-        search_panel.poll();
-        terminal.poll();
-        poll_fs_events();
-        if (sidebar.poll() && core.buffers().has_tabs())
-        {
-            const fs::path path = core.buffers().active().buffer().get_buffer_path();
-            if (!path.empty())
-                sidebar.reveal_path(path);
-        }
-        render();
-        handle_inputs();
-    }
-    Logger::info("UI main loop stopped");
 }
 
 void UI::request_quit()

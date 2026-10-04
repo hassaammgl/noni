@@ -30,7 +30,7 @@ namespace Motion
                 i += n;
             }
             c.column = static_cast<int>(i);
-            set_preferred_display(win, row, c.column);
+            set_preferred_display(win, c.line, c.column);
         }
         else
         {
@@ -55,7 +55,7 @@ namespace Motion
                 // Last codepoint start.
                 c.column = static_cast<int>(TextMetrics::prev_cp(row, row.size()));
             }
-            set_preferred_display(win, row, c.column);
+            set_preferred_display(win, c.line, c.column);
         }
         MotionResult r = make_char_motion(win.cursor(), c, lines);
         if (!lines.empty())

@@ -11,6 +11,7 @@ void UI::render()
     core.lsp().pump();
     poll_completion_result();
     poll_lsp_results();
+    tick_autosave();
 
     Cursor c = editor.get_cursor();
     int chr = 1;
@@ -20,7 +21,9 @@ void UI::render()
     {
         const auto &row = lines[static_cast<std::size_t>(c.line)];
         chr = TextMetrics::byte_to_codepoint_index(row, static_cast<std::size_t>(c.column)) + 1;
-        dcol = TextMetrics::byte_to_display(row, static_cast<std::size_t>(c.column)) + 1;
+        dcol = editor.get_buffer().byte_to_display_cached(
+                  c.line, static_cast<std::size_t>(c.column)) +
+              1;
     }
     statusbar.set_cursor_position(c.line + 1, chr, dcol);
     statusbar.set_chord(keys.has_pending() ? keys.pending_label() : "");
@@ -56,121 +59,7 @@ void UI::render()
         &editor.get_buffer().diagnostics(),
         diff_ptr);
 
-    // Do NOT werase(stdscr) every frame — that blanks the whole terminal and
-    // causes visible flicker on mode / focus changes. Panels paint their own cells.
     wbkgd(stdscr, COLOR_PAIR(Theme::Editor));
-
-    header.draw();
-    tab_bar.draw();
-    if (sidebar_visible)
-    {
-        if (side_view == SideView::Search)
-        {
-            search_panel.set_focused(focus == Focus::Search);
-            search_panel.draw();
-        }
-        else
-        {
-            sidebar.set_focused(focus == Focus::Sidebar);
-            sidebar.draw();
-        }
-    }
-    line_number.draw();
-    editor.draw();
-
-    if (messages_panel.is_active())
-        messages_panel.draw();
-
-    if (file_picker.is_active())
-        file_picker.draw();
-    if (buffer_picker.is_active())
-        buffer_picker.draw();
-    if (lsp_picker.is_active())
-        lsp_picker.draw();
-    if (completion_picker.is_active())
-        completion_picker.draw();
-
-    statusbar.draw();
-
-    if (terminal_visible)
-    {
-        terminal.set_focused(focus == Focus::Terminal);
-        terminal.draw();
-    }
-
-    if (command_line.is_active())
-        command_line.draw();
-    else if (confirm_prompt.is_active())
-        confirm_prompt.draw();
-    else if (input_prompt.is_active())
-        input_prompt.draw();
-
-    wnoutrefresh(header.get_window());
-    wnoutrefresh(tab_bar.get_window());
-    if (sidebar_visible)
-    {
-        if (side_view == SideView::Search)
-            wnoutrefresh(search_panel.get_window());
-        else
-            wnoutrefresh(sidebar.get_window());
-    }
-    wnoutrefresh(line_number.get_window());
-
-    if (terminal_visible)
-        wnoutrefresh(terminal.get_window());
-
-    wnoutrefresh(statusbar.get_window());
-
-    if (command_line.is_active())
-    {
-        wnoutrefresh(editor.get_window());
-        wnoutrefresh(command_line.get_window());
-    }
-    else if (confirm_prompt.is_active())
-    {
-        wnoutrefresh(editor.get_window());
-        wnoutrefresh(confirm_prompt.get_window());
-    }
-    else if (input_prompt.is_active())
-    {
-        wnoutrefresh(editor.get_window());
-        wnoutrefresh(input_prompt.get_window());
-    }
-    else if (file_picker.is_active())
-    {
-        wnoutrefresh(editor.get_window());
-        wnoutrefresh(file_picker.get_window());
-    }
-    else if (buffer_picker.is_active())
-    {
-        wnoutrefresh(editor.get_window());
-        wnoutrefresh(buffer_picker.get_window());
-    }
-    else if (lsp_picker.is_active())
-    {
-        wnoutrefresh(editor.get_window());
-        wnoutrefresh(lsp_picker.get_window());
-    }
-    else if (completion_picker.is_active())
-    {
-        wnoutrefresh(editor.get_window());
-        wnoutrefresh(completion_picker.get_window());
-    }
-    else if (messages_panel.is_active())
-    {
-        // Editor underneath, help/messages on top (must not be covered).
-        wnoutrefresh(editor.get_window());
-        wnoutrefresh(messages_panel.get_window());
-    }
-    else if (focus == Focus::Terminal && terminal_visible)
-    {
-        wnoutrefresh(editor.get_window());
-        wnoutrefresh(terminal.get_window());
-    }
-    else
-    {
-        wnoutrefresh(editor.get_window());
-    }
-
-    doupdate();
+    mark_components_from_state();
+    render_paint();
 }

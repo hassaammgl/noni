@@ -58,6 +58,8 @@ public:
     void scroll_view(int delta);
     void follow_live();
 
+    [[nodiscard]] int poll_fd() const { return pty_.poll_fd(); }
+
 private:
     TerminalSessionConfig config_;
     PtySession pty_;

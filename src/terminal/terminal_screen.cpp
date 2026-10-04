@@ -47,6 +47,7 @@ void TerminalScreen::reset()
     saved_col_ = 0;
     wraparound_ = true;
     wrap_pending_ = false;
+    application_cursor_keys_ = false;
     title_.clear();
     scrollback_.clear();
     if (rows_ > 0 && cols_ > 0)

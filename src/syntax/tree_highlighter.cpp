@@ -100,6 +100,8 @@ void TreeHighlighter::invalidate_all()
     needs_sync_ = true;
     force_full_ = true;
     dirty_from_ = 0;
+    synced_vis_lo_ = 0;
+    synced_vis_hi_ = -1;
     pending_edits_.clear();
     cached_revision = 0;
     for (auto &lc : line_cache_)

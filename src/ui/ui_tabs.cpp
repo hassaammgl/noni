@@ -68,33 +68,41 @@ void UI::open_save_confirm(ConfirmIntent intent)
 
 bool UI::save_active_buffer()
 {
-    if (editor.get_buffer().get_buffer_path().empty())
+    Buffer &buf = editor.get_buffer();
+    if (buf.get_buffer_path().empty())
     {
         Messages::error("E32: No file name (use :w <path>)");
         return false;
     }
-
-    if (editor.get_buffer().has_load_error())
+    if (buf.has_load_error())
     {
         Messages::error(std::format(
             "E13: Cannot save — file was not loaded ({})",
-            editor.get_buffer().get_load_error()));
+            buf.get_load_error()));
         return false;
     }
 
-    if (!editor.get_buffer().save())
+    if (config.format_on_save && core.lsp().session_supports_formatting(buf))
     {
-        Messages::error("E212: Can't open file for writing");
-        return false;
+        const int id = core.lsp().request_formatting(buf);
+        if (id > 0)
+        {
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            while (std::chrono::steady_clock::now() < deadline)
+            {
+                core.lsp().pump();
+                if (auto fr = core.lsp().take_format_result())
+                {
+                    apply_lsp_format_edits(std::move(fr->edits), fr->utf16_pending);
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+        }
     }
 
-    statusbar.set_filename(core.buffers().active().display_name());
-    Messages::info(std::format("\"{}\" written", core.buffers().active().display_name()));
-    clear_recovery_for_buffer(editor.get_buffer());
-    core.scm().request_refresh();
-    core.lsp().notify_save(editor.get_buffer());
-    core.notify_buffer_saved(editor.get_buffer());
-    return true;
+    return write_buffer_to_disk();
 }
 
 void UI::finish_close_or_quit(ConfirmIntent intent, bool force)

@@ -22,6 +22,7 @@ void Sidebar::set_project_path(const fs::path &path)
     selected_index = 0;
     scroll_y = 0;
     expanded.clear();
+    mark_dirty();
 }
 
 void Sidebar::refresh()
@@ -31,16 +32,23 @@ void Sidebar::refresh()
     seen_version = 0;
     ds.scan_dirs_async();
     Logger::info("Sidebar refreshed");
+    mark_dirty();
 }
 
 void Sidebar::set_focused(bool value)
 {
+    if (focused == value)
+        return;
     focused = value;
+    mark_dirty();
 }
 
 void Sidebar::set_active_file(const fs::path &path)
 {
+    if (active_file == path)
+        return;
     active_file = path;
+    mark_dirty();
 }
 
 void Sidebar::reveal_path(const fs::path &path)
@@ -49,6 +57,7 @@ void Sidebar::reveal_path(const fs::path &path)
         return;
 
     sync_cache();
+    mark_dirty();
 
     std::error_code ec;
     fs::path current = fs::weakly_canonical(path, ec);

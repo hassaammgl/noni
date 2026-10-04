@@ -24,11 +24,13 @@ public:
     // Full invalidate (load, path change, undo/redo of multi-change txn).
     void invalidate_all();
 
-    // Bring cache up to date for this document. Cheap when clean.
+    // Bring cache up to date. vis_lo/vis_hi limit lexer work to the viewport (T7.4).
     void sync(
         const fs::path &path,
         const std::vector<std::string> &lines,
-        std::uint64_t revision);
+        std::uint64_t revision,
+        int vis_lo = 0,
+        int vis_hi = -1);
 
     const std::vector<SyntaxToken> &tokens_for_line(int line) const;
     bool using_tree_sitter() const;
@@ -54,7 +56,8 @@ private:
     void rehighlight_lexer_from(
         const std::vector<std::string> &lines,
         Language lang,
-        int from_line);
+        int from_line,
+        int until_line = -1);
     void apply_query();
     void clip_tokens(const std::vector<std::string> &lines);
     void resize_line_cache(std::size_t n);
@@ -67,6 +70,8 @@ private:
     bool needs_sync_ = true;
     bool force_full_ = true;
     int dirty_from_ = 0;
+    int synced_vis_lo_ = 0;
+    int synced_vis_hi_ = -1;
 
     std::uint64_t cached_revision = 0;
     std::uint64_t cached_grammar_gen = 0;

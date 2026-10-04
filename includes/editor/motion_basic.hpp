@@ -60,9 +60,10 @@ namespace Motion
         return cp == ' ' || cp == '\t' || cp == '\n' || cp == '\r' || cp == 0xA0;
     }
 
-    inline void set_preferred_display(Window &win, const std::string &line, int byte_col)
+    inline void set_preferred_display(Window &win, int line, int byte_col)
     {
-        win.preferred_column() = TextMetrics::byte_to_display(line, static_cast<std::size_t>(byte_col));
+        win.preferred_column() =
+            win.buffer().byte_to_display_cached(line, static_cast<std::size_t>(byte_col));
     }
 
     inline MotionResult left(Window &win)
@@ -73,7 +74,7 @@ namespace Motion
             return make_char_motion(c, c, lines);
         const auto &row = lines[static_cast<std::size_t>(c.line)];
         c.column = static_cast<int>(TextMetrics::prev_cp(row, static_cast<std::size_t>(c.column)));
-        set_preferred_display(win, row, c.column);
+        set_preferred_display(win, c.line, c.column);
         return make_char_motion(win.cursor(), c, lines);
     }
 
@@ -86,7 +87,7 @@ namespace Motion
         const auto &row = lines[static_cast<std::size_t>(c.line)];
         if (static_cast<std::size_t>(c.column) < row.size())
             c.column = static_cast<int>(TextMetrics::next_cp(row, static_cast<std::size_t>(c.column)));
-        set_preferred_display(win, row, c.column);
+        set_preferred_display(win, c.line, c.column);
         return make_char_motion(win.cursor(), c, lines);
     }
 
@@ -98,9 +99,8 @@ namespace Motion
             c.line--;
         if (!lines.empty())
         {
-            const auto &row = lines[static_cast<std::size_t>(c.line)];
             c.column = static_cast<int>(
-                TextMetrics::display_to_byte(row, win.preferred_column()));
+                win.buffer().display_to_byte_cached(c.line, win.preferred_column()));
         }
         c = clamp_cursor_to_lines(c, lines);
         return make_line_motion(win.cursor(), c, static_cast<int>(lines.size()));
@@ -114,9 +114,8 @@ namespace Motion
             c.line++;
         if (!lines.empty())
         {
-            const auto &row = lines[static_cast<std::size_t>(c.line)];
             c.column = static_cast<int>(
-                TextMetrics::display_to_byte(row, win.preferred_column()));
+                win.buffer().display_to_byte_cached(c.line, win.preferred_column()));
         }
         c = clamp_cursor_to_lines(c, lines);
         return make_line_motion(win.cursor(), c, static_cast<int>(lines.size()));

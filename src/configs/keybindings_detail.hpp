@@ -13,6 +13,20 @@
 
 namespace keybindings_detail
 {
+    // Locked keymap: engine owns Ctrl / Alt / F-keys / Space leader / Esc only.
+    inline bool engine_owns_token(const KeyToken &t)
+    {
+        if (t.ctrl || t.alt)
+            return true;
+        if (t.code == 27)
+            return true;
+        if (t.code == ' ' && !t.ctrl && !t.alt)
+            return true;
+        if (t.code >= KEY_F(1) && t.code <= KEY_F(12))
+            return true;
+        return false;
+    }
+
     inline std::string lower(std::string s)
     {
         for (char &c : s)

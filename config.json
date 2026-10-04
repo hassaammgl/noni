@@ -19,13 +19,23 @@
     "servers": [
       {
         "language": "cpp",
-        "command": ["clangd"],
-        "rootMarkers": ["compile_commands.json", ".git"]
+        "command": [
+          "clangd"
+        ],
+        "rootMarkers": [
+          "compile_commands.json",
+          ".git"
+        ]
       },
       {
         "language": "python",
-        "command": ["pylsp"],
-        "rootMarkers": ["pyproject.toml", ".git"]
+        "command": [
+          "pylsp"
+        ],
+        "rootMarkers": [
+          "pyproject.toml",
+          ".git"
+        ]
       }
     ]
   },
@@ -41,44 +51,39 @@
       "when": "editorFocus"
     },
     {
-      "key": "ctrl+w",
-      "command": "workbench.action.closeActiveEditor",
-      "when": "editorFocus && normalMode"
-    },
-    {
       "key": "ctrl+p",
-      "command": "noni.search.files",
-      "when": "editorFocus && normalMode || sidebarFocus || searchFocus"
-    },
-    {
-      "key": "ctrl+shift+f",
-      "command": "workbench.action.findInFiles",
-      "when": "editorFocus && normalMode || searchFocus || sidebarFocus"
-    },
-    {
-      "key": "space shift+f",
-      "command": "workbench.action.findInFiles",
-      "when": "editorFocus && normalMode || searchFocus || sidebarFocus"
+      "command": "workbench.action.quickOpen",
+      "when": "editorFocus"
     },
     {
       "key": "ctrl+b",
       "command": "workbench.action.toggleSidebarVisibility",
-      "when": "editorFocus && normalMode || sidebarFocus || searchFocus"
+      "when": "editorFocus"
     },
     {
       "key": "ctrl+t",
       "command": "workbench.action.terminal.toggle",
-      "when": "editorFocus && normalMode || terminalFocus || sidebarFocus || searchFocus"
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+z",
+      "command": "editor.action.undo",
+      "when": "editorFocus"
     },
     {
       "key": "ctrl+y",
       "command": "editor.action.redo",
-      "when": "editorFocus && normalMode"
+      "when": "editorFocus"
     },
     {
-      "key": "ctrl+v",
-      "command": "editor.action.clipboardPasteAction",
-      "when": "editorFocus && normalMode"
+      "key": "ctrl+f",
+      "command": "actions.find",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+g",
+      "command": "workbench.action.gotoLine",
+      "when": "editorFocus"
     },
     {
       "key": "ctrl+space",
@@ -86,229 +91,277 @@
       "when": "editorFocus"
     },
     {
-      "key": "ctrl+backslash",
-      "command": "workbench.action.splitEditorRight",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "ctrl+k s",
-      "command": "workbench.action.splitEditorDown",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "ctrl+k q",
-      "command": "workbench.action.closeActiveEditorGroup",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "ctrl+k h",
-      "command": "workbench.action.focusLeftGroup",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "ctrl+k l",
-      "command": "workbench.action.focusRightGroup",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "ctrl+k k",
-      "command": "workbench.action.focusAboveGroup",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "ctrl+k j",
-      "command": "workbench.action.focusBelowGroup",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "ctrl+k leftbracket",
-      "command": "workbench.action.decreaseViewWidth",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "ctrl+k rightbracket",
-      "command": "workbench.action.increaseViewWidth",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "ctrl+k underscore",
-      "command": "workbench.action.decreaseViewHeight",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "ctrl+k equals",
-      "command": "workbench.action.increaseViewHeight",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "space ;",
-      "command": "workbench.action.showAllEditors",
-      "when": "editorFocus && normalMode || sidebarFocus || searchFocus"
-    },
-    {
-      "key": "space o",
-      "command": "workbench.action.openWorkspace",
-      "when": "editorFocus && normalMode || sidebarFocus || searchFocus"
-    },
-    {
-      "key": "space .",
-      "command": "noni.explorer.revealActive",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "space e",
-      "command": "workbench.view.explorer",
-      "when": "editorFocus && normalMode || searchFocus"
-    },
-    {
-      "key": "space e",
-      "command": "noni.focus.editor",
-      "when": "sidebarFocus"
-    },
-    {
-      "key": "tab",
-      "command": "noni.focus.toggleSidebar",
-      "when": "editorFocus && normalMode || sidebarFocus"
-    },
-    {
-      "key": ":",
-      "command": "noni.command.open",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "g t",
-      "command": "workbench.action.nextEditor",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "g g",
-      "command": "editor.action.goToFileStart",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "g shift+t",
-      "command": "workbench.action.previousEditor",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "u",
-      "command": "editor.action.undo",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "space g r",
-      "command": "git.refresh",
-      "when": "editorFocus && normalMode || sidebarFocus"
-    },
-    {
-      "key": "space g s",
-      "command": "git.showStatus",
-      "when": "editorFocus && normalMode || sidebarFocus"
-    },
-    {
-      "key": "space g a",
-      "command": "git.stage",
-      "when": "editorFocus && normalMode || sidebarFocus"
-    },
-    {
-      "key": "space g u",
-      "command": "git.unstage",
-      "when": "editorFocus && normalMode || sidebarFocus"
-    },
-    {
-      "key": "space g x",
-      "command": "git.discard",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "space g d",
-      "command": "git.showDiff",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "space g f",
-      "command": "git.refreshDiff",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "space m s",
-      "command": "workbench.action.saveSession",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "space m r",
-      "command": "workbench.action.restoreSession",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "space l s",
-      "command": "lsp.showStatus",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "space l r",
-      "command": "lsp.restart",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "space l c",
-      "command": "editor.action.triggerSuggest",
-      "when": "editorFocus && normalMode"
+      "key": "f2",
+      "command": "editor.action.rename",
+      "when": "editorFocus"
     },
     {
       "key": "f12",
       "command": "editor.action.revealDefinition",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+/",
+      "command": "editor.action.commentLine",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+a",
+      "command": "editor.action.selectAll",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+c",
+      "command": "editor.action.clipboardCopyAction",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+x",
+      "command": "editor.action.clipboardCutAction",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+v",
+      "command": "editor.action.clipboardPasteAction",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+e",
+      "command": "editor.action.copyLinesDownAction",
+      "when": "editorFocus"
+    },
+    {
+      "key": "alt+j",
+      "command": "editor.action.moveLinesDownAction",
+      "when": "editorFocus"
+    },
+    {
+      "key": "alt+down",
+      "command": "editor.action.moveLinesDownAction",
+      "when": "editorFocus"
+    },
+    {
+      "key": "alt+k",
+      "command": "editor.action.moveLinesUpAction",
+      "when": "editorFocus"
+    },
+    {
+      "key": "alt+up",
+      "command": "editor.action.moveLinesUpAction",
+      "when": "editorFocus"
+    },
+    {
+      "key": "ctrl+d",
+      "command": "editor.action.deleteLines",
+      "when": "editorFocus && insertMode"
+    },
+    {
+      "key": "ctrl+d",
+      "command": "editor.action.halfPageDown",
       "when": "editorFocus && normalMode"
     },
     {
-      "key": "g d",
+      "key": "ctrl+u",
+      "command": "editor.action.halfPageUp",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+left",
+      "command": "workbench.action.focusLeftGroup",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+right",
+      "command": "workbench.action.focusRightGroup",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+up",
+      "command": "workbench.action.focusAboveGroup",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "ctrl+down",
+      "command": "workbench.action.focusBelowGroup",
+      "when": "editorFocus && normalMode"
+    },
+    {
+      "key": "space space",
+      "command": "workbench.action.quickOpen",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space f f",
+      "command": "workbench.action.quickOpen",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space f g",
+      "command": "workbench.action.findInFiles",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space f w",
+      "command": "noni.search.grepWord",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space f b",
+      "command": "workbench.action.showAllEditors",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space f r",
+      "command": "noni.search.recent",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space e",
+      "command": "workbench.action.toggleSidebarVisibility",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space o",
+      "command": "noni.focus.sidebar",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space b n",
+      "command": "workbench.action.nextEditor",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space b b",
+      "command": "workbench.action.previousEditor",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space b d",
+      "command": "workbench.action.closeActiveEditor",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space w",
+      "command": "workbench.action.files.save",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space q q",
+      "command": "workbench.action.quit",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space r n",
+      "command": "editor.action.rename",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space c a",
+      "command": "editor.action.quickFix",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space c f",
+      "command": "editor.action.formatDocument",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space l d",
       "command": "editor.action.revealDefinition",
-      "when": "editorFocus && normalMode"
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
     },
     {
-      "key": "g shift+d",
-      "command": "editor.action.revealDeclaration",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "g y",
-      "command": "editor.action.goToTypeDefinition",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "shift+f12",
+      "key": "space l r",
       "command": "editor.action.goToReferences",
-      "when": "editorFocus && normalMode"
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
     },
     {
-      "key": "g r",
-      "command": "editor.action.goToReferences",
-      "when": "editorFocus && normalMode"
-    },
-    {
-      "key": "space l o",
+      "key": "space l s",
       "command": "workbench.action.gotoSymbol",
-      "when": "editorFocus && normalMode"
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
     },
     {
       "key": "space l w",
       "command": "workbench.action.showAllSymbols",
-      "when": "editorFocus && normalMode"
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
     },
     {
-      "key": "f2",
-      "command": "editor.action.rename",
-      "when": "editorFocus && normalMode"
+      "key": "space l R",
+      "command": "lsp.restart",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
     },
     {
-      "key": "space l n",
-      "command": "editor.action.rename",
-      "when": "editorFocus && normalMode"
+      "key": "space l S",
+      "command": "lsp.showStatus",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
     },
     {
-      "key": "space l a",
-      "command": "editor.action.quickFix",
-      "when": "editorFocus && normalMode"
+      "key": "space x x",
+      "command": "noni.diagnostics.list",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space g s",
+      "command": "git.showStatus",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space g a",
+      "command": "git.stage",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space g u",
+      "command": "git.unstage",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space g x",
+      "command": "git.discard",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space g d",
+      "command": "git.showDiff",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space g f",
+      "command": "git.refreshDiff",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space g R",
+      "command": "git.refresh",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space g p",
+      "command": "git.previewHunk",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space t t",
+      "command": "workbench.action.terminal.toggle",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space s s",
+      "command": "workbench.action.restoreSession",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
+    },
+    {
+      "key": "space s w",
+      "command": "workbench.action.saveSession",
+      "when": "editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus"
     }
-  ]
+  ],
+  "formatOnSave": true,
+  "clipboard": {
+    "sync": true
+  },
+  "autosave": {
+    "mode": "afterDelay",
+    "delayMs": 1000
+  }
 }

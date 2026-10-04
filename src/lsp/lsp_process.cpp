@@ -96,7 +96,11 @@ bool LspProcess::start(const std::vector<std::string> &argv, const std::string &
     stdout_fd_ = out_pipe[0];
     pid_ = pid;
     running_ = true;
-    reader_ = std::thread([this]() { reader_loop(); });
+    {
+        const int flags = fcntl(stdout_fd_, F_GETFL, 0);
+        if (flags >= 0)
+            fcntl(stdout_fd_, F_SETFL, flags | O_NONBLOCK);
+    }
     Logger::info(std::format("LSP process started pid={} cmd={}", static_cast<int>(pid_), argv[0]));
     return true;
 }
@@ -105,10 +109,8 @@ void LspProcess::stop()
 {
     running_ = false;
 
-    // Terminate the child first: its exit closes the pipe write end, which is
-    // what unblocks the reader thread (close() of the read end from another
-    // thread does not wake a blocked read() on Linux). Bound the grace period
-    // so a server that ignores SIGTERM cannot hang shutdown.
+    // Terminate the child first: its exit closes the pipe write end.
+    // Bound the grace period so a server that ignores SIGTERM cannot hang shutdown.
     if (pid_ > 0)
     {
         kill(pid_, SIGTERM);
@@ -136,10 +138,6 @@ void LspProcess::stop()
         close(stdin_fd_);
         stdin_fd_ = -1;
     }
-    if (reader_.joinable())
-        reader_.join();
-    // Joined reader no longer touches stdout_fd_, so there is no concurrent
-    // access when we reset it here.
     if (stdout_fd_ >= 0)
     {
         close(stdout_fd_);

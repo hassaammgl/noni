@@ -46,9 +46,9 @@ void Editor::page_up()
         const auto &lines = tab->buffer().lines();
         if (!lines.empty())
         {
-            const auto &row = lines[static_cast<std::size_t>(tab->cursor().line)];
             tab->cursor().column = static_cast<int>(
-                TextMetrics::display_to_byte(row, tab->active_window().preferred_column()));
+                tab->buffer().display_to_byte_cached(
+                    tab->cursor().line, tab->active_window().preferred_column()));
         }
     }
     clamp_cursor();
@@ -72,9 +72,9 @@ void Editor::page_down()
         std::max(0, last - std::max(0, height - 1)),
         tab->scroll_y() + step);
     {
-        const auto &row = lines[static_cast<std::size_t>(tab->cursor().line)];
         tab->cursor().column = static_cast<int>(
-            TextMetrics::display_to_byte(row, tab->active_window().preferred_column()));
+            tab->buffer().display_to_byte_cached(
+                tab->cursor().line, tab->active_window().preferred_column()));
     }
     clamp_cursor();
     if (std::abs(from.line - tab->cursor().line) > 1)
@@ -94,9 +94,9 @@ void Editor::half_page_up()
         const auto &lines = tab->buffer().lines();
         if (!lines.empty())
         {
-            const auto &row = lines[static_cast<std::size_t>(tab->cursor().line)];
             tab->cursor().column = static_cast<int>(
-                TextMetrics::display_to_byte(row, tab->active_window().preferred_column()));
+                tab->buffer().display_to_byte_cached(
+                    tab->cursor().line, tab->active_window().preferred_column()));
         }
     }
     clamp_cursor();
@@ -120,9 +120,9 @@ void Editor::half_page_down()
         std::max(0, last - std::max(0, height - 1)),
         tab->scroll_y() + step);
     {
-        const auto &row = lines[static_cast<std::size_t>(tab->cursor().line)];
         tab->cursor().column = static_cast<int>(
-            TextMetrics::display_to_byte(row, tab->active_window().preferred_column()));
+            tab->buffer().display_to_byte_cached(
+                tab->cursor().line, tab->active_window().preferred_column()));
     }
     clamp_cursor();
     if (std::abs(from.line - tab->cursor().line) > 1)

@@ -20,6 +20,7 @@ enum class Focus
     Terminal,
     Search,
     Completion,
+    Hover,
 };
 
 enum class SideView

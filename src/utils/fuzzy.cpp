@@ -2,6 +2,17 @@
 
 using namespace fuzzy_detail;
 
+namespace
+{
+    std::string_view filename_view(std::string_view path)
+    {
+        const auto slash = path.find_last_of('/');
+        if (slash == std::string_view::npos)
+            return path;
+        return path.substr(slash + 1);
+    }
+}
+
 namespace Fuzzy
 {
     int score(std::string_view text, std::string_view query)
@@ -61,27 +72,31 @@ namespace Fuzzy
         std::vector<FuzzyMatch> out;
         out.reserve(std::min(files.size(), limit * 2));
 
+        const std::string root_s = root.empty() ? std::string{} : root.string();
+
         for (const auto &path : files)
         {
-            std::string relative = path.string();
-            if (!root.empty())
-            {
-                std::error_code ec;
-                auto rel = fs::relative(path, root, ec);
-                if (!ec)
-                    relative = rel.string();
-            }
-
-            const std::string name = path.filename().string();
+            // Score against native path bytes — avoid filename()/relative allocs until hit.
+            const std::string &native = path.native();
+            const std::string_view name = filename_view(native);
             const int name_score = score(name, query);
-            const int path_score = score(relative, query);
+            const int path_score = score(native, query);
             const int best = std::max(name_score, path_score);
             if (best < 0)
                 continue;
 
             FuzzyMatch m;
             m.path = path;
-            m.display = relative;
+            if (!root_s.empty() && native.size() > root_s.size() &&
+                native.compare(0, root_s.size(), root_s) == 0 &&
+                (native.size() == root_s.size() || native[root_s.size()] == '/'))
+            {
+                const std::size_t off =
+                    root_s.size() + (native.size() > root_s.size() ? 1 : 0);
+                m.display.assign(native.data() + off, native.size() - off);
+            }
+            else
+                m.display = native;
             m.score = best + (name_score > 0 ? 5 : 0);
             out.push_back(std::move(m));
         }
@@ -97,4 +112,3 @@ namespace Fuzzy
         return out;
     }
 }
-

@@ -17,6 +17,7 @@
 #include <components/statusbar.hpp>
 #include <components/tab_bar.hpp>
 #include <components/terminal_panel.hpp>
+#include <components/hover_popup.hpp>
 #include <configs/config.hpp>
 #include <configs/keybindings.hpp>
 #include <editor/buffer_manager.hpp>
@@ -57,6 +58,7 @@ private:
     ConfirmPrompt confirm_prompt;
     InputPrompt input_prompt;
     TerminalPanel terminal;
+    HoverPopup hover_popup_;
     EditorCore core;
     CommandRegistry commands;
     ExtensionManager extensions;
@@ -91,6 +93,26 @@ private:
     std::optional<ScmFileDiff> scm_diff_cache_;
     fs::path scm_diff_cache_path_;
     std::uint64_t scm_diff_cache_gen_ = 0;
+
+    std::chrono::steady_clock::time_point last_autosave_tick_{};
+    std::chrono::steady_clock::time_point dirty_since_{};
+    bool dirty_clock_armed_ = false;
+    bool needs_render_ = true;
+
+    // T7.2: last painted snapshot — mark component dirty on delta.
+    std::uint64_t painted_buf_rev_ = 0;
+    Cursor painted_cursor_{};
+    int painted_scroll_y_ = -1;
+    int painted_scroll_x_ = -1;
+    EditorMode painted_mode_ = EditorMode::Normal;
+    Focus painted_focus_ = Focus::Editor;
+    std::uint64_t painted_echo_seq_ = 0;
+    std::uint64_t painted_diag_gen_ = 0;
+    std::uint64_t painted_scm_gen_ = 0;
+    bool painted_sidebar_visible_ = true;
+    SideView painted_side_view_ = SideView::Explorer;
+    bool painted_terminal_visible_ = false;
+    bool force_paint_all_ = true;
 
     std::vector<RecoveryEntry> pending_recovery_;
     std::chrono::steady_clock::time_point last_recovery_tick_{};

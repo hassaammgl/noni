@@ -71,7 +71,76 @@ bool Editor::handle_normal_prefix(int key)
             on_prev_tab_();
             return true;
         }
+        if (key == 'd' && on_goto_definition_)
+        {
+            on_goto_definition_();
+            return true;
+        }
+        if (key == 'D' && on_goto_declaration_)
+        {
+            on_goto_declaration_();
+            return true;
+        }
+        if (key == 'y' && on_goto_type_definition_)
+        {
+            on_goto_type_definition_();
+            return true;
+        }
+        if (key == 'r' && on_goto_references_)
+        {
+            on_goto_references_();
+            return true;
+        }
+        if (key == 'i' && last_insert_valid_)
+        {
+            record_jump_from_here();
+            jump_to(last_insert_buffer_, last_insert_);
+            enter_insert_mode();
+            return true;
+        }
+        if (key == 'c')
+        {
+            pending_gc_ = true;
+            return true;
+        }
         clear_pending();
+        return true;
+    }
+
+    if (pending_gc_)
+    {
+        pending_gc_ = false;
+        if (key == 'c')
+        {
+            cmd_toggle_comment();
+            return true;
+        }
+        return true;
+    }
+
+    if (pending_bracket_)
+    {
+        pending_bracket_ = false;
+        const bool close = pending_bracket_close_;
+        pending_bracket_close_ = false;
+        if (key == 'd')
+        {
+            (void)jump_diagnostic(close); // ]d = next, [d = prev
+            return true;
+        }
+        return true;
+    }
+
+    if (key == '[')
+    {
+        pending_bracket_ = true;
+        pending_bracket_close_ = false;
+        return true;
+    }
+    if (key == ']')
+    {
+        pending_bracket_ = true;
+        pending_bracket_close_ = true;
         return true;
     }
 

@@ -21,9 +21,15 @@ namespace
         return MiniJson::Value{std::move(o)};
     }
 
-    std::string frame(const std::string &body)
+    std::string frame(std::string body)
     {
-        return std::format("Content-Length: {}\r\n\r\n{}", body.size(), body);
+        std::string out;
+        out.reserve(body.size() + 32);
+        out.append("Content-Length: ");
+        out.append(std::to_string(body.size()));
+        out.append("\r\n\r\n");
+        out.append(body);
+        return out;
     }
 }
 

@@ -64,6 +64,7 @@ void Buffer::load()
     content_id = 0;
     saved_content_id = 0;
     next_content_id = 1;
+    reset_line_metrics();
     syntax_engine_.invalidate_all();
 
     if (buffer_path.empty())
@@ -152,9 +153,9 @@ void Buffer::bump_revision()
     ++revision;
 }
 
-void Buffer::sync_syntax()
+void Buffer::sync_syntax(int vis_lo, int vis_hi)
 {
-    syntax_engine_.sync(buffer_path, content, revision);
+    syntax_engine_.sync(buffer_path, content, revision, vis_lo, vis_hi);
 }
 
 void Buffer::ensure_line_exists(int line)

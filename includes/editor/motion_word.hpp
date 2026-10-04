@@ -58,7 +58,7 @@ namespace Motion
             c.column = 0;
         }
 
-        set_preferred_display(win, lines[static_cast<std::size_t>(c.line)], c.column);
+        set_preferred_display(win, c.line, c.column);
         return make_char_motion(win.cursor(), c, lines);
     }
 

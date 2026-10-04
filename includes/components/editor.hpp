@@ -9,6 +9,8 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 enum class PendingOperator
 {
@@ -29,10 +31,25 @@ private:
     bool pending_jump_mark = false;
     bool pending_register = false;
     PendingOperator pending_op = PendingOperator::None;
+    bool last_insert_valid_ = false;
+    std::uintptr_t last_insert_buffer_ = 0;
+    Cursor last_insert_{.line = 0, .column = 0};
+    bool pending_gc_ = false; // after `gc` waiting for second `c` (gcc)
+    bool pending_bracket_ = false; // `[` / `]` diagnostic jump
+    bool pending_bracket_close_ = false; // true if `]`
+    bool clipboard_sync_ = true;
     std::function<void()> on_next_tab_;
     std::function<void()> on_prev_tab_;
     std::function<void()> on_search_forward_;
     std::function<void()> on_search_backward_;
+    std::function<void()> on_command_open_;
+    std::function<void()> on_goto_definition_;
+    std::function<void()> on_goto_declaration_;
+    std::function<void()> on_goto_type_definition_;
+    std::function<void()> on_goto_references_;
+    std::function<void()> on_hover_;
+    // Reused across draws to avoid per-frame layout vector alloc (T7.3).
+    std::vector<std::pair<Window *, WindowRect>> rects_cache_;
 
     Window &win();
     const Window &win() const;
@@ -87,6 +104,13 @@ public:
 
     void set_tab_switch_handlers(std::function<void()> next, std::function<void()> prev);
     void set_search_handlers(std::function<void()> forward, std::function<void()> backward);
+    void set_command_open_handler(std::function<void()> open);
+    void set_lsp_nav_handlers(
+        std::function<void()> definition,
+        std::function<void()> declaration,
+        std::function<void()> type_definition,
+        std::function<void()> references);
+    void set_hover_handler(std::function<void()> hover);
 
     Cursor get_cursor() const;
     EditorMode get_mode() const;
@@ -100,6 +124,19 @@ public:
     void record_jump_from_here();
     bool undo();
     bool redo();
+
+    void cmd_half_page_up() { half_page_up(); }
+    void cmd_half_page_down() { half_page_down(); }
+    void cmd_select_all();
+    void cmd_delete_line();
+    void cmd_copy_selection_or_line();
+    void cmd_cut_selection_or_line();
+    void cmd_toggle_comment();
+    void cmd_copy_lines_down();
+    void cmd_move_lines_down();
+    void cmd_move_lines_up();
+    bool jump_diagnostic(bool next);
+    void set_clipboard_sync(bool enabled) { clipboard_sync_ = enabled; }
 
     Buffer &get_buffer();
     const Buffer &get_buffer() const;
@@ -116,4 +153,5 @@ public:
 
     void set_cursor_position(int line, int column);
     int get_scroll_y() const;
+    int get_scroll_x() const;
 };

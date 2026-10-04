@@ -18,7 +18,7 @@ namespace editor_core_detail
             w.preferred_column() = 0;
             return;
         }
-        w.preferred_column() = TextMetrics::byte_to_display(
-            lines[static_cast<std::size_t>(c.line)], static_cast<std::size_t>(c.column));
+        w.preferred_column() = w.buffer().byte_to_display_cached(
+            c.line, static_cast<std::size_t>(c.column));
     }
 }

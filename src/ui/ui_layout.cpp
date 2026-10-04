@@ -37,6 +37,9 @@ void UI::update_statusbar_mode()
     case Focus::Terminal:
         statusbar.set_mode("TERMINAL");
         break;
+    case Focus::Hover:
+        statusbar.set_mode("HOVER");
+        break;
     case Focus::Editor:
         statusbar.set_mode(editor.get_mode_label());
         break;
@@ -64,6 +67,8 @@ void UI::resize()
     wbkgd(stdscr, COLOR_PAIR(Theme::Editor));
     erase();
     refresh();
+    mark_all_components_dirty();
+    needs_render_ = true;
 
     const int sb = effective_sidebar_width();
 
@@ -144,6 +149,14 @@ void UI::resize()
         if (comp_x + comp_w > sb + editor_pane_width)
             comp_x = std::max(sb, sb + editor_pane_width - comp_w);
         completion_picker.resize(comp_h, comp_w, comp_y, comp_x);
+    }
+
+    {
+        const int hover_h = std::min(14, std::max(6, editor_height / 2));
+        const int hover_w = std::min(60, std::max(30, editor_width - 4));
+        const int hover_y = editor_y + 1;
+        const int hover_x = editor_x + 2;
+        hover_popup_.resize(hover_h, hover_w, hover_y, hover_x);
     }
 
     const int status_y = height - bottom_rows;

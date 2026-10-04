@@ -1,4 +1,5 @@
 #include <utils/async.hpp>
+#include <utils/event_wake.hpp>
 
 Background &Background::instance()
 {
@@ -64,7 +65,6 @@ void Background::post(Job job)
         std::lock_guard lock(mu);
         if (!started)
         {
-            // Fall back to sync if pool not up yet.
             job();
             return;
         }
@@ -98,7 +98,9 @@ void Background::worker_loop()
         }
         catch (...)
         {
-            // Never let a worker die from a job exception.
         }
+
+        if (EventWake *w = EventWake::ui())
+            w->notify();
     }
 }

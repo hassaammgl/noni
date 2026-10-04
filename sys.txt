@@ -1,4 +1,6 @@
-LAST VERIFIED AGAINST CODE: 2026-09-21
+LAST VERIFIED AGAINST CODE: 2026-09-26 (T8)
+Note: T2 split moved many UI methods out of ui.cpp; old "ui.cpp:NNNN" line refs elsewhere
+are approximate. Authoritative key/command lists: PART T / PART U (regenerated T8).
 
 NONI — COMPLETE SYSTEM GUIDE (sys.txt)
 ======================================
@@ -31,8 +33,11 @@ PART B — USER KO KYA MILTA HAI? (FEATURES)
    - Motions/operators: src/components/editor.cpp handle_normal_input / handle_visual_input / handle_insert_input
    - Undo/redo: Buffer undo_stack (kMaxUndo=256, includes/editor/buffer.hpp)
    - Marks (MarkTable), registers (RegisterFile), jumps (JumpList) — EditorCore members
+   - Comment toggle: gcc / Visual gc / ctrl+/ (CommentTokens by Language)
+   - Move/copy lines: alt+j/k/up/down, ctrl+e
+   - Clipboard write: Clipboard::write (wl-copy→xclip→xsel→OSC52) when clipboard.sync
    - Multi-cursor: code me nahi
-   - UTF-8 display + LSP UTF-16: TextMetrics (includes/utils/text_metrics.hpp)
+   - UTF-8 display + LSP UTF-16: TextMetrics; Buffer caches per-line display width + hot-line byte→display (T7.3)
 
 2) BUFFERS / TABS / SPLITS
    - BufferManager owns unique_ptr<Buffer> + EditorTab vector
@@ -43,7 +48,7 @@ PART B — USER KO KYA MILTA HAI? (FEATURES)
    - Workspace::detect_root (git root first, else marker walk) — src/workspace/workspace.cpp
    - Sidebar + DirScanner async tree
    - FilePicker fuzzy (FileIndex) + RecentFiles
-   - BufferPicker (Space ;)
+   - BufferPicker (Space f b)
 
 4) SEARCH
    - In-buffer: / ? n N → BufferSearchState (src/editor/buffer_search.cpp)
@@ -59,6 +64,7 @@ PART B — USER KO KYA MILTA HAI? (FEATURES)
    - config.json lsp.servers[] → LspService sessions
    - LspInstaller pip/npm/curl/go into user dir
    - Completion, definition/declaration/type/references, symbols, rename, code actions
+   - Hover (K → HoverPopup), formatting + formatOnSave (2s), [d]/]d diagnostics, Space x x picker
    - :lsp install picker
 
 7) GIT / SCM
@@ -71,6 +77,7 @@ PART B — USER KO KYA MILTA HAI? (FEATURES)
 9) SESSION / CRASH
    - <workspace>/.noni/session.json (SessionStore)
    - <workspace>/.noni/recovery/<id>.txt + <id>.meta.json (RecoveryStore)
+   - autosave.afterDelay (default 1000ms; no formatOnSave)
 
 10) HELP / MESSAGES / LOGS
    - :help HelpDocs::build
@@ -154,7 +161,7 @@ Async: Background pool 2 workers (UI ctor: Background::instance().start(2), src/
 PART F — INPUT PIPELINE (key dabane pe kya hota hai)
 ################################################################
 
-  ncurses get_wch (T1.7; timeout 50 ms → ERR = no key, Prefix survive)
+  ncurses get_wch (T1.7; timeout 0 + poll T7.1 → ERR = no key, Prefix survive)
        │
        ▼
   UI::handle_inputs (src/ui/ui_input.cpp)
@@ -233,13 +240,13 @@ Pickers: FilePicker (FileIndex), BufferPicker.
 -------------------------------------------------------------------
 G8. TERMINAL
 -------------------------------------------------------------------
-PtySession forkpty + reader thread. TerminalSession::pump on main. Leave: Ctrl+] (29) or ctrl+t toggle. Esc forwarded to PTY (T1.4).
+PtySession forkpty; no reader thread (T7.1) — pump_readable on main after poll. Leave: Ctrl+] (29) or ctrl+t toggle. Esc → PTY (T1.4).
 
 -------------------------------------------------------------------
 G9. SESSION / RECOVERY
 -------------------------------------------------------------------
 SessionStore save/load. RecoveryStore write_snapshot every render if dirty ≥2s (tick_recovery_snapshots).
-space m s / space m r commands.
+space s s restore / space s w save session (T5).
 
 -------------------------------------------------------------------
 G10. CONFIG / KEYS / COMMANDS
@@ -300,15 +307,14 @@ User data dirs (code hardcoded $HOME/.local/share/noni/… ; XDG_DATA_HOME env r
 PART I — MAIN LOOP (har frame)
 ################################################################
 
-UI::run (src/ui/ui.cpp:2718):
-  while running:
-    file_picker.poll()
-    search_panel.poll()
-    terminal.poll()
-    poll_fs_events()
-    sidebar.poll() (optional reveal_path)
-    render()          // scm sync, recovery tick, lsp.pump, poll completion/lsp, draw, doupdate
-    handle_inputs()   // get_wch timeout 50ms; ERR → return, Prefix persist; Unicode → insert_focused_utf8
+UI::run (src/ui/ui_loop.cpp) — poll()-based (T7.1):
+  EventWake (eventfd/pipe): Background job done + SIGWINCH
+  poll fds: stdin, wake, FsWatcher inotify, PTY master, LSP stdout(s)
+  timeout: only timers (autosave, recovery snapshot if dirty, explorer debounce)
+  get_wch timeout(0) after poll says stdin ready
+  render when needs_render_ (events/timers/input); not every 50ms tick
+  PTY/LSP: no reader threads — pump_readable() on main after poll
+  per-frame still: file_picker/search/terminal/fs/sidebar poll → render → handle_inputs
 
 ################################################################
 PART J — KEYS & BINDINGS (summary)
@@ -318,7 +324,7 @@ TWO LAYERS:
   1) config.json keybindings[] → CommandId  (C++ defaults empty)
   2) Hardcoded modal/panel keys → editor.cpp / sidebar.cpp / pickers / …
 
-When flags: UI::when_context() (ui.cpp:548). Leader (Space) sirf EditorNormal / EditorVisual / Sidebar / SearchResults (command.hpp:115).
+When flags: UI::when_context() (ui_sidebar.cpp). Leader (Space) sirf EditorNormal / EditorVisual / Sidebar / SearchResults (command.hpp context_allows_leader).
 
 Chord Prefix: koi timeout nahi. Esc (config → noni.mode.normal) + clear_chord on many focus changes.
 
@@ -630,14 +636,15 @@ src/utils/args.cpp | parse argv | Args | same | logger
 includes/utils/cursor.hpp | line+byte cursor | Cursor | data | HEADER-ONLY
 includes/utils/str.hpp | string helpers | ns StrUtils | trim/split/join/… |
 src/utils/str.cpp | impl | StrUtils | same |
-includes/utils/clipboard.hpp | system clipboard read | ns Clipboard | read only (no write API) |
-src/utils/clipboard.cpp | wl-paste/xclip/xsel | Clipboard | read | logger
+includes/utils/clipboard.hpp | system clipboard | ns Clipboard | read; write; write_osc52 |
+src/utils/clipboard.cpp | wl-paste/copy → xclip → xsel; write fallback OSC52 | Clipboard | read write | logger
 includes/utils/fuzzy.hpp | fuzzy + FileIndex | FuzzyMatch ns Fuzzy FileIndex | score filter rebuild_async |
 src/utils/fuzzy.cpp | fuzzy + indexer | Fuzzy, FileIndex | same | async, logger
 includes/utils/text_search.hpp | workspace grep | TextMatch TextSearchOptions TextSearch | search_async results |
 src/utils/text_search.cpp | async grep | TextSearch | same | async, logger, regex
 includes/utils/text_metrics.hpp | UTF-8 / display / UTF-16 | ns TextMetrics | decode byte↔display byte↔utf16 |
 src/utils/text_metrics.cpp | widths | TextMetrics | remaining | cwchar
+Buffer (T7.3) | line_disp_width_ + metrics_hot_prefix_ | byte_to_display_cached / display_to_byte_cached / line_display_width_cached; invalidate on TextChange
 includes/utils/async.hpp | 2-worker job pool | Background | instance start post next_token |
 src/utils/async.cpp | thread pool | Background | same |
 includes/utils/fs_watcher.hpp | inotify | FsEventKind FsEvent FsWatcher | watch poll set_workspace |
@@ -713,14 +720,14 @@ Sidebar (sidebar.hpp / .cpp)
 Terminal stack
   TerminalPanel owns TerminalSession (main draw/input; poll pumps).
   TerminalSession owns PtySession, TerminalScreen, VtParser (main pump).
-  PtySession: master fd, child pid, reader std::thread, out_buf under out_mu.
+  PtySession: master fd, child pid, out_buf (main-thread only, T7.6).
   VtParser / TerminalScreen: main during pump.
 
 LspService / LspSession / LspProcess
-  LspService: mu_; sessions_ unique_ptr map; documents_ by Buffer*; ready_* optionals (lsp_service.hpp:147+).
+  LspService: mu_; sessions_ unique_ptr map; documents_ by Buffer*; ready_* optionals.
   LspSession: LspProcess process_, LspJsonRpc rpc_, write_mu_, pending_opens_, initialize_id_;
     owner LspService* non-owning. state_ atomic LspSessionState.
-  LspProcess: pipes, reader thread, out_mu_/out_buf_. pump on main take_stdout.
+  LspProcess: pipes, out_buf_ main-thread (T7.6, no reader thread / out_mu). pump_readable on main.
 
 LspInstaller — static class. Status map + queue under g_mu. Jobs → Background.
   user_dir: $HOME/.local/share/noni/lsp → <ws>/.noni/lsp → /tmp/noni-lsp-<uid>
@@ -860,68 +867,85 @@ lsp_installer.hpp, extension_context.cpp, builtin_hello.cpp, pty_session.cpp.
 PART T — KEYBINDINGS COMPLETE TABLE
 ################################################################
 
-T1) config.json keybindings[]  (config.json:32-313)
+T1) config.json keybindings[] — LOCKED KEYMAP v1 (T5/T8 regenerate). Backup: config.json.bak.
 First matching binding in load order wins (KeybindingEngine::resolve_pending).
+Leader when = editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+  (SearchText still blocks Space via context_allows_leader / InputContext).
 
-chord | when | command id
-escape | "" (always) | noni.mode.normal
-ctrl+s | editorFocus | workbench.action.files.save
-ctrl+w | editorFocus && normalMode | workbench.action.closeActiveEditor
-ctrl+p | editorFocus && normalMode || sidebarFocus || searchFocus | noni.search.files
-ctrl+shift+f | editorFocus && normalMode || searchFocus || sidebarFocus | workbench.action.findInFiles
-space shift+f | same | workbench.action.findInFiles
-ctrl+b | editorFocus && normalMode || sidebarFocus || searchFocus | workbench.action.toggleSidebarVisibility
-ctrl+t | editorFocus && normalMode || terminalFocus || sidebarFocus || searchFocus | workbench.action.terminal.toggle
-ctrl+y | editorFocus && normalMode | editor.action.redo
-ctrl+v | editorFocus && normalMode | editor.action.clipboardPasteAction
-ctrl+space | editorFocus | editor.action.triggerSuggest
-ctrl+backslash | editorFocus && normalMode | workbench.action.splitEditorRight
-ctrl+k s | editorFocus && normalMode | workbench.action.splitEditorDown
-ctrl+k q | editorFocus && normalMode | workbench.action.closeActiveEditorGroup
-ctrl+k h | editorFocus && normalMode | workbench.action.focusLeftGroup
-ctrl+k l | editorFocus && normalMode | workbench.action.focusRightGroup
-ctrl+k k | editorFocus && normalMode | workbench.action.focusAboveGroup
-ctrl+k j | editorFocus && normalMode | workbench.action.focusBelowGroup
-ctrl+k leftbracket | editorFocus && normalMode | workbench.action.decreaseViewWidth
-ctrl+k rightbracket | editorFocus && normalMode | workbench.action.increaseViewWidth
-ctrl+k underscore | editorFocus && normalMode | workbench.action.decreaseViewHeight
-ctrl+k equals | editorFocus && normalMode | workbench.action.increaseViewHeight
-space ; | editorFocus && normalMode || sidebarFocus || searchFocus | workbench.action.showAllEditors
-space o | editorFocus && normalMode || sidebarFocus || searchFocus | workbench.action.openWorkspace
-space . | editorFocus && normalMode | noni.explorer.revealActive
-space e | editorFocus && normalMode || searchFocus | workbench.view.explorer
-space e | sidebarFocus | noni.focus.editor
-tab | editorFocus && normalMode || sidebarFocus | noni.focus.toggleSidebar
-: | editorFocus && normalMode | noni.command.open
-g t | editorFocus && normalMode | workbench.action.nextEditor
-g g | editorFocus && normalMode | editor.action.goToFileStart
-g shift+t | editorFocus && normalMode | workbench.action.previousEditor
-u | editorFocus && normalMode | editor.action.undo
-space g r | editorFocus && normalMode || sidebarFocus | git.refresh
-space g s | editorFocus && normalMode || sidebarFocus | git.showStatus
-space g a | editorFocus && normalMode || sidebarFocus | git.stage
-space g u | editorFocus && normalMode || sidebarFocus | git.unstage
-space g x | editorFocus && normalMode | git.discard
-space g d | editorFocus && normalMode | git.showDiff
-space g f | editorFocus && normalMode | git.refreshDiff
-space m s | editorFocus && normalMode | workbench.action.saveSession
-space m r | editorFocus && normalMode | workbench.action.restoreSession
-space l s | editorFocus && normalMode | lsp.showStatus
-space l r | editorFocus && normalMode | lsp.restart
-space l c | editorFocus && normalMode | editor.action.triggerSuggest
-f12 | editorFocus && normalMode | editor.action.revealDefinition
-g d | editorFocus && normalMode | editor.action.revealDefinition
-g shift+d | editorFocus && normalMode | editor.action.revealDeclaration
-g y | editorFocus && normalMode | editor.action.goToTypeDefinition
-shift+f12 | editorFocus && normalMode | editor.action.goToReferences
-g r | editorFocus && normalMode | editor.action.goToReferences
-space l o | editorFocus && normalMode | workbench.action.gotoSymbol
-space l w | editorFocus && normalMode | workbench.action.showAllSymbols
-f2 | editorFocus && normalMode | editor.action.rename
-space l n | editorFocus && normalMode | editor.action.rename
-space l a | editorFocus && normalMode | editor.action.quickFix
+Total bindings: 63. Feature keys: formatOnSave=True, clipboard.sync=True, autosave={'mode': 'afterDelay', 'delayMs': 1000}.
 
-C++ defaults empty: KeybindingEngine::load copies config.keybindings (keybindings.cpp:109-127).
+key | command | when
+escape | noni.mode.normal | 
+ctrl+s | workbench.action.files.save | editorFocus
+ctrl+p | workbench.action.quickOpen | editorFocus
+ctrl+b | workbench.action.toggleSidebarVisibility | editorFocus
+ctrl+t | workbench.action.terminal.toggle | editorFocus
+ctrl+z | editor.action.undo | editorFocus
+ctrl+y | editor.action.redo | editorFocus
+ctrl+f | actions.find | editorFocus
+ctrl+g | workbench.action.gotoLine | editorFocus
+ctrl+space | editor.action.triggerSuggest | editorFocus
+f2 | editor.action.rename | editorFocus
+f12 | editor.action.revealDefinition | editorFocus
+ctrl+/ | editor.action.commentLine | editorFocus
+ctrl+a | editor.action.selectAll | editorFocus
+ctrl+c | editor.action.clipboardCopyAction | editorFocus
+ctrl+x | editor.action.clipboardCutAction | editorFocus
+ctrl+v | editor.action.clipboardPasteAction | editorFocus
+ctrl+e | editor.action.copyLinesDownAction | editorFocus
+alt+j | editor.action.moveLinesDownAction | editorFocus
+alt+down | editor.action.moveLinesDownAction | editorFocus
+alt+k | editor.action.moveLinesUpAction | editorFocus
+alt+up | editor.action.moveLinesUpAction | editorFocus
+ctrl+d | editor.action.deleteLines | editorFocus && insertMode
+ctrl+d | editor.action.halfPageDown | editorFocus && normalMode
+ctrl+u | editor.action.halfPageUp | editorFocus && normalMode
+ctrl+left | workbench.action.focusLeftGroup | editorFocus && normalMode
+ctrl+right | workbench.action.focusRightGroup | editorFocus && normalMode
+ctrl+up | workbench.action.focusAboveGroup | editorFocus && normalMode
+ctrl+down | workbench.action.focusBelowGroup | editorFocus && normalMode
+space space | workbench.action.quickOpen | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space f f | workbench.action.quickOpen | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space f g | workbench.action.findInFiles | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space f w | noni.search.grepWord | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space f b | workbench.action.showAllEditors | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space f r | noni.search.recent | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space e | workbench.action.toggleSidebarVisibility | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space o | noni.focus.sidebar | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space b n | workbench.action.nextEditor | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space b b | workbench.action.previousEditor | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space b d | workbench.action.closeActiveEditor | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space w | workbench.action.files.save | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space q q | workbench.action.quit | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space r n | editor.action.rename | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space c a | editor.action.quickFix | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space c f | editor.action.formatDocument | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space l d | editor.action.revealDefinition | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space l r | editor.action.goToReferences | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space l s | workbench.action.gotoSymbol | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space l w | workbench.action.showAllSymbols | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space l R | lsp.restart | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space l S | lsp.showStatus | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space x x | noni.diagnostics.list | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space g s | git.showStatus | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space g a | git.stage | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space g u | git.unstage | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space g x | git.discard | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space g d | git.showDiff | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space g f | git.refreshDiff | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space g R | git.refresh | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space g p | git.previewHunk | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space t t | workbench.action.terminal.toggle | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space s s | workbench.action.restoreSession | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+space s w | workbench.action.saveSession | editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus
+
+HATAO (not in config): ctrl+k chords, tab sidebar, ctrl+shift+f, shift+f12, space shift+f,
+  space m…, space w window, space o openWorkspace (space o = sidebar focus), g*/u engine steal (T4).
+PHASE 5 placeholders (Messages only): noni.search.grepWord, git.previewHunk.
+Vim layer (editor_* .cpp, not engine): hjkl w b 0 $ gg G i a o O x dd yy p u ctrl+r v V / n N :
+  gd gD gi gy gr K [d ]d gcc gc H/L gt/gT Visual <> indent; prefixes g u m ' " [ ] d/c/y.
+Insert jk = Esc. Engine owns ctrl/alt/F/Space/Esc in EditorNormal/Visual (T4).
+New ids: ui_commands_keymap.cpp + editor_cmds*.cpp. Diagnose unbound/unknown at startup.
 
 -------------------------------------------------------------------
 T2) KeybindingEngine chord parsing + when-flags
@@ -982,7 +1006,7 @@ when_matches (keybindings.cpp:303-342)
   token matches as whole word in " " + context + " "
   negation / ! nahi
 
-Flags SET only in UI::when_context() (ui.cpp:548-590):
+Flags SET only in UI::when_context() (ui_sidebar.cpp):
 
 flag | set when
 editorFocus | focus == Focus::Editor
@@ -1011,8 +1035,9 @@ State: KeybindingEngine::pending vector (keybindings.hpp:59). Chord TIMEOUT nahi
 
 Related timers (Prefix ke liye nahi):
   set_escdelay(config.esc_delay_ms) ui_init.cpp — ncurses Esc vs CSI
-  timeout(50) ui_init.cpp — getch ERR after 50ms so UI refresh; handle_inputs ERR pe return WITHOUT clear_chord → Prefix idle pe persist
+  timeout(50) ui_init.cpp — REMOVED T7.1; now timeout(0) + poll() wait
   Esc-peek timeout(esc_delay_ms) ui_input.cpp — Alt composition only; Prefix chord timeout nahi
+  poll() ui_loop.cpp — stdin/wake/inotify/PTY/LSP; timer timeout for autosave/recovery/explorer
 
 Reset pending:
   full match → pending.clear() (keybindings.cpp:375)
@@ -1020,18 +1045,19 @@ Reset pending:
   literal context that would become Prefix → force Unmatched + clear (427-430)
   KeybindingEngine::clear_chord() (159-162) — focus changes, command line open, return_to_normal etc.
 
-resolve flow (405-438 → resolve_pending 344-403):
-  1. from_raw
-  2. Literal contexts (CommandLine, PromptInput, Picker, Terminal, Confirm, SearchText, EditorInsert — command.hpp:130-144) and no pending:
+resolve flow (keybindings_part2.cpp):
+  1. from_raw / resolve_token
+  1b. EditorNormal/Visual + no pending + !engine_owns_token → Unmatched (vim layer).
+     engine_owns = ctrl|alt|F1–F12|Space|Esc (keybindings_detail.hpp).
+     resolve_pending also skips bindings whose first token is not engine-owned in editor modal.
+  2. Literal contexts (CommandLine, PromptInput, Picker, Terminal, Confirm, SearchText, EditorInsert) and no pending:
      Space → Unmatched (leader start nahi)
      Non-controlish (controlish = Esc OR F1–F12 OR tok.ctrl OR tok.alt) with leader disallowed: try single-key only; if Prefix → Unmatched
   3. Else append to pending
-  4. Scan bindings when-match AND (if leader) context_allows_leader (EditorNormal, EditorVisual, Sidebar, SearchResults — command.hpp:115-127)
+  4. Scan bindings when-match AND (if leader) context_allows_leader (EditorNormal, EditorVisual, Sidebar, SearchResults)
   5. Exact chord → Matched, clear, command_id
   6. Proper prefix → ResolveStatus::Prefix (consumed; no timer)
   7. Else Unmatched, clear. pending.size()>1 → whole chord drop; last key replay as fresh start nahi. UI us last raw key ko component ko deta hai.
-
-any_leader_prefix assigned (348, 382-383) aur kabhi read nahi.
 
 UI::handle_inputs Search: Query/Replace → SearchText (leader off, Space literal); Results → SearchResults (leader OK). SearchPanel::in_text_field().
 
@@ -1136,29 +1162,33 @@ Sidebar Focus::Sidebar (3395-3497 + sidebar.cpp:293-420)
   h/Left | collapse or parent | 332-354
   l/Right | expand / open file | 355-372
   Enter / o | toggle dir / open file | 373-389
-  Space | toggle dir expand — aksar leader prefix steal | 390-396
+  Space | leader (engine) — dir toggle is Enter/o/l, not Space
   a AddFile | A AddFolder | r Rename | d Delete | 397-404
   x Cut / c Copy / p Paste | 405-410
   R refresh | 411-415
   q FocusEditor | 416-417
 
-Editor dispatcher (ui.cpp:3517-3523): dispatch_resolved then Editor::handle_input. Prefix/Matched consume key (ResolveStatus::Prefix = consume, command.hpp:150).
-T1.2 CONFIRMED: config.json g-chords + `u` (editorFocus && normalMode) engine pehle: `g` Prefix → editor.pending_g set nahi; `gi`/`dgg`/`ygg` toot. Full ownership fix T4. `m`/`'`/`"` config me nahi, editor tak jaate hain.
-Config bindings with editorFocus && normalMode engine pehle: u, tab, :, g g, g t, g T, g d, g r, g y, Space, Ctrl-*.
+Editor dispatcher: dispatch_resolved then Editor::handle_input. Prefix/Matched consume key.
+T4 ownership: EditorNormal/Visual me engine sirf ctrl/alt/F/Space/Esc match karta hai.
+  Vim prefixes (g u m ' " [ ] d/c/y …) editor.cpp. config se g*/u/:/tab steal hata diye.
+  Insert escape: `jk` (jj nahi). : → on_command_open_; gd/gD/gy/gr/gi → editor callbacks.
+  Ctrl when: editorFocus (Insert+Normal); ctrl+arrows window focus normalMode only.
+  Terminal: Esc→PTY; leave ctrl+]/ctrl+t; arrows DECCKM (?1h SS3 / ?1l CSI).
 
-Normal handle_normal_input editor.cpp:1276-1633  (editor-internal prefixes, KeybindingEngine se alag)
-  " | start register prefix | 1282-1288
-  after " | a-z/A-Z/" set pending register | 1290-1296
-  after m | a-z set mark | 1298-1304
-  after ' | a-z jump mark | 1306-1319
-  after g | g file start; t next tab; T prev tab | 1321-1351 (tab callbacks ui.cpp:107-115)
-  Esc operator-pending | cancel op | 1357-1360
-  dd/cc/yy | linewise | 1363-1376
+Normal handle_normal_input (editor-internal prefixes, KeybindingEngine se alag)
+  " | start register prefix
+  after " | a-z/A-Z/" set pending register
+  after m | a-z set mark
+  after ' | a-z jump mark
+  after g | g file start; t/T tabs; d/D/y/r LSP; i last-insert
+  Esc operator-pending | cancel op
+  dd/cc/yy | linewise
   h j k l / arrows | motion
   w b e | word
   0 ^ $ | line
   G | file end
   g | set pending_g
+  : | open command line (callback)
   PgUp/PgDn | page
   Ctrl-D 4 / Ctrl-U 21 | half page
   v / V | visual char / line
@@ -1172,10 +1202,10 @@ Normal handle_normal_input editor.cpp:1276-1633  (editor-internal prefixes, Keyb
   x | delete char yank
   p P | paste after/before
   KEY_SIC if defined | paste clipboard
-  u | undo (normal me config shadow)
-  Ctrl-R 18 | redo
+  u | undo (editor-owned; config does not bind u — T4/T5)
+  Ctrl-R 18 | redo (editor; engine ctrl+y also redo)
   Ctrl-O 15 | jump back
-  Tab / Ctrl-I 9 | jump forward (normal me tab sidebar toggle shadow)
+  Tab / Ctrl-I 9 | jump forward (tab sidebar binding HATAO T5)
 
 Visual / Visual-Line handle_visual_input editor.cpp:1176-1274
   Esc leave visual | 1181-1185
@@ -1188,7 +1218,7 @@ Visual / Visual-Line handle_visual_input editor.cpp:1176-1274
 
 Insert handle_insert_input editor.cpp:1635-1755
   Insert is context_is_literal → Space leader blocked. Esc config escape pehle match.
-  j then j | delete first j, leave insert | 1640-1658
+  j then k | delete first j, leave insert (jk Esc; jj HATAO T4) | editor_insert.cpp
   Esc | leave_insert_mode (usually shadowed) | 1663-1665
   arrows | move split undo | 1666-1685
   PgUp/PgDn | page | 1686-1695
@@ -1211,92 +1241,112 @@ file_picker.cpp, buffer_picker.cpp, lsp_picker.cpp, completion_picker.cpp.
 PART U — COMMAND REGISTRY LIST
 ################################################################
 
-No description field on CommandRegistry (command_registry.hpp). IDs: includes/commands/command.hpp.
-Core handlers: lambdas UI::register_actions src/ui/ui.cpp:232-546.
-Extra: extension.hello.ping builtin_hello.cpp:18.
+No description field on CommandRegistry. IDs: includes/commands/command.hpp.
+Handlers: UI::register_actions → ui_commands.cpp + ui_commands_nav.cpp + ui_commands_keymap.cpp.
+Extra: extension.hello.ping (builtin_hello.cpp).
+T8 count: 85 registered; 54 distinct commands in config.json.
 
-id | handler (what it calls) | registered | config.json bound
-noni.mode.normal | UI::return_to_normal | ui.cpp:234 | yes (escape)
-workbench.action.files.save | UI::save_active_buffer | 236 | yes
-workbench.action.closeActiveEditor | UI::close_active_tab(false) | 242 | yes
-workbench.action.nextEditor | BufferManager::next_tab | 246 | yes (g t)
-workbench.action.previousEditor | prev_tab | 251 | yes (g shift+t)
-noni.focus.toggleSidebar | lambda 256-277 | 256 | yes (tab)
-noni.focus.sidebar | open_sidebar(true) | 279 | no
-noni.focus.editor | return_to_normal | 283 | yes (space e when sidebar)
-workbench.action.toggleSidebarVisibility | toggle_sidebar | 287 | yes
-workbench.action.closeSidebar | close_sidebar | 291 | no
-workbench.view.explorer | open_explorer_view(true) | 295 | yes (space e)
-workbench.view.search | open_search_view(true) | 299 | no
-workbench.action.findInFiles | open_search_view(true) | 303 | yes
-noni.command.open | command_line.open | 307 | yes (:)
-workbench.action.quit | ex_quit(false) | 314 | no
-workbench.action.quickOpen | open_file_search | 318 | no
-noni.search.files | open_file_search | 322 | yes (ctrl+p)
-workbench.action.showAllEditors | open_buffer_search | 326 | yes (space ;)
-workbench.action.openWorkspace | open_workspace_prompt | 330 | yes (space o)
-noni.explorer.revealActive | lambda 334-345 | 334 | yes (space .)
-workbench.action.terminal.toggle | toggle_terminal | 347 | yes
-workbench.action.terminal.focus | open_terminal(true) | 351 | no
-workbench.action.terminal.clear | terminal.clear_screen | 355 | no
-workbench.action.terminal.scrollUp | terminal.scroll_up | 361 | no
-workbench.action.terminal.scrollDown | terminal.scroll_down | 367 | no
-workbench.action.terminal.kill | terminal.stop | 373 | no
-editor.action.clipboardPasteAction | editor.paste_clipboard | 378 | yes (ctrl+v normal)
-editor.action.undo | editor.undo | 385 | yes (u)
-editor.action.goToFileStart | editor.set_cursor_position(0,0) | 392 | yes (g g)
-editor.action.redo | editor.redo | 398 | yes (ctrl+y)
-workbench.action.splitEditorRight | core.split_vertical | 405 | yes
-workbench.action.splitEditorDown | core.split_horizontal | 409 | yes
-workbench.action.closeActiveEditorGroup | core.close_window | 413 | yes
-workbench.action.focusLeftGroup | core.focus_left | 417 | yes
-workbench.action.focusRightGroup | core.focus_right | 418 | yes
-workbench.action.focusAboveGroup | core.focus_up | 419 | yes
-workbench.action.focusBelowGroup | core.focus_down | 420 | yes
-workbench.action.decreaseViewWidth | core.resize_left | 421 | yes
-workbench.action.increaseViewWidth | core.resize_right | 422 | yes
-workbench.action.decreaseViewHeight | core.resize_up | 423 | yes
-workbench.action.increaseViewHeight | core.resize_down | 424 | yes
-editor.action.nextMatchFindAction | core.search_next(false) | 426 | no
-editor.action.previousMatchFindAction | core.search_next(true) | 431 | no
-editor.action.replaceOne | core.replace_current | 436 | no
-editor.action.replaceAll | apply_replace_all / core.replace_all | 446 | no
-git.refresh | refresh_scm | 460 | yes
-git.showStatus | lambda 465-484 | 465 | yes
-git.stage | scm_stage_active | 486 | yes
-git.unstage | scm_unstage_active | 487 | yes
-git.discard | scm_discard_active_confirm | 488 | yes
-git.showDiff | scm_show_diff_summary | 489 | yes
-git.refreshDiff | lambda 490-495 | 490 | yes
-lsp.showStatus | core.lsp().status_summary | 497 | yes
-lsp.installServers | open_lsp_install_picker | 502 | no
-lsp.restart | lambda 506-511 | 506 | yes
-editor.action.triggerSuggest | trigger_completion | 514 | yes
-editor.action.revealDefinition | request_lsp_definition | 518 | yes
-editor.action.revealDeclaration | request_lsp_declaration | 519 | yes
-editor.action.goToTypeDefinition | request_lsp_type_definition | 520 | yes
-editor.action.goToReferences | request_lsp_references | 521 | yes
-workbench.action.gotoSymbol | request_lsp_document_symbols | 522 | yes
-workbench.action.showAllSymbols | request_lsp_workspace_symbols_prompt | 523 | yes
-editor.action.rename | request_lsp_rename_prompt | 526 | yes
-editor.action.quickFix | request_lsp_code_actions | 527 | yes
-workbench.action.saveSession | save_session | 529 | yes
-workbench.action.restoreSession | restore_session_if_available | 533 | yes
-extension.showStatus | extensions.status_summary | 543 | no
-extension.hello.ping | HelloExtension lambda | builtin_hello.cpp:18 | no
+id | registered | config.json keys (— = unbound / ex-or-internal only)
+actions.find | ui_commands_keymap.cpp:5 | ctrl+f
+editor.action.clipboardCopyAction | ui_commands_keymap.cpp:36 | ctrl+c
+editor.action.clipboardCutAction | ui_commands_keymap.cpp:40 | ctrl+x
+editor.action.clipboardPasteAction | ui_commands.cpp:156 | ctrl+v
+editor.action.commentLine | ui_commands_keymap.cpp:44 | ctrl+/
+editor.action.copyLinesDownAction | ui_commands_keymap.cpp:48 | ctrl+e
+editor.action.deleteLines | ui_commands_keymap.cpp:32 | ctrl+d
+editor.action.formatDocument | ui_commands_keymap.cpp:60 | space c f
+editor.action.goToFileStart | ui_commands_nav.cpp:12 | —
+editor.action.goToReferences | ui_commands_nav.cpp:141 | space l r
+editor.action.goToTypeDefinition | ui_commands_nav.cpp:140 | —
+editor.action.halfPageDown | ui_commands_keymap.cpp:20 | ctrl+d
+editor.action.halfPageUp | ui_commands_keymap.cpp:24 | ctrl+u
+editor.action.moveLinesDownAction | ui_commands_keymap.cpp:52 | alt+j, alt+down
+editor.action.moveLinesUpAction | ui_commands_keymap.cpp:56 | alt+k, alt+up
+editor.action.nextMatchFindAction | ui_commands_nav.cpp:46 | —
+editor.action.previousMatchFindAction | ui_commands_nav.cpp:51 | —
+editor.action.quickFix | ui_commands_nav.cpp:147 | space c a
+editor.action.redo | ui_commands_nav.cpp:18 | ctrl+y
+editor.action.rename | ui_commands_nav.cpp:146 | f2, space r n
+editor.action.replaceAll | ui_commands_nav.cpp:66 | —
+editor.action.replaceOne | ui_commands_nav.cpp:56 | —
+editor.action.revealDeclaration | ui_commands_nav.cpp:139 | —
+editor.action.revealDefinition | ui_commands_nav.cpp:138 | f12, space l d
+editor.action.selectAll | ui_commands_keymap.cpp:28 | ctrl+a
+editor.action.triggerSuggest | ui_commands_nav.cpp:134 | ctrl+space
+editor.action.undo | ui_commands_nav.cpp:5 | ctrl+z
+extension.hello.ping | builtin_hello.cpp:18 | —
+extension.showStatus | ui_commands_nav.cpp:163 | —
+git.discard | ui_commands_nav.cpp:108 | space g x
+git.previewHunk | ui_commands_keymap.cpp:66 | space g p
+git.refresh | ui_commands_nav.cpp:80 | space g R
+git.refreshDiff | ui_commands_nav.cpp:110 | space g f
+git.showDiff | ui_commands_nav.cpp:109 | space g d
+git.showStatus | ui_commands_nav.cpp:85 | space g s
+git.stage | ui_commands_nav.cpp:106 | space g a
+git.unstage | ui_commands_nav.cpp:107 | space g u
+lsp.installServers | ui_commands_nav.cpp:122 | —
+lsp.restart | ui_commands_nav.cpp:126 | space l R
+lsp.showStatus | ui_commands_nav.cpp:117 | space l S
+noni.command.open | ui_commands.cpp:85 | —
+noni.diagnostics.list | ui_commands_keymap.cpp:65 | space x x
+noni.explorer.revealActive | ui_commands.cpp:112 | —
+noni.focus.editor | ui_commands.cpp:61 | —
+noni.focus.sidebar | ui_commands.cpp:57 | space o
+noni.focus.toggleSidebar | ui_commands.cpp:34 | —
+noni.mode.normal | ui_commands.cpp:12 | escape
+noni.search.files | ui_commands.cpp:100 | —
+noni.search.grepWord | ui_commands_keymap.cpp:62 | space f w
+noni.search.recent | ui_commands_keymap.cpp:61 | space f r
+workbench.action.closeActiveEditor | ui_commands.cpp:20 | space b d
+workbench.action.closeActiveEditorGroup | ui_commands_nav.cpp:33 | —
+workbench.action.closeSidebar | ui_commands.cpp:69 | —
+workbench.action.decreaseViewHeight | ui_commands_nav.cpp:43 | —
+workbench.action.decreaseViewWidth | ui_commands_nav.cpp:41 | —
+workbench.action.files.save | ui_commands.cpp:14 | ctrl+s, space w
+workbench.action.findInFiles | ui_commands.cpp:81 | space f g
+workbench.action.focusAboveGroup | ui_commands_nav.cpp:39 | ctrl+up
+workbench.action.focusBelowGroup | ui_commands_nav.cpp:40 | ctrl+down
+workbench.action.focusLeftGroup | ui_commands_nav.cpp:37 | ctrl+left
+workbench.action.focusRightGroup | ui_commands_nav.cpp:38 | ctrl+right
+workbench.action.gotoLine | ui_commands_keymap.cpp:12 | ctrl+g
+workbench.action.gotoSymbol | ui_commands_nav.cpp:142 | space l s
+workbench.action.increaseViewHeight | ui_commands_nav.cpp:44 | —
+workbench.action.increaseViewWidth | ui_commands_nav.cpp:42 | —
+workbench.action.nextEditor | ui_commands.cpp:24 | space b n
+workbench.action.openWorkspace | ui_commands.cpp:108 | —
+workbench.action.previousEditor | ui_commands.cpp:29 | space b b
+workbench.action.quickOpen | ui_commands.cpp:96 | ctrl+p, space space, space f f
+workbench.action.quit | ui_commands.cpp:92 | space q q
+workbench.action.restoreSession | ui_commands_nav.cpp:153 | space s s
+workbench.action.saveSession | ui_commands_nav.cpp:149 | space s w
+workbench.action.showAllEditors | ui_commands.cpp:104 | space f b
+workbench.action.showAllSymbols | ui_commands_nav.cpp:143 | space l w
+workbench.action.splitEditorDown | ui_commands_nav.cpp:29 | —
+workbench.action.splitEditorRight | ui_commands_nav.cpp:25 | —
+workbench.action.terminal.clear | ui_commands.cpp:133 | —
+workbench.action.terminal.focus | ui_commands.cpp:129 | —
+workbench.action.terminal.kill | ui_commands.cpp:151 | —
+workbench.action.terminal.scrollDown | ui_commands.cpp:145 | —
+workbench.action.terminal.scrollUp | ui_commands.cpp:139 | —
+workbench.action.terminal.toggle | ui_commands.cpp:125 | ctrl+t, space t t
+workbench.action.toggleSidebarVisibility | ui_commands.cpp:65 | ctrl+b, space e
+workbench.view.explorer | ui_commands.cpp:73 | —
+workbench.view.search | ui_commands.cpp:77 | —
 
-Startup diagnose: commands.diagnose(keys.bound_commands()) ui.cpp:141-147 — unknown → Logger::warning; unbound → Logger::debug.
+Startup diagnose: commands.diagnose(keys.bound_commands()) — unknown → Logger::warning; unbound → Logger::debug
+  (ui_init / UI ctor path).
 
-Sources for PART U: includes/commands/command.hpp, includes/commands/command_registry.hpp,
-src/commands/command_registry.cpp, src/ui/ui.cpp:232-546, src/extensions/builtin_hello.cpp, config.json.
+Sources for PART U: includes/commands/command.hpp, command_registry.hpp,
+src/commands/command_registry.cpp, src/ui/ui_commands*.cpp, src/extensions/builtin_hello.cpp, config.json.
 
 ################################################################
 PART V — EX COMMANDS
 ################################################################
 
-Registry: ExCommands::register_builtins src/editor/ex_commands.cpp:184-488.
-Parse: name + optional ! + args (parse 72-107). Unique prefix abbreviation (resolve 109-150).
-Ranges % . $ digits skipped, used nahi ("for future use" comment line 79).
+Registry: ExCommands::register_builtins (ex_commands.cpp + ex_commands_core.cpp / part2).
+Parse: name + optional ! + args. Unique prefix abbreviation.
+Ranges % . $ digits skipped (ex_commands.cpp "for future use"; handlers ignore ranges).
+UI handlers: src/ui/ui_ex.cpp / ui_ex_nav.cpp (T2 split; old ui.cpp:NNNN refs below approximate).
 Empty run bodies: none. TODOs in ex_commands.cpp: none.
 
 syntax | args | handler | status
@@ -1347,7 +1397,7 @@ keypad | keypad(stdscr, TRUE)
 meta | meta(stdscr, TRUE)
 newline | nonl() — CR (Enter/Ctrl+M) ≠ LF (Ctrl+J)
 extended keys | KeybindingEngine::register_extended_keys() define_key CSI 1;3/1;5/1;7
-timeout | timeout(50)  (halfdelay nahi)
+timeout | timeout(0)  (poll waits; halfdelay nahi)
 cursor | curs_set(0)
 colors | if (has_colors()) Theme::init()
 bg | wbkgd(stdscr, COLOR_PAIR(Theme::Editor)); erase(); refresh()
@@ -1364,6 +1414,8 @@ get_wch → KeyToken: PART T2 from_raw table. Extra:
   Ctrl+arrows: define_key kUP5 etc.; Terminal replays seq via extended_seq()
   KEYLOG: getenv("NONI_KEYLOG") Logger::info
   Chord UI: Statusbar::set_chord(pending_label()) each render; no Prefix timeout
+  DECCKM: CSI ?1h/l → TerminalScreen::application_cursor_keys; panel sends SS3 vs CSI arrows
+  Ownership: engine_owns_token; EditorNormal/Visual vim keys → editor.cpp
 
 handle_inputs order: PART F + PART T3.
 
@@ -1499,7 +1551,7 @@ Timeouts
   curl rust-analyzer | --max-time 180  lsp_installer_backends.cpp:89
   curl clangd | --max-time 300  :113
   npm/pip/go system() | none (wait)
-  ncurses timeout(50) | UI poll, not LSP
+  ncurses timeout(0) + poll() | UI wait (T7.1), not LSP
 
 Sources for PART X: includes/lsp/*, src/lsp/lsp_service.cpp, lsp_process.cpp, lsp_jsonrpc.cpp,
 lsp_edits.cpp, lsp_installer.cpp, lsp_installer_backends.cpp, lsp_installer_util.cpp,
@@ -1684,7 +1736,7 @@ Sab UI::run → handle_inputs se start (except recovery tick in render). Poll/dr
 
 15. Terminal toggle + typing
     workbench.action.terminal.toggle (ui.cpp:347) → toggle_terminal (3081) → open_terminal (3098)
-    → resize + TerminalPanel::ensure_started (218) → TerminalSession::start → PtySession::start + reader thread
+    → resize + TerminalPanel::ensure_started (218) → TerminalSession::start → PtySession::start (no reader thread; poll+pump_readable)
     Focus Terminal handle_inputs (3305) Esc/29 leave; else terminal.handle_input (263) → session_.write_bytes
     Output: run terminal.poll (232) → TerminalSession::pump (80) → VtParser::feed → TerminalPanel::draw
 
@@ -1721,16 +1773,15 @@ file_picker.cpp, sidebar.cpp, completion_picker.cpp, line_number.cpp.
 PART AA — RENDERING
 ################################################################
 
-Frame order UI::render ui.cpp:2543-2715
+Frame order UI::render (ui_render.cpp) → render_paint (T7.2 dirty flags)
   Early out if !core.buffers().has_tabs()
   Pre-draw: sync_scm_ui, sync_scm_diff, tick_recovery_snapshots, lsp.pump, poll_completion_result, poll_lsp_results,
-    statusbar cursor/mode/echo, line_number.sync
-  Paint (NO full werase(stdscr) — comment 2598-2599):
-    header → tab_bar → sidebar OR search_panel → line_number → editor
-    → messages_panel if active → pickers → completion → statusbar → terminal if visible
-    → command XOR confirm XOR input
-  Editor pane internals (editor.cpp:844-847): syntax → search highlight → selection → diagnostics → cursor wmove
-  Z-order wnoutrefresh: later wins. Overlays after editor (2663-2712). Then doupdate().
+    tick_autosave, statusbar cursor/mode/echo, line_number.sync
+  mark_components_from_state (delta vs painted_* snapshot; force_paint_all on resize)
+  Paint only dirty components via paint_if_dirty + wnoutrefresh; one doupdate if any
+  Widgets that mutate visual state (Sidebar selection/expand, SearchPanel query/results,
+    Terminal pump, pickers) MUST call mark_dirty() — mark_components_from_state only
+    covers focus/visibility/buffer/cursor/scm deltas, not in-widget selection.
 
 Layout UI::resize ui.cpp:2422-2541
   height/width = getmaxyx(stdscr) get_editor_dim ~3510
@@ -1756,25 +1807,23 @@ Color pairs Theme::init theme.cpp:196-297
   Pairs 1–90 (theme.hpp). make_color: custom init_color from 16 if can_change_color, else 256-cube/gray, else 8-color (159-186)
   set_pair skips if pair >= COLOR_PAIRS
 
-Who redraws: every frame while running, all visible components draw().
-  Dirty tracking per-widget nahi except FilePicker/SearchPanel/Sidebar poll version, Terminal pump, LSP/SCM generation skip extra copies.
+Who redraws: mark_components_from_state + per-widget mark_dirty on mutation.
   Hidden sidebar: resize(0,0,0,0); render skips draw if !sidebar_visible.
 
-Sources for PART AA: src/ui/ui.cpp render/resize, src/components/editor.cpp draw, src/ui/theme.cpp,
-includes/ui/theme.hpp, src/components/line_number.cpp.
+Sources for PART AA: ui_render.cpp, ui_render_paint.cpp, ui_render_dirty.cpp, UIComponent,
+editor_draw.cpp, theme.cpp.
 
 ################################################################
 PART AB — THREADING & ASYNC
 ################################################################
 
 Threads
-  main | noni.cpp main | ncurses, all UI, LSP pump, inotify poll
-  Background workers (2) | Background::start(2) ui.cpp:74 | job queue
-  Logger writer | Logger::init logger.cpp:130 | write logs/noni.log
-  PTY reader | PtySession::start pty_session.cpp:81 | read master → out_buf
-  LSP reader (per session) | LspProcess::start lsp_process.cpp:98 | read stdout → out_buf_
+  main | noni.cpp main | ncurses, all UI, poll() wait, LSP/PTY pump_readable, inotify drain
+  Background workers (2) | Background::start(2) | job queue; notify EventWake on complete
+  Logger writer | Logger::init logger.cpp | write logs/noni.log
+  PTY/LSP reader threads: HATAO (T7.1) — main pump_readable after poll
   LSP/PTY child processes | fork | not editor threads
-  FsWatcher: NO thread — IN_NONBLOCK drained on main (fs_watcher.hpp:28-29)
+  FsWatcher: NO thread — IN_NONBLOCK drained on main (fs_watcher.hpp)
   DirScanner / FileIndex: work on Background, own thread nahi
 
 Jobs on Background
@@ -1786,24 +1835,24 @@ Jobs on Background
   GrammarInstaller::request (grammar_installer.cpp:715)
   LspInstaller::request (lsp_installer.cpp:268)
   Stale results dropped via next_token / job_token
-  Background::post if pool not started: job runs sync on caller (async.cpp:66-69)
+  Background::post if pool not started: job runs sync on caller (async.cpp)
 
 Results back to main
-  Background | mutex + atomic version/generation; main polls
-  PTY | out_mu + take_output() in TerminalSession::pump from UI::run
-  LSP stdout | out_mu_ + take_stdout() in LspSession::pump from UI::render
+  Background | mutex + atomic version/generation; EventWake → UI poll
+  PTY | out_buf + pump_readable/take_output in TerminalSession::pump (main only)
+  LSP stdout | out_buf_ + pump_readable/take_stdout in LspSession::pump (main only)
   LSP ready lists | optionals under mu_; take_* on main
   Logger | separate queue; not UI
   Messages | Messages::mu; echo_snapshot polled sync_messages_echo
   inotify | FsWatcher::poll nonblocking
 
-Main loop ui.cpp:2717-2736: poll pickers/search/terminal/fs/sidebar → render → handle_inputs (getch 50ms)
+Main loop ui_loop.cpp: poll(stdin,wake,inotify,PTY,LSP) → drain widgets → render if dirty → handle_inputs
 
 Shared state (locks)
   Background::{mu, jobs, cv}
   Logger::{queue_mu, log_file}
-  PtySession::{out_mu, master_fd atomic, running}
-  LspProcess::{out_mu_}
+  PtySession::{out_buf, master_fd, running} (no out_mu — T7.6)
+  LspProcess::{out_buf_} (no out_mu_ — T7.6)
   LspSession::write_mu_ (stdin writes)
   LspService::mu_ (sessions, docs, ready) — pump holds while parsing; on_publish_diagnostics "mu_ already held"
   ScmService::mu_
@@ -1813,9 +1862,9 @@ Shared state (locks)
   Grammar/LSP installer g_mu
   Buffer content mutex nahi — mutations main thread
 
-Sources for PART AB: includes/utils/async.hpp src/utils/async.cpp, logger.cpp, lsp_process.cpp,
+Sources for PART AB: includes/utils/async.hpp event_wake.hpp, logger.cpp, lsp_process.cpp,
 pty_session.cpp, fs_watcher.hpp/.cpp, scm_service.cpp, dirscanner.cpp, fuzzy.cpp,
-text_search.cpp, grammar_installer.cpp, lsp_installer.cpp, lsp_service.cpp, src/ui/ui.cpp run.
+text_search.cpp, grammar_installer.cpp, lsp_installer.cpp, lsp_service.cpp, src/ui/ui_loop.cpp.
 
 ################################################################
 PART AC — ON-DISK FILES & LOG FORMATS
@@ -1865,27 +1914,26 @@ src/syntax/grammar_installer.cpp, src/ui/ui.cpp tick_recovery / ex_logs.
 PART AD — STUBS / UNIMPLEMENTED INVENTORY
 ################################################################
 
-Grep src/, includes/, noni.cpp, tests/ for TODO / FIXME / stub / not implemented / unimplemented / not yet.
-Skipped .grammar-test and .noni/tree-sitter.
+Grep src/, includes/, noni.cpp for TODO / FIXME / stub / not implemented / unimplemented /
+not yet / PHASE 5 / "pending (". Skipped icon glyph names (lang_todo, todo.md, .hack).
 
-file:line | comment / string se kya hona tha
-src/lsp/lsp_service.cpp:556 | JSON-RPC error -32601 "Method not implemented" for unhandled server-originated requests
-includes/lsp/lsp_models.hpp:53 | LspCodeAction server command: "applied only when no edit, via controlled path later"
-src/ui/ui.cpp:1568-1569 | user-visible "Code action command not executed: {}" when action has command but no edit
-src/editor/ex_commands.cpp:79 | "Skip optional range tokens like %, ., 1,10 for future use"
-src/utils/fs.cpp:55 | mkstemp pattern ".noni.XXXXXX" (XXX grep hit; temp-file template, task marker nahi)
-includes/ui/icons.hpp:442 | lang_hack Nerd Font glyph
-includes/ui/icons.hpp:502 | lang_todo Nerd Font glyph
-includes/ui/icons.hpp:846-847 | filenames todo / todo.md / todos.md → todo icon
-includes/ui/icons.hpp:1082-1083 | extension .hack → hack-lang icon
+file:line | note
+src/ui/ui_commands_keymap.cpp:63 | noni.search.grepWord → Messages::info PHASE 5 (Space f w)
+src/ui/ui_commands_keymap.cpp:67 | git.previewHunk → Messages::info PHASE 5 (Space g p)
+src/lsp/lsp_session_msg.cpp:78 | JSON-RPC -32601 "Method not implemented" for unhandled server requests
+includes/lsp/lsp_models.hpp:53 | LspCodeAction::command — "applied only when no edit, via controlled path later"
+src/ui/ui_lsp.cpp:184 | "Code action command not executed: {}" when action has command but no WorkspaceEdit
+src/editor/ex_commands.cpp:43 | skip optional range tokens (%, ., 1,10) — not used by handlers
 
-tests/ directory: no source files. Makefile test target removed (T0 / R4).
-noni.cpp: matching comments nahi.
-Empty { return; } / stub function bodies matching those keywords: grep me none.
-LspCodeAction::command_args_json (lsp_models.hpp:56) never assigned (comment nahi).
-Ex range tokens parse skip, handlers use nahi.
+PHASE 5 / later (master prompt — do not implement in T0–T8):
+  surround (ys/ds/cs, visual S), git hunk nav ([c ]c) + stage/preview hunk,
+  Space f w real grep-word, mouse support.
 
-Sources for PART AD: grep over src/ includes/ noni.cpp; listed files.
+tests/ directory: empty / removed (R4). Makefile has no test target.
+noni.cpp: no stub markers.
+Empty stub function bodies matching those keywords: none.
+
+Sources for PART AD: live grep 2026-09-26; listed files.
 
 ################################################################
 END OF sys.txt

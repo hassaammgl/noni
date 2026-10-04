@@ -8,7 +8,7 @@ void Editor::handle_insert_input(int key)
     if (pending_j)
     {
         pending_j = false;
-        if (key == 'j')
+        if (key == 'k')
         {
             const int col = tab->cursor().column;
             if (col > 0)

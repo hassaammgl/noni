@@ -3,9 +3,7 @@
 UIComponent::~UIComponent()
 {
     if (window)
-    {
         delwin(window);
-    }
 }
 
 void UIComponent::create(int height, int width, int y, int x)
@@ -14,13 +12,10 @@ void UIComponent::create(int height, int width, int y, int x)
     this->width = width;
     this->x = x;
     this->y = y;
+    dirty_ = true;
 }
 
-void UIComponent::resize(
-    int height,
-    int width,
-    int y,
-    int x)
+void UIComponent::resize(int height, int width, int y, int x)
 {
     if (window)
     {
@@ -32,23 +27,19 @@ void UIComponent::resize(
     this->width = width;
     this->y = y;
     this->x = x;
+    dirty_ = true;
 
     if (height <= 0 || width <= 0)
         return;
 
-    window = newwin(
-        height,
-        width,
-        y,
-        x);
+    window = newwin(height, width, y, x);
 }
 
 void UIComponent::clear()
 {
     if (window)
-    {
         werase(window);
-    }
+    dirty_ = true;
 }
 
 WINDOW *UIComponent::get_window() const

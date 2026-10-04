@@ -19,6 +19,7 @@ void KeybindingEngine::load(const AppConfig &config)
 {
     bindings.clear();
     pending.clear();
+    pending.reserve(8);
 
     for (const auto &kb : config.keybindings)
     {
@@ -40,6 +41,7 @@ void KeybindingEngine::load(const AppConfig &config)
                 kb.command));
         }
     }
+    rebuild_first_index();
 }
 
 bool KeybindingEngine::add_binding(
@@ -57,6 +59,7 @@ bool KeybindingEngine::add_binding(
         return false;
     rb.leader = is_leader_token(rb.chord.front());
     bindings.push_back(std::move(rb));
+    rebuild_first_index();
     return true;
 }
 
@@ -70,6 +73,21 @@ void KeybindingEngine::remove_bindings_owned_by(const std::string &owner)
             bindings.end(),
             [&owner](const ResolvedBinding &b) { return b.owner == owner; }),
         bindings.end());
+    rebuild_first_index();
+}
+
+void KeybindingEngine::rebuild_first_index()
+{
+    first_index_.clear();
+    first_index_.reserve(bindings.size());
+    for (std::size_t i = 0; i < bindings.size(); ++i)
+    {
+        if (bindings[i].chord.empty())
+            continue;
+        const KeyToken &t = bindings[i].chord.front();
+        FirstKey k{.code = t.code, .ctrl = t.ctrl, .alt = t.alt, .shift = t.shift};
+        first_index_[k].push_back(i);
+    }
 }
 
 void KeybindingEngine::clear_chord()

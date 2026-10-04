@@ -35,6 +35,7 @@
 #include <termios.h>
 #include <unistd.h>
 #include <vector>
+#include <thread>
 
 inline bool ui_is_enter(int ch)
 {
@@ -53,6 +54,7 @@ inline InputContext ui_input_context_for(Focus focus, EditorMode mode, bool sear
     case Focus::BufferSearch:
     case Focus::LspPicker:
     case Focus::Completion:
+    case Focus::Hover:
         return InputContext::Picker;
     case Focus::Terminal:
         return InputContext::Terminal;

@@ -43,6 +43,10 @@ void Editor::leave_insert_mode()
     if (tab->mode != EditorMode::Insert)
         return;
 
+    last_insert_buffer_ = current_buffer_id();
+    last_insert_ = tab->cursor();
+    last_insert_valid_ = true;
+
     if (tab->cursor().column > 0)
     {
         const auto &lines = tab->buffer().lines();

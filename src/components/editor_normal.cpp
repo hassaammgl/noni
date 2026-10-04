@@ -116,6 +116,14 @@ void Editor::handle_normal_commands(int key)
     case '\'':
         pending_jump_mark = true;
         break;
+    case ':':
+        if (on_command_open_)
+            on_command_open_();
+        break;
+    case 'K':
+        if (on_hover_)
+            on_hover_();
+        break;
     default:
         handle_normal_edits(key);
         break;

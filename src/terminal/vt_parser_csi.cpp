@@ -71,7 +71,18 @@ void VtParser::dispatch_csi()
 
     if (csi_private_)
     {
-        // Ignore DEC private modes (?h/?l) and similar for P15.
+        // DEC private modes: ?h set, ?l reset.
+        if (final == 'h' || final == 'l')
+        {
+            const bool enable = (final == 'h');
+            for (int mode : params_)
+            {
+                if (mode == 1) // DECCKM
+                    screen_.set_application_cursor_keys(enable);
+                else if (mode == 7) // DECAWM
+                    screen_.set_wraparound(enable);
+            }
+        }
         return;
     }
 

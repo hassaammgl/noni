@@ -13,6 +13,7 @@ UndoResult Buffer::undo()
     apply_transaction_reverse(txn);
     content_id = txn.id_before;
     bump_revision();
+    reset_line_metrics();
     syntax_engine_.invalidate_all();
     redo_stack.push_back(std::move(txn));
 
@@ -35,6 +36,7 @@ UndoResult Buffer::redo()
     apply_transaction_forward(txn);
     content_id = txn.id_after;
     bump_revision();
+    reset_line_metrics();
     syntax_engine_.invalidate_all();
     undo_stack.push_back(std::move(txn));
 
@@ -133,6 +135,7 @@ void Buffer::apply_recovered_content(std::vector<std::string> lines)
     load_error.clear();
     clear_history();
     bump_revision();
+    reset_line_metrics();
     sync_syntax();
     if (reload_listener_)
         reload_listener_(*this);

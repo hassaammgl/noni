@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <poll.h>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -30,6 +31,8 @@ public:
     void set_server_configs(std::vector<LspServerConfig> configs);
 
     void pump();
+    // Append LS stdout fds for UI poll().
+    void append_poll_fds(std::vector<pollfd> &out) const;
 
     void notify_open(Buffer &buffer);
     void notify_change(Buffer &buffer, const TextChange &change);
@@ -49,11 +52,17 @@ public:
     int request_workspace_symbols(Buffer &buffer, const std::string &query);
     int request_rename(Buffer &buffer, int line, int byte_col, const std::string &new_name);
     int request_code_actions(Buffer &buffer, Cursor start, Cursor end);
+    int request_hover(Buffer &buffer, int line, int byte_col);
+    int request_formatting(Buffer &buffer);
+    bool session_supports_hover(Buffer &buffer) const;
+    bool session_supports_formatting(Buffer &buffer) const;
 
     std::optional<LspLocationList> take_location_result();
     std::optional<LspSymbolList> take_symbol_result();
     std::optional<LspRenameResult> take_rename_result();
     std::optional<LspCodeActionList> take_code_action_result();
+    std::optional<LspHoverResult> take_hover_result();
+    std::optional<LspFormatResult> take_format_result();
 
     void cancel_pending();
 
@@ -96,4 +105,6 @@ private:
     std::optional<LspRenameResult> ready_rename_;
     std::optional<LspCodeActionList> ready_actions_;
     std::optional<LspWorkspaceEdit> ready_server_apply_;
+    std::optional<LspHoverResult> ready_hover_;
+    std::optional<LspFormatResult> ready_format_;
 };

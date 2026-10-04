@@ -10,7 +10,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <poll.h>
 
 #if defined(__linux__)
 #include <pty.h>
@@ -79,7 +78,6 @@ bool PtySession::start(int rows, int cols, const std::string &cwd, const std::st
 
     running.store(true, std::memory_order_release);
     lifecycle_.store(PtyLifecycle::Running, std::memory_order_release);
-    reader = std::thread([this]() { reader_loop(); });
 
     Logger::info(std::format("PTY started pid={} shell={} {}x{}", pid, shell.empty() ? "$SHELL|/bin/sh" : shell, cols, rows));
     return true;
@@ -112,12 +110,6 @@ void PtySession::stop()
     if (!was && master_fd.load() < 0 && child_pid < 0)
         return;
 
-    if (reader.joinable())
-        reader.join();
-
-    // The reader thread closes master_fd itself on exit; exchange keeps close
-    // ownership unique. This fallback only fires when no reader thread ever
-    // started (e.g. std::thread creation threw after a successful forkpty).
     const int fd = master_fd.exchange(-1);
     if (fd >= 0)
         ::close(fd);
@@ -139,7 +131,6 @@ void PtySession::stop()
         }
     }
 
-    std::lock_guard lock(out_mu);
     out_buf.clear();
 }
 

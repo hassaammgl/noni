@@ -8,6 +8,7 @@ void Buffer::apply_forward(const TextChange &change)
         raw_delete_text(change.start_line, change.start_col, change.deleted);
     if (!change.inserted.empty())
         (void)raw_insert_text(change.start_line, change.start_col, change.inserted);
+    note_metrics_edit(change);
 }
 
 void Buffer::apply_reverse(const TextChange &change)

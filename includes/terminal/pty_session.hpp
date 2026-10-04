@@ -2,10 +2,8 @@
 
 #include <atomic>
 #include <cstdint>
-#include <mutex>
 #include <optional>
 #include <string>
-#include <thread>
 
 enum class PtyLifecycle
 {
@@ -15,7 +13,7 @@ enum class PtyLifecycle
     Failed,
 };
 
-// Owned PTY + shell child. Reader thread feeds output into a buffer.
+// Owned PTY + shell child. Main loop pumps master fd (T7.1).
 class PtySession
 {
 public:
@@ -36,20 +34,20 @@ public:
     void write_byte(char c);
     void resize(int rows, int cols);
 
-    // Drain newly read bytes (thread-safe).
+    // Drain newly read bytes (main thread only).
     std::string take_output();
 
+    [[nodiscard]] int poll_fd() const { return master_fd.load(std::memory_order_acquire); }
+    void pump_readable();
+
 private:
-    void reader_loop();
     void reap_child(bool block);
 
     std::atomic<int> master_fd{-1};
     pid_t child_pid = -1;
-    std::thread reader;
     std::atomic<bool> running{false};
     std::atomic<PtyLifecycle> lifecycle_{PtyLifecycle::Idle};
 
-    std::mutex out_mu;
     std::string out_buf;
     std::optional<int> exit_status_;
 };

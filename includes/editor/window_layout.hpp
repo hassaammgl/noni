@@ -122,4 +122,10 @@ public:
     void resize_active(SplitOrientation along, float delta);
     bool focus_neighbor(int dx, int dy, int area_w, int area_h);
     std::vector<std::pair<Window *, WindowRect>> compute_rects(int x, int y, int w, int h) const;
+    void compute_rects_into(
+        int x,
+        int y,
+        int w,
+        int h,
+        std::vector<std::pair<Window *, WindowRect>> &out) const;
 };

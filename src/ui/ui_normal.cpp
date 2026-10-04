@@ -24,6 +24,8 @@ void UI::return_to_normal()
 
     if (completion_picker.is_active())
         completion_picker.close();
+    if (hover_popup_.is_active())
+        hover_popup_.close();
     core.lsp().cancel_pending();
 
     if (confirm_prompt.is_active())

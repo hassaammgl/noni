@@ -32,8 +32,8 @@ namespace editor_detail
         const Cursor &c = w.cursor();
         if (c.line < 0 || c.line >= static_cast<int>(lines.size()))
             return 0;
-        return TextMetrics::byte_to_display(
-            lines[static_cast<std::size_t>(c.line)], static_cast<std::size_t>(c.column));
+        return w.buffer().byte_to_display_cached(
+            c.line, static_cast<std::size_t>(c.column));
     }
 
     inline void sync_preferred_display(Window &w)

@@ -10,6 +10,9 @@ SidebarAction Sidebar::handle_input(int key)
     if (visible.empty())
         return SidebarAction::None;
 
+    // T7.2: paint_if_dirty skips draw unless we mark — selection/expand live here.
+    mark_dirty();
+
     const int lh = list_height();
     const int prev = selected_index;
 

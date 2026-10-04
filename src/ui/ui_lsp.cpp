@@ -134,7 +134,8 @@ void UI::close_lsp_picker(bool accept)
         return;
     }
 
-    if (lsp_picker_kind_ == LspPickerKind::Locations)
+    if (lsp_picker_kind_ == LspPickerKind::Locations ||
+        lsp_picker_kind_ == LspPickerKind::Diagnostics)
     {
         LspLocation loc;
         if (lsp_picker.take_location(loc))

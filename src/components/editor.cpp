@@ -24,6 +24,28 @@ void Editor::set_search_handlers(std::function<void()> forward, std::function<vo
     on_search_backward_ = std::move(backward);
 }
 
+void Editor::set_command_open_handler(std::function<void()> open)
+{
+    on_command_open_ = std::move(open);
+}
+
+void Editor::set_lsp_nav_handlers(
+    std::function<void()> definition,
+    std::function<void()> declaration,
+    std::function<void()> type_definition,
+    std::function<void()> references)
+{
+    on_goto_definition_ = std::move(definition);
+    on_goto_declaration_ = std::move(declaration);
+    on_goto_type_definition_ = std::move(type_definition);
+    on_goto_references_ = std::move(references);
+}
+
+void Editor::set_hover_handler(std::function<void()> hover)
+{
+    on_hover_ = std::move(hover);
+}
+
 Window &Editor::win()
 {
     return tab->active_window();
@@ -83,4 +105,9 @@ Cursor Editor::get_cursor() const
 int Editor::get_scroll_y() const
 {
     return tab ? tab->scroll_y() : 0;
+}
+
+int Editor::get_scroll_x() const
+{
+    return tab ? tab->scroll_x() : 0;
 }

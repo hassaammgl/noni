@@ -56,6 +56,10 @@ public:
     void set_wraparound(bool on) { wraparound_ = on; }
     bool wraparound() const { return wraparound_; }
 
+    // DECCKM: CSI ?1h → \033OA…; CSI ?1l → \033[A…
+    void set_application_cursor_keys(bool on) { application_cursor_keys_ = on; }
+    bool application_cursor_keys() const { return application_cursor_keys_; }
+
     void set_title(std::string title) { title_ = std::move(title); }
     const std::string &title() const { return title_; }
 
@@ -86,6 +90,7 @@ private:
     int scroll_bottom_ = 0; // inclusive; = rows_-1 when full
     bool wraparound_ = true;
     bool wrap_pending_ = false;
+    bool application_cursor_keys_ = false;
 
     TerminalAttrs pen_{};
     std::string title_;

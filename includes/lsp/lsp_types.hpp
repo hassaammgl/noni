@@ -44,6 +44,8 @@ enum class LspPendingKind
     WorkspaceSymbol,
     Rename,
     CodeAction,
+    Hover,
+    Formatting,
 };
 
 struct LspPendingRequest

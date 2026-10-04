@@ -79,19 +79,22 @@ void TreeHighlighter::fill_with_lexer_full(
 void TreeHighlighter::rehighlight_lexer_from(
     const std::vector<std::string> &lines,
     Language lang,
-    int from_line)
+    int from_line,
+    int until_line)
 {
     resize_line_cache(lines.size());
     if (from_line < 0)
         from_line = 0;
     if (from_line > static_cast<int>(lines.size()))
         from_line = static_cast<int>(lines.size());
+    if (until_line < 0 || until_line > static_cast<int>(lines.size()))
+        until_line = static_cast<int>(lines.size());
 
     HighlightState state;
     if (from_line > 0 && line_cache_[static_cast<std::size_t>(from_line - 1)].valid)
         state = line_cache_[static_cast<std::size_t>(from_line - 1)].state_out;
 
-    for (int i = from_line; i < static_cast<int>(lines.size()); ++i)
+    for (int i = from_line; i < until_line; ++i)
     {
         LineCache &lc = line_cache_[static_cast<std::size_t>(i)];
         const HighlightState old_out = lc.state_out;
@@ -103,13 +106,21 @@ void TreeHighlighter::rehighlight_lexer_from(
         lc.valid = true;
         line_tokens[static_cast<std::size_t>(i)] = lc.tokens;
 
-        // Stop when carry-out state matches previous cache (multiline state stable).
         if (had_valid && state == old_out)
         {
             dirty_from_ = i + 1;
             return;
         }
     }
-    dirty_from_ = static_cast<int>(lines.size());
+
+    if (until_line < static_cast<int>(lines.size()))
+    {
+        // Viewport-limited: remaining lines need work when scrolled into view.
+        dirty_from_ = until_line;
+        for (int i = until_line; i < static_cast<int>(line_cache_.size()); ++i)
+            line_cache_[static_cast<std::size_t>(i)].valid = false;
+    }
+    else
+        dirty_from_ = static_cast<int>(lines.size());
 }
 

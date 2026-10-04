@@ -13,6 +13,9 @@ Statuses: `todo` | `doing` | `done` | `blocked`
 - Repo-root `Makefile` was gitignored (`gitignore:45`); T0 stops ignoring it and tracks the handwritten Makefile.
 - C++23 libstdc++ on this machine: `__cpp_lib_expected=202211`, `__cpp_lib_print=202406`, `__cpp_lib_flat_map=202511`, `__cpp_lib_move_only_function=202110`.
 - T3 `nonl()`: Enter = KEY_ENTER or CR(13); Ctrl+J = LF(10); Ctrl+H = 8 vs Backspace 127/KEY_BACKSPACE. Ctrl+M is the same byte as Enter on CR terminals. No Prefix chord timeout.
+- T4 ownership: engine_owns_token; vim prefixes editor-owned; Insert `jk`; Ctrl when=editorFocus except window ctrl+arrows (normalMode).
+- T5: ctrl+h/j/k/l NOT bound for window focus — after `nonl()` bytes 8/10 are distinct from Bs/Enter, but binding them would fight Insert ctrl+h and vim muscle memory; ctrl+arrows cover focus.
+- T6: `formatOnSave` default true; `clipboard.sync` default true; `autosave.mode=afterDelay` delayMs=1000.
 
 ## PART 0 — bootstrap
 
@@ -99,51 +102,59 @@ File list after `wc -l` (T2 start / HEAD). Split = pure move. No commit until yo
 
 | id | status | note | commit |
 |----|--------|------|--------|
-| T4 | todo | vim prefixes editor.cpp; search/sidebar/term; jk; when flags | |
+| T4 | done | engine_owns_token: EditorNormal/Visual me sirf ctrl/alt/F/Space/Esc. Vim g/u/m/'/"/d/c/y editor pe. Insert jk. : + gd/gD/gy/gr/gi callbacks. config: hatao g*/u/:/tab steal; ctrl when=editorFocus; ctrl+z; ctrl+arrows normalMode. Terminal DECCKM. SearchText/sidebar/term leave pehle se OK. | |
 
 ## T5 — CONFIG REWRITE
 
 | id | status | note | commit |
 |----|--------|------|--------|
-| T5 | todo | config.json = PART 2-A/C; backup .bak; register ids | |
+| T5 | done | config.json = PART 2-A/C (63 bindings); config.json.bak; register stubs in ui_commands_keymap.cpp; selectAll/deleteLine/halfPage wired. ctrl+h/j/k/l skip (PROGRESS). | |
 
 ## T6 — MISSING FEATURES
 
 | id | status | note | commit |
 |----|--------|------|--------|
-| T6.1 | todo | clipboard write chain + OSC52 | |
-| T6.2 | todo | comment toggle gcc/gc/ctrl+/ | |
-| T6.3 | todo | hover K popup | |
-| T6.4 | todo | [d ]d diagnostic jump | |
-| T6.5 | todo | LSP format + formatOnSave | |
-| T6.6 | todo | move/copy line | |
-| T6.7 | todo | autosave | |
-| T6.8 | todo | pickers + placeholder ids | |
+| T6.1 | done | Clipboard::write wl-copy→xclip→xsel→OSC52; yank/copy/cut sync when clipboard.sync | |
+| T6.2 | done | gcc / Visual gc / ctrl+/ comment toggle (lang tokens) | |
+| T6.3 | done | K → textDocument/hover → HoverPopup | |
+| T6.4 | done | [d ]d diagnostic jump wrap + echo | |
+| T6.5 | done | formatting request + apply; formatOnSave (2s timeout) | |
+| T6.6 | done | alt+j/k/up/down move; ctrl+e copy line down | |
+| T6.7 | done | autosave.afterDelay (default 1000ms); skip untitled/external mtime; no format | |
+| T6.8 | done | Space x x diagnostics picker; f r recent; f w / g p placeholders | |
 
 ## T7 — PERFORMANCE
 
 | id | status | note | commit |
 |----|--------|------|--------|
-| T7.1 | todo | poll() event loop | |
-| T7.2 | todo | dirty-flag render | |
-| T7.3 | todo | Buffer/Window/Editor hot paths | |
-| T7.4 | todo | syntax visible-range cache | |
-| T7.5 | todo | keybinding resolve | |
-| T7.6 | todo | LSP JSON/handoff | |
-| T7.7 | todo | search/fuzzy alloc | |
-| T7.8 | todo | LTO try | |
+| T7.1 | done | poll() main loop: stdin+wake+inotify+PTY+LSP fds; timeout=timers; needs_render_; no PTY/LSP reader threads | |
+| T7.2 | done | per-component dirty_; paint_if_dirty + wnoutrefresh only dirty; resize force_paint_all | |
+| T7.3 | done | Buffer line display cache + hot-line prefix; motions/draw use cache; layout rects_cache reuse | |
+| T7.4 | done | syntax sync_visible: lexer limited to viewport; skip redraw sync when clean | |
+| T7.5 | done | keybinding first-token index; pending.reserve(8) | |
+| T7.6 | done | LSP/PTY out_buf main-thread (no mutex); JSON-RPC frame without format double-alloc | |
+| T7.7 | done | fuzzy filter scores native path/filename views; display string only on hit | |
+| T7.8 | done | `make lto` OK (user 2026-09-26): `-O2 -flto=auto` linked `build/bin/app`. Default `make` stays `-O2 -g`. | |
 
 ## T8 — FINAL
 
 | id | status | note | commit |
 |----|--------|------|--------|
-| T8 | todo | sys.txt re-verify + LAST VERIFIED + PART AD + T/U | |
+| T8 | doing | sys.txt re-verify + LAST VERIFIED + PART AD + T/U | |
 
 ## UNVERIFIED
 
 - T1.4: 8-bit meta (`key >= 128 && key < KEY_MIN` → ESC+(key&0x7f)). Split ESC+key path verified by code (first getch 27 now reaches PTY). Combined-meta path UNVERIFIED on this terminal.
 - T1.7: get_wch + UTF-8 insert compiled; runtime é/Urdu/emoji in TUI UNVERIFIED (no interactive run).
 - T3: Alt Esc-peek, Ctrl+arrows define_key, KEYLOG, chord statusbar — code path only; interactive TUI UNVERIFIED (no `make` this turn).
+- T4: ownership + jk + DECCKM — code path only; interactive gi/gd/jk/ctrl+arrows UNVERIFIED.
+- T5: new keybindings load + diagnose unbound/unknown — needs user `make` + run.
+- T6: clipboard tools/OSC52, hover popup, formatOnSave, autosave, move/copy lines — interactive UNVERIFIED (no `make` this turn).
+- T7.1: poll() loop — code path only; idle CPU / key latency UNVERIFIED (user `make` + run).
+- T7.2/T7.3: dirty paint + metrics cache — code path only; interactive UNVERIFIED.
+- T7.4–T7.7: syntax/keybinds/LSP/fuzzy — code path only; UNVERIFIED until user `make`.
+- T7.8: LTO verified by user `make clean lto` (linked). Fixed post-build: Focus::Hover switch + unused `row` in page_up/half_page_up.
+- Bugfix: Sidebar/SearchPanel frozen after T7.2 — mutators never `mark_dirty()` so `paint_if_dirty` skipped selection/expand redraw. Fixed in sidebar_* + search_panel_part2; sys.txt PART AA.
 
 ## Pause
 
@@ -151,8 +162,6 @@ User asked to stop after T1.1 (2026-09-21); resumed 2026-09-22 (T1.2+).
 
 ## Existing warnings
 
-Clean `-Wall -Wextra -std=c++23 -O2` build (code path: `make` after `make clean`; `build/bin/app` linked). One warning, not a runtime-bug class — left for T3/T4 (touches KeybindingEngine):
-
-- `src/configs/keybindings_part2.cpp` `any_leader_prefix` set but not used (`-Wunused-but-set-variable`). Sets on leader prefix match; never read. `any_prefix` is what drives Prefix vs Unmatched. Left for T4.
+Clean `-Wall -Wextra -std=c++23 -O2` build (user runs `make`). T4 removed unused `any_leader_prefix`.
 
 Header-dep check: `-MMD` `.d` files generated (e.g. `build/src/ui/ui.d` lists `includes/ui/ui.hpp`). `touch includes/utils/logger.hpp && make` rebuilt dependents. Do not pipe `make` to `head` (SIGPIPE mid-compile).

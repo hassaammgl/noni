@@ -9,6 +9,7 @@ bool Sidebar::cut_selected()
         return false;
     clipboard_path = selected;
     clipboard_mode = SidebarClipboardMode::Cut;
+    mark_dirty();
     return true;
 }
 
@@ -19,6 +20,7 @@ bool Sidebar::copy_selected()
         return false;
     clipboard_path = selected;
     clipboard_mode = SidebarClipboardMode::Copy;
+    mark_dirty();
     return true;
 }
 
@@ -26,6 +28,7 @@ void Sidebar::clear_clipboard()
 {
     clipboard_path.clear();
     clipboard_mode = SidebarClipboardMode::None;
+    mark_dirty();
 }
 
 bool Sidebar::has_clipboard() const
@@ -97,6 +100,7 @@ bool Sidebar::paste_here(fs::path *moved_from, fs::path *moved_to)
 
     refresh_tree_keep_expanded();
     select_path(dest);
+    mark_dirty();
 
     if (moved_from)
         *moved_from = from;

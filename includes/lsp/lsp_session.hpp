@@ -28,6 +28,7 @@ public:
     bool start();
     void stop();
     void pump();
+    [[nodiscard]] int poll_fd() const { return process_.poll_fd(); }
 
     LspSessionState state() const { return state_; }
     const std::string &language() const { return config_.language; }
@@ -58,6 +59,7 @@ public:
         int start_character,
         int end_line,
         int end_character);
+    int request_formatting(const std::string &uri);
 
     bool is_document_open(const std::string &uri) const;
     bool send_raw(const std::string &framed);

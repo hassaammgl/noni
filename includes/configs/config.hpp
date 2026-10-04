@@ -26,6 +26,18 @@ struct TerminalConfig
     int scrollback = 5000;
 };
 
+struct ClipboardConfig
+{
+    bool sync = true; // yank/copy/cut → system clipboard
+};
+
+struct AutosaveConfig
+{
+    // "off" | "afterDelay"
+    std::string mode = "afterDelay";
+    int delay_ms = 1000;
+};
+
 struct AppConfig
 {
     std::string app_name = "noni";
@@ -34,6 +46,9 @@ struct AppConfig
     int esc_delay_ms = 25;
     bool syntax_auto_install = true;
     bool lsp_auto_install = true;
+    bool format_on_save = true;
+    ClipboardConfig clipboard;
+    AutosaveConfig autosave;
     std::vector<Keybinding> keybindings;
     std::vector<LspServerConfigFile> lsp_servers;
     TerminalConfig terminal;

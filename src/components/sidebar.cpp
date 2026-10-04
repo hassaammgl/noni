@@ -20,7 +20,10 @@ bool Sidebar::poll()
 {
     const auto before = seen_version;
     sync_cache();
-    return seen_version != before;
+    if (seen_version == before)
+        return false;
+    mark_dirty();
+    return true;
 }
 
 std::vector<VisibleRow> Sidebar::visible_rows() const

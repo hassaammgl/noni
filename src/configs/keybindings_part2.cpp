@@ -69,17 +69,41 @@ ResolveResult KeybindingEngine::resolve_pending(const std::string &when_context,
 {
     ResolveResult result;
     bool any_prefix = false;
-    bool any_leader_prefix = false;
 
-    for (const auto &b : bindings)
+    if (pending.empty())
     {
+        result.status = ResolveStatus::Unmatched;
+        return result;
+    }
+
+    FirstKey k{
+        .code = pending.front().code,
+        .ctrl = pending.front().ctrl,
+        .alt = pending.front().alt,
+        .shift = pending.front().shift};
+    const auto it = first_index_.find(k);
+    if (it == first_index_.end())
+    {
+        pending.clear();
+        result.status = ResolveStatus::Unmatched;
+        return result;
+    }
+
+    for (const std::size_t bi : it->second)
+    {
+        const auto &b = bindings[bi];
         if (!when_matches(b.when, when_context))
             continue;
         if (b.chord.size() < pending.size())
             continue;
 
-        // Leader chords only when context allows Space leader.
         if (b.leader && !context_allows_leader(input_ctx))
+            continue;
+
+        const bool editor_modal =
+            input_ctx == InputContext::EditorNormal ||
+            input_ctx == InputContext::EditorVisual;
+        if (editor_modal && !b.chord.empty() && !engine_owns_token(b.chord.front()))
             continue;
 
         bool prefix = true;
@@ -103,20 +127,10 @@ ResolveResult KeybindingEngine::resolve_pending(const std::string &when_context,
         }
 
         any_prefix = true;
-        if (b.leader)
-            any_leader_prefix = true;
     }
 
     if (!any_prefix)
     {
-        if (pending.size() > 1)
-        {
-            // Chord failed — drop the whole attempt so the last key can fall
-            // through to the editor (JSON is source of truth for prefixes).
-            pending.clear();
-            result.status = ResolveStatus::Unmatched;
-            return result;
-        }
         pending.clear();
         result.status = ResolveStatus::Unmatched;
         return result;
@@ -128,6 +142,18 @@ ResolveResult KeybindingEngine::resolve_pending(const std::string &when_context,
 
 ResolveResult KeybindingEngine::resolve_token(KeyToken tok, const std::string &when_context, InputContext input_ctx)
 {
+    const bool editor_modal =
+        input_ctx == InputContext::EditorNormal ||
+        input_ctx == InputContext::EditorVisual;
+
+    // Vim prefixes (g u m ' " [ ] d/c/y …) stay in editor.cpp — do not start engine chords.
+    if (editor_modal && !has_pending() && !engine_owns_token(tok))
+    {
+        ResolveResult r;
+        r.status = ResolveStatus::Unmatched;
+        return r;
+    }
+
     // Literal contexts: only allow Esc / explicit control bindings (single-key),
     // never start a Space leader chord.
     if (context_is_literal(input_ctx) && !has_pending())

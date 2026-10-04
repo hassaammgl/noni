@@ -3,42 +3,40 @@
 
 #include <cerrno>
 #include <cstring>
-#include <fcntl.h>
-#include <format>
-#include <signal.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
-#include <utility>
-
 
 std::string LspProcess::take_stdout()
 {
-    std::lock_guard lock(out_mu_);
+    // Main-thread only after T7.1 (no reader thread) — no lock.
     std::string out = std::move(out_buf_);
     out_buf_.clear();
     return out;
 }
 
-void LspProcess::reader_loop()
+void LspProcess::pump_readable()
 {
+    if (stdout_fd_ < 0 || !running_.load())
+        return;
+
     char buf[4096];
-    while (running_.load())
+    for (;;)
     {
-        if (stdout_fd_ < 0)
-            break;
         const ssize_t n = ::read(stdout_fd_, buf, sizeof(buf));
         if (n > 0)
         {
-            std::lock_guard lock(out_mu_);
             out_buf_.append(buf, static_cast<std::size_t>(n));
             continue;
         }
         if (n == 0)
-            break;
+        {
+            running_ = false;
+            return;
+        }
         if (errno == EINTR)
             continue;
-        break;
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return;
+        running_ = false;
+        return;
     }
-    running_ = false;
 }

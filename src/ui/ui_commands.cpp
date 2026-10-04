@@ -4,6 +4,7 @@ void UI::register_actions()
 {
     register_workbench_actions();
     register_nav_actions();
+    register_keymap_actions();
 }
 
 void UI::register_workbench_actions()

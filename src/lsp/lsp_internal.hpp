@@ -126,6 +126,36 @@ namespace lsp_detail
         std::vector<LspSymbol> &out,
         const std::string &prefix);
     LspCodeAction parse_code_action(const MiniJson::Value &v);
+
+    inline std::string parse_hover_contents(const MiniJson::Value &result)
+    {
+        if (result.is_null())
+            return {};
+        if (!result.is_object())
+            return {};
+        const MiniJson::Value *contents = result.get("contents");
+        if (!contents)
+            return {};
+        if (contents->is_string())
+            return contents->as_string();
+        if (contents->is_object())
+            return contents->get_string("value", "");
+        if (contents->is_array())
+        {
+            std::string out;
+            for (const auto &part : contents->as_array())
+            {
+                if (!out.empty())
+                    out.push_back('\n');
+                if (part.is_string())
+                    out += part.as_string();
+                else if (part.is_object())
+                    out += part.get_string("value", "");
+            }
+            return out;
+        }
+        return {};
+    }
 }
 
 using namespace lsp_detail;

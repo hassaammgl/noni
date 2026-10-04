@@ -51,6 +51,8 @@ public:
     // Non-blocking drain of pending events (may coalesce).
     std::vector<FsEvent> poll();
 
+    [[nodiscard]] int poll_fd() const { return fd_; }
+
 private:
     int fd_ = -1;
     std::mutex mu_;

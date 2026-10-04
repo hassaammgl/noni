@@ -23,7 +23,7 @@ void UI::init()
     meta(stdscr, TRUE);
     nonl(); // keep CR (Enter/Ctrl+M) distinct from LF (Ctrl+J)
     KeybindingEngine::register_extended_keys();
-    timeout(50); // let async work (index/git/scan) refresh UI without keypress
+    timeout(0); // nonblocking get_wch; UI::run poll() provides wait
     curs_set(0);
 
     if (has_colors())
@@ -43,6 +43,7 @@ void UI::load_config()
 {
     config = AppConfig::load();
     keys.load(config);
+    editor.set_clipboard_sync(config.clipboard.sync);
     GrammarInstaller::set_auto_install(config.syntax_auto_install);
     LspInstaller::set_auto_install(config.lsp_auto_install);
 

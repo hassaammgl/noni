@@ -44,9 +44,9 @@ void TerminalPanel::stop()
 
 bool TerminalPanel::poll()
 {
-    if (!visible_)
-        return false;
-    return session_.pump();
+    // Always drain PTY (even when hidden) so the master does not block.
+    const bool changed = session_.pump();
+    return visible_ && changed;
 }
 
 void TerminalPanel::on_resized()
@@ -113,16 +113,16 @@ void TerminalPanel::handle_input(int key)
         send("\033[3~", 4);
         break;
     case KEY_UP:
-        send("\033OA", 3);
+        send(session_.screen().application_cursor_keys() ? "\033OA" : "\033[A", 3);
         break;
     case KEY_DOWN:
-        send("\033OB", 3);
+        send(session_.screen().application_cursor_keys() ? "\033OB" : "\033[B", 3);
         break;
     case KEY_RIGHT:
-        send("\033OC", 3);
+        send(session_.screen().application_cursor_keys() ? "\033OC" : "\033[C", 3);
         break;
     case KEY_LEFT:
-        send("\033OD", 3);
+        send(session_.screen().application_cursor_keys() ? "\033OD" : "\033[D", 3);
         break;
     case KEY_HOME:
         send("\033OH", 3);

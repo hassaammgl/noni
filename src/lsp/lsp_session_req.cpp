@@ -133,4 +133,18 @@ bool LspSession::is_document_open(const std::string &uri) const
     return open_uris_.count(uri) > 0;
 }
 
-// --- LspService ---
+int LspSession::request_formatting(const std::string &uri)
+{
+    if (state_ != LspSessionState::Running || !open_uris_.count(uri))
+        return 0;
+    const int id = rpc_.next_id();
+    MiniJson::Object params;
+    params["textDocument"] = jobject({{"uri", jstr(uri)}});
+    params["options"] = jobject({
+        {"tabSize", jnum(4)},
+        {"insertSpaces", jbool(true)},
+    });
+    if (!send_raw(rpc_.make_request(id, "textDocument/formatting", jobject(std::move(params)))))
+        return 0;
+    return id;
+}

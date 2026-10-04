@@ -146,6 +146,7 @@ bool Sidebar::delete_path(const fs::path &selected)
     }
     sync_cache();
     clamp_selection(static_cast<int>(visible_rows().size()));
+    mark_dirty();
     return true;
 }
 
@@ -161,6 +162,7 @@ void Sidebar::refresh_tree_keep_expanded()
             ds.ensure_loaded(p);
     }
     sync_cache();
+    mark_dirty();
 }
 
 bool Sidebar::is_under(const fs::path &parent, const fs::path &child) const

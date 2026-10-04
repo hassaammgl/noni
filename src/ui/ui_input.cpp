@@ -101,7 +101,7 @@ void UI::handle_inputs()
         timeout(esc_ms);
         wint_t nxt = 0;
         const int nrc = get_wch(&nxt);
-        timeout(50);
+        timeout(0);
         if (nrc != ERR)
         {
             const int nch = static_cast<int>(nxt);
@@ -161,7 +161,8 @@ void UI::handle_inputs()
     if (focus == Focus::FileSearch || focus == Focus::BufferSearch ||
         focus == Focus::LspPicker || focus == Focus::Completion ||
         focus == Focus::Terminal || focus == Focus::Search ||
-        focus == Focus::Confirm || focus == Focus::Prompt)
+        focus == Focus::Confirm || focus == Focus::Prompt ||
+        focus == Focus::Hover)
     {
         handle_overlay_input(ch);
         return;

@@ -2,9 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
-#include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 
 // Bidirectional stdio child process for language servers (not a PTY).
@@ -24,18 +22,17 @@ public:
     bool write_all(const char *data, std::size_t n);
     bool write_all(const std::string &s) { return write_all(s.data(), s.size()); }
 
-    // Append newly read stdout bytes (thread-safe).
+    // Drain stdout buffer (main thread only — T7.1/T7.6).
     std::string take_stdout();
 
-private:
-    void reader_loop();
+    // Main-loop poll: LS stdout fd (-1 if idle).
+    [[nodiscard]] int poll_fd() const { return stdout_fd_; }
+    void pump_readable();
 
+private:
     int stdin_fd_ = -1;
     int stdout_fd_ = -1;
     pid_t pid_ = -1;
-    std::thread reader_;
     std::atomic<bool> running_{false};
-
-    std::mutex out_mu_;
     std::string out_buf_;
 };

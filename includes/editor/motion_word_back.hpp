@@ -57,7 +57,7 @@ namespace Motion
 
         if (lines[static_cast<std::size_t>(c.line)].empty())
         {
-            set_preferred_display(win, lines[static_cast<std::size_t>(c.line)], c.column);
+            set_preferred_display(win, c.line, c.column);
             return make_char_motion(win.cursor(), c, lines);
         }
 
@@ -91,7 +91,7 @@ namespace Motion
             }
         }
 
-        set_preferred_display(win, row, c.column);
+        set_preferred_display(win, c.line, c.column);
         return make_char_motion(win.cursor(), c, lines);
     }
 

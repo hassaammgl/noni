@@ -3,7 +3,9 @@
 #include <commands/command.hpp>
 #include <configs/config.hpp>
 
+#include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 struct KeyToken
@@ -61,9 +63,34 @@ public:
     ResolveResult resolve_token(KeyToken tok, const std::string &when_context, InputContext input_ctx);
 
 private:
+    struct FirstKey
+    {
+        int code = 0;
+        bool ctrl = false;
+        bool alt = false;
+        bool shift = false;
+
+        bool operator==(const FirstKey &o) const
+        {
+            return code == o.code && ctrl == o.ctrl && alt == o.alt && shift == o.shift;
+        }
+    };
+    struct FirstKeyHash
+    {
+        std::size_t operator()(const FirstKey &k) const noexcept
+        {
+            return static_cast<std::size_t>(k.code) * 131u +
+                   static_cast<std::size_t>(k.ctrl) +
+                   static_cast<std::size_t>(k.alt) * 2u +
+                   static_cast<std::size_t>(k.shift) * 4u;
+        }
+    };
+
     std::vector<ResolvedBinding> bindings;
     std::vector<KeyToken> pending;
+    std::unordered_map<FirstKey, std::vector<std::size_t>, FirstKeyHash> first_index_;
 
+    void rebuild_first_index();
     bool is_leader_token(const KeyToken &t) const;
     ResolveResult resolve_pending(const std::string &when_context, InputContext input_ctx);
 };

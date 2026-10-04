@@ -43,6 +43,25 @@ void UI::poll_lsp_results()
 
     if (auto acts = core.lsp().take_code_action_result())
         open_lsp_actions(std::move(acts->items));
+
+    if (auto hover = core.lsp().take_hover_result())
+    {
+        if (hover->contents.empty())
+            Messages::info("No hover info");
+        else
+        {
+            hover_popup_.open("Hover", std::move(hover->contents));
+            focus = Focus::Hover;
+            keys.clear_chord();
+            resize();
+        }
+    }
+
+    if (auto fmt = core.lsp().take_format_result())
+    {
+        apply_lsp_format_edits(std::move(fmt->edits), fmt->utf16_pending);
+        Messages::info("Formatted");
+    }
 }
 
 void UI::request_lsp_definition()

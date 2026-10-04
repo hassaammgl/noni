@@ -80,7 +80,18 @@ bool WindowLayout::focus_neighbor(int dx, int dy, int area_w, int area_h)
 std::vector<std::pair<Window *, WindowRect>> WindowLayout::compute_rects(int x, int y, int w, int h) const
 {
     std::vector<std::pair<Window *, WindowRect>> out;
+    compute_rects_into(x, y, w, h, out);
+    return out;
+}
+
+void WindowLayout::compute_rects_into(
+    int x,
+    int y,
+    int w,
+    int h,
+    std::vector<std::pair<Window *, WindowRect>> &out) const
+{
+    out.clear();
     if (root_ && w > 0 && h > 0)
         layout_node(root_.get(), x, y, w, h, out);
-    return out;
 }

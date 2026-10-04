@@ -55,11 +55,20 @@ private:
     std::optional<fs::file_time_type> disk_mtime_;
     bool external_change_notified_ = false;
 
+    // T7.3: per-line display-width cache (-1 = invalid) + hot-line byte→display prefix.
+    mutable std::vector<int> line_disp_width_;
+    mutable int metrics_hot_line_ = -1;
+    mutable std::vector<int> metrics_hot_prefix_; // size line.size()+1
+
     void capture_disk_mtime();
 
     void ensure_line_exists(int line);
     int clamp_column(int line, int column) const;
     void bump_revision();
+    void note_metrics_edit(const TextChange &change);
+    void reset_line_metrics() const;
+    void ensure_metrics_size() const;
+    void ensure_hot_line(int line) const;
 
     void clear_history();
     void record_change(TextChange change);
@@ -114,8 +123,13 @@ public:
         diagnostics_ = std::move(snap);
     }
 
-    // Sync syntax cache for rendering (idempotent / cheap when clean).
-    void sync_syntax();
+    // Sync syntax for a visible line range (T7.4). Cheap when clean.
+    void sync_syntax(int vis_lo = 0, int vis_hi = -1);
+
+    // T7.3: display metrics with per-line cache (invalidated on edit).
+    [[nodiscard]] int line_display_width_cached(int line) const;
+    [[nodiscard]] int byte_to_display_cached(int line, std::size_t byte) const;
+    [[nodiscard]] std::size_t display_to_byte_cached(int line, int display_col) const;
 
     void set_change_listener(std::function<void(Buffer &, const TextChange &)> listener)
     {

@@ -6,6 +6,9 @@ void Editor::clear_pending()
     pending_m = false;
     pending_jump_mark = false;
     pending_register = false;
+    pending_gc_ = false;
+    pending_bracket_ = false;
+    pending_bracket_close_ = false;
     pending_op = PendingOperator::None;
     if (core_)
         registers().clear_pending();

@@ -23,6 +23,8 @@ void LspService::clear_ready()
     ready_rename_.reset();
     ready_actions_.reset();
     ready_server_apply_.reset();
+    ready_hover_.reset();
+    ready_format_.reset();
 }
 
 void LspService::cancel_pending()
@@ -79,5 +81,25 @@ std::optional<LspWorkspaceEdit> LspService::take_server_apply_edit()
         return std::nullopt;
     auto out = std::move(*ready_server_apply_);
     ready_server_apply_.reset();
+    return out;
+}
+
+std::optional<LspHoverResult> LspService::take_hover_result()
+{
+    std::lock_guard lock(mu_);
+    if (!ready_hover_)
+        return std::nullopt;
+    auto out = std::move(*ready_hover_);
+    ready_hover_.reset();
+    return out;
+}
+
+std::optional<LspFormatResult> LspService::take_format_result()
+{
+    std::lock_guard lock(mu_);
+    if (!ready_format_)
+        return std::nullopt;
+    auto out = std::move(*ready_format_);
+    ready_format_.reset();
     return out;
 }

@@ -35,7 +35,7 @@ void Editor::draw_selection_overlay(Window &w, int ox, int oy, int pw, int ph)
                 pw,
                 Theme::Selection);
             // Fill remainder of pane past EOL.
-            const int line_dw = TextMetrics::line_display_width(line);
+            const int line_dw = w.buffer().line_display_width_cached(line_index);
             if (line_dw < sx + pw)
             {
                 const int fill_start = std::max(0, line_dw - sx);
@@ -71,7 +71,7 @@ void Editor::draw_selection_overlay(Window &w, int ox, int oy, int pw, int ph)
             i += n;
         }
         // Visual EOL cell when selection includes end.
-        const int eol_disp = TextMetrics::line_display_width(line);
+        const int eol_disp = w.buffer().line_display_width_cached(line_index);
         if (w.is_selected(line_index, static_cast<int>(line.size())) &&
             eol_disp >= sx && eol_disp < sx + pw)
         {

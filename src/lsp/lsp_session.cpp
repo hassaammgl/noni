@@ -129,6 +129,7 @@ void LspSession::stop()
 
 void LspSession::pump()
 {
+    process_.pump_readable();
     const std::string chunk = process_.take_stdout();
     if (!chunk.empty())
         rpc_.feed(chunk);

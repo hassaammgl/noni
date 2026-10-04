@@ -22,6 +22,12 @@ build/%.o: %.cpp
 debug:
 	$(MAKE) all CXXFLAGS="$(CXXFLAGS_BASE) -O0"
 
+# T7.8: link-time optimization attempt (separate from default -O2 -g).
+# Serial compile avoids mkdir/.d races after clean under -j.
+lto:
+	rm -rf build
+	$(MAKE) -j1 all CXXFLAGS="$(CXXFLAGS_BASE) -O2 -flto=auto" LDFLAGS="-flto=auto $(LDFLAGS)"
+
 run: $(TARGET)
 	./$(TARGET)
 
@@ -30,4 +36,4 @@ clean:
 
 -include $(OBJ:.o=.d)
 
-.PHONY: all run clean debug
+.PHONY: all run clean debug lto
