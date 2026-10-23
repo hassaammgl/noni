@@ -1,787 +1,648 @@
 # Noni (old) — Feature & Design Analysis for the `new/` Rewrite
 
 Analysis date: 2026-10-23.
-Basis: full read of `old/` (source `old/src/`, `old/includes/`, `old/noni.cpp`, `old/Makefile`,
-`old/config.json`) plus the author's own verified guides `old/sys.txt` (marked
-"LAST VERIFIED AGAINST CODE: 2026-09-26") and `old/PROGRESS.md`. Claims below were
-spot-checked directly against the code where it mattered (search, LSP stacking, UI,
-buffer/undo, clipboard, JSON); anything only known from `sys.txt` is labeled accordingly.
+Basis: full sweep of `old/` (source `old/src/`, `old/includes/`, `old/noni.cpp`,
+`old/Makefile`, `old/config.json`, `old/src/editor/*`, `old/src/lsp/*`, `old/src/ui/*`
+spot-reads) plus the author's own code-verified guide `old/sys.txt` (marked
+"LAST VERIFIED AGAINST CODE: 2026-09-26") and `old/PROGRESS.md`. Claims checked directly
+in code where they matter are cited with file/function; anything known only from
+`sys.txt` is labeled "(sys)". No `old/` file was modified.
 
-Notes on task assumptions:
-- The prompt assumed "libgit2": the codebase does **not** use libgit2 — it shells out to
-  the `git` CLI via `popen` (`old/includes/utils/git.hpp`, `old/src/utils/git.cpp`; no
-  `#include <git2.h>` anywhere; Makefile has no `-lgit2`).
-- `no libgit2` was already documented in `PROGRESS.md` T0.
-
-## 0. Source code layout (old/)
-
-Modules in `src/: commands, components, configs, editor, extensions, help, lsp, scm,
-sidebar, syntax, terminal, ui, utils, workspace` (~26,000 lines total across src/includes).
-~183 cpp + ~70 hpp files (the codebase follows a hard 200-line-per-file rule, see
-`old/.cursor/rules/file-size.mdc`, which produced many machine-file "_part2/_part3" splits).
-No tests exist (they were removed, `PROGRESS.md` T0).
+Task-assumption corrections:
+- The prompt said "libgit2" — the codebase does **not** link or use libgit2. Git features
+  run the `git` CLI via `popen` (`old/src/utils/git.cpp`). `old/PROGRESS.md` T0 documents
+  the deliberate drop of `-lgit2`; no `#include <git2.h>` exists.
+- There are **no tests** (removed in T0, `old/PROGRESS.md`; Makefile has no test target).
 
 ---
 
 # 1. Overview
 
-## 1.1 (High-level purpose)
+## 1.1 Product
 
-One-sentence product: a keyboard-first, ncursesw TUI code editor with vim-style modal
-editing, LSP integration (clangd/pylsp/…), tree-sitter syntax highlighting (auto-download +
-dlopen of grammars), git status/diff gutters (via `git` CLI, not libgit2), an embedded
-PTY terminal, surface config via `config.json` keybindings, VS Code-style workbench
-commands, per-workspace session persistence and crash recovery.
+A keyboard-first, single-threaded-UI ncursesw TUI code editor with: vim-style modal
+editing, LSP integration (clangd/pylsp/…), tree-sitter highlighting with auto-install of
+grammars, git status/diff gutters (git CLI), an embedded PTY terminal, `config.json`
+keybindings for workbench-style commands, per-workspace session persistence, crash
+recovery, autosave, and an in-app extension event bus (one builtin demo extension).
 
-## 1.2 Build system
+Entry: `old/noni.cpp` `main` → `Logger::init` → `Args::get_file_path(argv[1])` →
+`UI(path)::run` → shutdown.
 
-- Handwritten `old/Makefile` (no CMake, no pkg-config, no third-party vendored code).
-- Compiler: `g++`, `-std=c++23` (glibc versions: `__cpp_lib_expected=202211`,
-  `__cpp_lib_flat_map=202511`, `__cpp_lib_print=202406`, `__cpp_lib_move_only_function=202110`
-  — recorded in `old/PROGRESS.md` line 13-14).
-- Flags: `-Wall -Wextra -std=c++23 -g -MMD -MP -Iincludes -DNCURSES_WIDECHAR=1`, `-O2` default.
-- Link: `-lncursesw -pthread -lutil -ltree-sitter -ldl` (`old/Makefile` `LDFLAGS`, line 5).
-  No libgit2.
-- Targets: `all` (default), `debug` (`-O0`), `lto` (`-O2 -flto=auto`, verified by author),
-  `run`, `clean`. No test target.
-- Source globs: `$(wildcard *.cpp) $(shell find src -type f -name '*.cpp')`.
-- Object/dep files land in `build/` (gitignored). Header dependency tracking via `-MMD -MP`
-  + `-include $(OBJ:.o=.d)`.
-- Old repo also had `.clangd` (`-std=c++23`) for clangd analyze; no compile_commands.
+## 1.2 Build system — `old/Makefile` (handwritten; no CMake/pkg-config)
+
+- `g++ -std=c++23 -Wall -Wextra -g -MMD -MP -Iincludes -DNCURSES_WIDECHAR=1 -O2`
+  (libstdc++ feature-check macros recorded in `old/PROGRESS.md`).
+- Link: `-lncursesw -pthread -lutil -ltree-sitter -ldl` (no libgit2).
+- Sources: all root `*.cpp` + `find src -name '*.cpp'`; objects/deps under `build/`.
+- Targets: `all` (default), `debug` (`-O0`), `lto` (`-O2 -flto=auto`; built OK per
+  `old/PROGRESS.md` T7.8), `run`, `clean`.
+- ~250 implementation files, ~26,000 lines in `old/src/` (+ mirrored `old/includes/`),
+  consequence of a hard 200-line-per-file rule (`old/.cursor/rules/file-size.mdc`)
+  which produced mechanical `_part2/_part3/detail` file splits.
 
 ## 1.3 Dependencies
 
-| lib | used for | where |
-|---|---|---|
-| ncursesw | TUI, wide chars, colors, define_key, esc delay | `old/src/ui/ui_init.cpp`, components include `<ncurses.h>` |
-| pthread | std::thread (logger writer) + Background job pool | `old/src/utils/logger.cpp`, `old/src/utils/async.cpp` |
-| libutil | `forkpty` for integrated terminal | `old/src/terminal/pty_session.cpp` (`<pty.h>`/`<util.h>`) |
-| tree-sitter | highlight parser (system lib) | `old/src/syntax/tree_highlighter.cpp` includes `<tree_sitter/api.h>` |
-| dl | `dlopen` of per-language grammar `.so` | same file |
-| (processes, not libs) | `git` CLI via `popen`, `wl-copy/xclip/xsel` clipboard tools, `curl`/`git clone` for grammar + LSP installs | `old/src/utils/git.cpp`, `old/src/utils/clipboard.cpp`, `old/src/syntax/grammar_installer.cpp`, `old/src/lsp/lsp_installer_backends.cpp` |
-
-## 1.4 Module map (one-line each)
-
-Under `old/src/` unless noted (from `old/sys.txt` PART Q + direct spot checks):
-
-| Module | Purpose |
+| dependency | used for |
 |---|---|
-| `../noni.cpp` | `main`: Logger::init → Args::get_file_path(argv[1]) → UI(path)::run → Logger shutdown |
-| `ui/` | TUI shell: ncurses bootstrap, main poll() loop, layout/resize, dirty-bitmap rendering, Focus routing, key dispatch, all workbench `register_action`s, ex commands (`ui_ex.cpp`), session save/restore, SCM UI glue, config loading, LSP selection UI |
-| `components/` | Concrete ncurses widgets: Editor (vim views/motions operators), Sidebar FileExplorer, StatusBar, Header, TabBar, LineNumber gutter, CommandLine, ConfirmPrompt, InputPrompt, FilePicker, BufferPicker, LspPicker, CompletionPicker, MessagesPanel, SearchPanel, TerminalPanel, HoverPopup |
-| `editor/` | Non-ncurses engine: Buffer (doc + undo/redo + syntax + diagnostics + mtime), BufferManager (unique_ptr<Buffer> + tab list), EditorTab (WindowLayout + mode), Window (view: cursor/scroll/selection), WindowLayout (binary split tree), Motion namespace (header-only), Selection, Marks, Registers, Jumps, BufferSearch, ExCommands |
-| `lsp/` | LSP client over JSON-RPC Content-Length framing + process layer + language-server auto-installers (pip/npm/curl/go). Hpp: lsp_models.hpp, completion.hpp, diagnostics.hpp (header-only data types) |
-| `scm/` | git status/diff: ScmGit (porcelain parser via git CLI), ScmDiff (unified diff parser), ScmService (async cache + Background refresh queue) |
-| `syntax/` | Syntax highlighting: `Syntax` (fallback hand lexer by language), `TreeHighlighter` (dlopen grammar + tree-sitter parse), `GrammarInstaller` (curl/git + cc to build .so), grammar download helpers |
-| `terminal/` | Integrated terminal: PtySession (forkpty), VtParser (ANSI/VT/xterm parser), TerminalScreen (grid model + scrollback), TerminalSession glue |
-| `configs/` | `mini_json` (own tiny JSON parser/stringify), `config.cpp` (AppConfig load), `keybinding*.cpp` (chord engine: parse_key, from_raw, when clauses, pending prefix) |
-| `commands/` | `CommandRegistry` (command_id → fn) + CommandId constants + InputContext (`command.hpp`) |
-| `extensions/` | Extension API (EditorEvents bus, ExtensionContext, ExtensionManager) and one builtin demo extension (`noni.hello`) |
-| `help/` | `HelpDocs::build` pages for `:help` |
-| `sidebar/` | DirScanner (async directory tree over Background pool) |
-| `workspace/` | Workspace root detection (git root → marker walk), SessionStore (`session.json`), RecoveryStore (crash snapshots), RecentFiles (MRU) |
-| `utils/` | Logger (async file writer), Messages ring, FS (atomic write `FS::write_file`), `Git` (popen wrapper with shell_quote), Clipboard (wl-copy/xclip/xsel + OSC52 base64), Fuzzy + FileIndex, TextSearch (async project grep), TextMetrics (UTF-8/UTF-16/display columns), Background worker pool, EventWake (eventfd/pipe), FsWatcher (inotify, non-blocking), str helpers, args |
+| ncursesw | entire TUI (wide chars, colors, `define_key`, `set_escdelay`) — `old/src/ui/ui_init.cpp` |
+| pthread | Logger writer thread, Background worker pool (`old/src/utils/logger.cpp`, `old/src/utils/async.cpp`) |
+| libutil | `forkpty` for the terminal panel (`old/src/terminal/pty_session.cpp`) |
+| tree-sitter | highlight parsing (`old/src/syntax/tree_highlighter.cpp`) |
+| dl | `dlopen` of grammar `.so` files (same file) |
+| subprocesses (git CLI, wl-copy/xclip/xsel, curl, tar, cc/git-clone, pip/npm/go) | SCM, clipboard, grammar & LSP installers |
 
-Headers mirror `src/` in `old/includes/` (mostly `#pragma once`, several header-only).
+## 1.4 Module map (one line each, under `old/src/` + `old/includes/` mirror)
 
-Other top-level files in `old/`: `config.json` (+ `.bak`), `sys.txt` (architecture doc),
-`PROGRESS.md`, `simpletodo.txt`, `keybinds.txt` (NOT loaded by the app — pure notes),
-`keymap-catalog.md` (nvim/vscode cross-check notes, partially stale),
-`.cursor/rules/` (author conventions incl. the 200-line rule), `.clangd`.
+| module | purpose |
+|---|---|
+| `root noni.cpp` | `main`, CLI arg (exactly `argv[1]` only) |
+| `ui/` (16 cpp, ~5.3k lines) | ncurses bootstrap, poll() main loop, layout/resize, dirty-render, `Focus` routing, key dispatch/when-context, all workbench `register_command`s, ex commands, session management, LSP result routing, SCM UI glue, config load, recovery prompts |
+| `components/` (~28 cpp, ~5.7k lines) | ncurses widgets: Editor (vim view), Sidebar, TabBar, Header, LineNumber gutter, CommandLine, Confirm/Input prompts, File/Buffer/Lsp/Completion pickers, SearchPanel, MessagesPanel, TerminalPanel, HoverPopup |
+| `editor/` (~2.7k lines) | non-ncurses engine: Buffer (doc+undo+syntax+diagnostics+mtime), BufferManager, EditorTab (mode+WindowLayout), Window (cursor/scroll/selection), WindowLayout (split tree), Motion (header-only), Selection, Marks, Registers, Jumps, BufferSearch, ExCommands |
+| `lsp/` (~3.1k lines) | LSP client: JSON-RPC framing, process (fork/exec pipes), session/state machine, requests (completion/def/refs/rename/symbols/codeAction/format), diagnostics decode, auto-installer (pip/npm/curl/go) |
+| `scm/` (~800 lines) | `ScmGit` (porcelain/diff via git CLI), `ScmDiff` (unified `-U0` parser), `ScmService` (async cache on Background pool) |
+| `syntax/` (~2.5k lines) | `Syntax` fallback lexer per language; `TreeHighlighter` (dlopen grammar + tree-sitter, embedded queries); `GrammarInstaller` (download + cc → .so) |
+| `terminal/` (~1.2k lines) | `PtySession` (forkpty), `VtParser` (CSI/SGR/OSC), `TerminalScreen` (grid + scrollback), `TerminalSession` glue |
+| `configs/` (~1.3k lines) | `mini_json` (own JSON parser), `config.cpp` (AppConfig), `keybindings*.cpp` (chord engine: parse/raw-mapping/when/pending) |
+| `commands/` | `CommandRegistry` (CommandId → fn) + `InputContext`/`ResolveStatus` (`includes/commands/command.hpp`) |
+| `extensions/` | EditorEvents bus, ExtensionContext, ExtensionManager, builtin demo `noni.hello` |
+| `help/` | `:help` pages (`HelpDocs::build`) |
+| `sidebar/` | `DirScanner` (async tree scan on Background) |
+| `workspace/` | root detection, `SessionStore` (`session.json`), `RecoveryStore` (crash drafts), `RecentFiles` |
+| `utils/` | Logger, Messages, FS (atomic write), Git (popen), Clipboard (wl-copy/xclip/xsel/OSC52), Fuzzy+FileIndex, TextSearch (async grep), TextMetrics (UTF-8/UTF-16/display), Background pool, EventWake, FsWatcher (inotify), str helpers, args |
+| `old/config.json(.bak)` | shipped 83-key config; `keybinds.txt` = notes only (never loaded) |
 
-## 1.5 Runtime (from `old/sys.txt` PART I/AB, code-verified by author 2026-09-26)
+Files kept out of the app: `old/keymap-catalog.md` (nvim/vscode cross-check notes —
+partially stale), `old/sys.txt` (architecture doc), `old/PROGRESS.md` (work queue),
+`old/simpletodo.txt` (split tracker), `old/.cursor/rules/*` (author rules), `old/.clangd`.
 
-Main loop `UI::run` (`old/src/ui/ui_loop.cpp`) is poll()-driven on a single thread:
-fds = stdin + EventWake + FsWatcher inotify + PTY master + all LSP stdouts. All LSP/PTY
-pumping happens on main after poll — there are **no** reader threads for them (only
-Logger has a thread; Background holds a 2-worker job pool). Dirty-flag rendering paints
-only changed ncurses `WINDOW`s.
+## 1.5 Runtime shape
+
+Single main thread (`old/src/ui/ui_loop.cpp`): `poll()` on stdin + EventWake + inotify +
+PTY master + every LSP stdout; LSP/PTY output is pumped on main (no reader threads —
+T7.1); only Logger has its own thread; 2 Background workers run dir scanning, file
+indexing, project grep, SCM refresh, grammar/LSP installs. Rendering paints only dirty
+ncurses windows (`old/src/ui/ui_render*.cpp`).
 
 ---
 
 # 2. Feature inventory
 
-Status legend: **Complete** / **Partial** / **Stub** / **Broken-looking** / **Unknown**.
+Legend: **Complete / Partial / Stub / Broken-looking / Unknown** — with one line of
+evidence each.
 
 ## 2.1 Editing
 
-| Feature | Where | Status | Evidence |
-|---|---|---|---|
-| Buffer: line array, UTF-8 text, revision + content_id dirty tracking | `old/includes/editor/buffer.hpp`, `old/src/editor/buffer.cpp` | Complete | content_id vs saved_content_id in `buffer.hpp:35-38`; save clears |
-| Load file (incl. LoadError state) | `buffer.cpp` load(), `BufferLoadState` `buffer.hpp:19-23` | Complete | LoadError never treated as empty ✓ |
-| Atomic file writes (temp file + rename) | `old/src/utils/fs.cpp` `FS::write_file` (`mkstemp`-like `.noni.XXXXXX`, `fs.cpp:55`) | Complete | rename-based write |
-| mtime external-change detection + notify | `buffer.hpp:54-56` disk_mtime_, disk_changed(), `external_change_notified_` | Complete | flag consumed by UI autosave path (`sys.txt` T6.7) |
-| Save / save-as (`:w` to new path) | `buffer_io.cpp:61-120` | Complete | save() rejected when LoadError 🛡 |
-| Apply recovery snapshot | `buffer_io.cpp:122-146` | Complete | keeps dirty so we never auto-overwrite files |
-| Insert/delete char at/before, insert text, insert newline, delete range | `old/src/editor/buffer_insert.cpp`, `old/src/editor/buffer_delete.cpp`, `buffer.hpp:153-162` | Complete | used by editor component |
-| Undo/redo (transaction-based, cursor snapshot inside txn), max 256 entries | `buffer.hpp:40-44 kMaxUndo=256`, `old/src/editor/buffer_io.cpp:1-59` | Complete | author's stated design matches |
-| Undo txn semantics via begin_edit/end_edit with cursor handed in | `buffer.hpp:144-145`, Buffer::save() closes any open txn at `buffer_io.cpp:78-79` | Complete | caller owns boundaries |
-| Registers (unnamed a-z " etc.) | `old/includes/editor/registers.hpp` header-only | Complete | RegisterFile has named+unnamed |
-| Marks a-z | `old/includes/editor/marks.hpp`, set via Normal `m`, jump via `'a` | Complete | MarkTable with invalidate_buffer |
-| Jump list | `old/includes/editor/jumps.hpp`, pushed on big moves (`old/src/components/editor_cursor.cpp:50`) | Complete | cap 100 |
-| Comment toggle `gcc`, Visual `gc`, `ctrl+/` | `old/src/components/editor_cmds_edit.cpp` + CommentTokens `old/includes/editor/comment_tokens.hpp` | Complete/Partial | author marked working in T6.2; token support per-language — Partial coverage of languages |
-| Copy line down `ctrl+e`, move line alt+j/k/up/down | `COMMAND_ID copyLinesDownAction/moveLinesDownAction` in `old/src/ui/ui_commands_keymap.cpp` | Complete | author verified T6.6 |
-
-| Clipboard read/write (wl-copy→xclip→xsel; OSC52 fallback on stdout) | `old/src/utils/clipboard.cpp` | Complete | `Clipboard::write/read/write_osc52`, base64 encoding inline |
-| Clipboard sync on yank/copy/cut | `Editor::yank_range` → `Clipboard::write` if `clipboard_sync_` (`old/src/components/editor_yank.cpp:20-24`) shall route through ui path | Complete | flag from config `clipboard.sync` |
-| Clipboard paste INSERT (KEY_SIC) + `ctrl+v` | `old/src/components/editor_edit.cpp:44-57 paste_clipboard` | Complete | |
-| Autosave afterDelay (default 1000ms; skip untitled; skip external-mtime conflicts) | `old/src/ui/ui_features.cpp`/autosave tick in ui.cpp; config `old/includes/configs/config.hpp AutosaveConfig` | Partial | author verified via T6.7 |
-| Format-on-save with LSP formatting, 2s deadline | `old/src/ui/ui_tabs.cpp:85-110` | Partial | blocking poll-loop on UI thread — hidden freeze |
-| UTF-8 typing (get_wch, cp>126) | `old/src/ui/ui_input.cpp` `insert_focused_utf8`, `old/src/components/editor_insert.cpp:126-137` | Complete | author T1.7 |
-| Retired: `jj` exit (old) → now `jk` via pending_j | `old/src/components/editor_insert.cpp:8-27,108-117` | Complete | matches `sys.txt` T4 |
-
-PTM check note for review: `Buffer::sync_syntax(int lo, int hi)` is called from
-`Editor::draw_window_pane (old/src/components/editor_draw.cpp:20)` — syntax parse only for
-visible rows (viewport-based, so cheap even for big buffers). Full-buffer highlight is
-only forced on load/undo/redo (`buffer_io.cpp` invalidate_all, `TreeHighlighter`).
+| # | Feature | Lives in | Status | Evidence |
+|---|---|---|---|---|
+| 1 | Line-based buffer, UTF-8 text, revision + `content_id` dirty tracking | `includes/editor/buffer.hpp:29-44`, `src/editor/buffer.cpp` | Complete | `content_id` vs `saved_content_id` |
+| 2 | File load with real LoadError state (never silently blanked) | `buffer.hpp:19-23 BufferLoadState`, `buffer.cpp load()` | Complete | save() refuses on `LoadError` (`buffer_io.cpp:69-76`) |
+| 3 | Atomic save (temp file → rename) | `src/utils/fs.cpp` (`FS::write_file`, `.noni.XXXXXX` temp at `fs.cpp:55`) | Complete | rename-based |
+| 4 | External-change detection (disk mtime captured on load/save) | `buffer.hpp:54-56`, `disk_changed()` | Complete | flag consumed by autosave (sys T6.7) |
+| 5 | Save / save-as (`:w path`, untitled→named) | `src/editor/buffer_io.cpp:61-120`, `src/ui/ui_ex.cpp ex_write` | Complete | save_as retargets path |
+| 6 | Undo/redo — per-Buffer transaction stack, `kMaxUndo=256`, txn stores cursor before/after | `buffer.hpp:40-44`, `buffer_io.cpp:5-59 undo()/redo()` | Complete | stacks + `apply_transaction_reverse/forward` |
+| 7 | Begin/end edit transaction grouping (typing, arrows split txns) | `buffer.hpp:144-146`, `src/components/editor_insert.cpp` `split_insert_edit` | Complete | save()/recovery close any open txn (`buffer_io.cpp:78-79`) |
+| 8 | Insert/delete char/text, newline, delete range | `src/editor/buffer_insert.cpp`, `buffer_delete.cpp` | Complete | used by editor ops |
+| 9 | Registers (unnamed + a–z + `"`), pending register via `"` prefix | `includes/editor/registers.hpp` (header-only), `editor.cpp` pending_register | Complete | `RegisterFile` |
+| 10 | Marks a–z, set `m`, jump `'x` | `includes/editor/marks.hpp`, `editor_normal.cpp:113-118` | Complete | MarkTable invalidate_buffer |
+| 11 | Jump list (push on big moves, Ctrl+O back / Tab forward) | `includes/editor/jumps.hpp`, `src/components/editor_cursor.cpp:41-56` pushes on >1-line moves | Complete | cap 100 (sys PART R) |
+| 12 | Comment toggle `gcc` / Visual `gc` / `ctrl+/` | `includes/editor/comment_tokens.hpp`, `src/components/editor_cmds_edit.cpp`, `ui_commands_keymap.cpp` | Complete | verified T6.2 (`PROGRESS.md`) |
+| 13 | Move/copy lines: `alt+j/k/up/down`, `ctrl+e` | `ui_commands_keymap.cpp` (copyLinesDown / moveLines/Up/Down) | Complete | T6.6 verified |
+| 14 | Read/write clipboard: wl-copy → xclip → xsel, OSC52 base64 fallback on stdout; read wl-paste/xclip/xsel | `src/utils/clipboard.cpp` (`Clipboard::read/write/write_osc52`) | Complete | but **blocking subprocesses on main thread** → see §5 |
+| 15 | Clipboard sync yank/copy/cut/paste when `clipboard.sync` | `src/components/editor_yank.cpp:20-24`, `editor_edit.cpp:44-57`, `Editor::clipboard_sync_` (`includes/components/editor.hpp:34`) | Complete | |
+| 16 | Paste `p/P` char/linewise from registers | `src/components/editor_ops.cpp:65-129 paste_register` | Complete | handles Line vs Character registers |
+| 17 | Paste from system clipboard (`ctrl+v`, KEY_SIC in insert) | `editor_ops.cpp` / `editor_edit.cpp` | Complete | blocking (see §5) |
+| 18 | Autosave `afterDelay` (default 1000ms; skips untitled + external-mtime conflict; never formats) | `ui_features.cpp` tick + `config.hpp AutosaveConfig` | Complete | T6.7 verified |
+| 19 | Format-on-save via LSP (2s deadline) + manual format | `src/ui/ui_tabs.cpp:85-110` | Partial | **spin-waits on UI thread up to 2 s** → §5 issue 2 |
+| 20 | UTF-8 typing: `get_wch` codepoints → `insert_focused_utf8` routing | `src/ui/ui_input.cpp:22-62`, `editor_insert.cpp:126-137 insert_utf8` | Complete | T1.7 verified |
+| 21 | Insert-mode exit `jk` (deletes the pending `j`; old `jj` removed in T4) | `src/components/editor_insert.cpp:8-27,108-117 pending_j` | Complete | |
+| 22 | Recovery snapshot apply | `buffer_io.cpp:122-146 apply_recovered_content` | Complete | keeps dirty so snapshots never auto-overwrite files |
+| 23 | No auto-indent / smart indent on Enter or joins | `buffer_insert.cpp raw_insert_newline`, `editor_insert.cpp:93-100` | **Stub** | no indentation computation anywhere (grep: no indent logic in insert path) |
 
 ## 2.2 Vim modes
 
-| Feature | Where | Status | Evidence |
-|---|---|---|---|
-| Modes Normal/Insert/Visual/VisualLine | `old/includes/editor/editor_tab.hpp:12-18` + `old/src/components/editor_mode.cpp` | Complete | routing in Editor::handle_input |
-| Normal motions h j k w b e 0 ^ $ G + arrows | `old/includes/editor/motion.hpp` + `old/src/components/editor_normal.cpp:14-131` | Partial | **no ds//cs elsewhere, no `f/F/t/T` (find char), no `r/R`, no `\|`/count prefixes/pipes, no `%` match-motion** (motion.hpp has only word+line motions) |
-| Word motions w/b/e | `old/includes/editor/motion_word*.hpp` (word forward/backward/end) | Complete/Partial | 3 files exist; author marked them working |
-| Line motions | `old/includes/editor/motion_line.hpp` | Complete | |
-| Operators d c y with motions (e.g. `dw` `ciw`) | `old/src/components/editor_normal_prefix.cpp` (pending_op) | Partial | sys.txt PART T3 covers dd/cc/yy + with-motion |
-| dd/cc/yy linewise | same file | Complete | |
-| o/O open line + insert | handled in Normal mode | Complete | sys.txt …  |
-| x (delete char) | `editor_normal_edit.cpp` | Complete | |
-| s / S / C | `editor_normal_edit.cpp` (per sys.txt: substitute/change line/change to eol) | Complete per code map |
-| p / P paste (behind/ahead), linewise vs char | `old/src/components/editor_ops.cpp:65-129` | Complete | inserts register then restores cursor (no code-check re-snapshot like beyond) |
-| Visual mode (character & line) selection, yank/delete/change below | `old/src/components/editor_visual.cpp` (validate visual intact `if key == 'd'…`) and `editor_visual_state.cpp`, apply via `Window::selected_range` | Partial (see 2.17) | only gg-exchange, no o/O cursor-version, no discard |
-| Visual `d`/`x`, `c`/`s`, `y`, `p`/`P` | `editor_visual.cpp:32-66` | Complete (key handling) | uses op machinery |
-| Visual scroll keys Ctrl-D/U/PgUp/PgDn | `editor_visual.cpp:82-101` | Complete | |
-| Normal `v`/`V` → visual | `editor_normal.cpp:70-75` → `enter_visual_char/line` | Complete | |
-| Visual `esc` → normal (clears selection) | `editor_visual_state.cpp:23-29 leave_visual()` | Complete | |
-| Insert `jk` exit | `editor_insert.cpp pending_j` logic | Complete | |
-
-| Normal search `/` + `?` prompt | `editor_normal.cpp:76-83` → `on_search_forward_/backward_` (:UI callbacks) → CommandLine | Complete | |
-| `n` / `N` next/prev match | `editor_normal.cpp:84-103` → `EditorCore::search_next/prev` | Complete | |
-| Navigation via marks (m + ') | `editor_normal.cpp:113-118` pending_m / pending_jump_mark | Complete | MarkTable |
-| `K` LSP hover | `editor_normal.cpp:123-126` on_hover_ | Complete | signature from UI |
-| `gg` (Normal+Visual), `gt`/`gT` tab change, gd/gD/gy/gr/gi LSP jumps | `old/src/components/editor_normal_prefix.cpp` (pending_g) + `editor_visual.cpp:37-49` | Complete | |
-| `dgg`/`ygg`/`cw` etc with `g` prefix; `gi` last insert | `editor_normal_prefix.cpp` + `last_insert_` state in `editor.hpp:26-28` | Complete | |
-| Comment toggles `gcc` & Visual `gc` | `editor_normal_prefix.cpp pending_gc_` + `cmd_toggle_comment` | Complete (T6.2 verified) | |
-| `Tab`/`Ctrl-I` jump forward (tab sidebar binding removed T5) | normal handle Tab → jumps().forward | Partial | no binding into config engine (documented in `sys.txt` T5), and Normal-mode hard Tab vs nvim MiniPairs-like custom bindings absent |
-| `<` `>` indent Visual | **not handled in `handle_visual_input`** (`old/src/components/editor_visual.cpp` switch has no `<`/`>` case) | Stub | Issue: indent missing |
-
-| U undo / Ctrl-R redo / :u / :redo | `editor_normal_edit.cpp` + ExCommands `old/src/editor/ex_commands.cpp` | Complete | `sys.txt` PART V |
-| gl LineNumber: relative? `.cursor/rules` + keybinds show `space s s.ln6` was planned for `:set relativenumber` toggle by file — **not in code** | Search old/src grep `.cursor/rules/*` no. Non-app file. | Stub (FilePicker rescan nothing) | `old/keybinds.txt`, `old/.cursor/rules/file-size.mdc`, `old/keymap-catalog.md` — grep of src found nothing |
-| Ctrl+O back jump | normal tab — `editor_normal.cpp` case Tab & Ctrl-O raw 15 → jumps().back (sys.txt PART T3) | Complete | in code |
+| # | Feature | Lives in | Status | Evidence |
+|---|---|---|---|---|
+| 1 | Modes Normal / Insert / Visual / VisualLine | `includes/editor/editor_tab.hpp:12-18`, `src/components/editor_mode.cpp`, dispatch in `Editor::handle_input` | Complete | |
+| 2 | Motions h/j/k/l/arrows/w/b/e/0/^/$/G | `includes/editor/motion.hpp` (+ `motion_word*.hpp`, `motion_line.hpp`, `motion_basic.hpp`, `motion_word_back/end.hpp`), `src/components/editor_normal.cpp:14-131`, `editor_impl.hpp:133-190 motion_from_key` | Partial | **no `f/F/t/T` find-char, no `r/R` replace, no `%` match, no counts** (`3w`) — motion namespace only has word/line/file motions |
+| 3 | Operators `d`/`c`/`y` + motion (`dw`, `ciw`, …), `dd/cc/yy` linewise | `src/components/editor_normal_prefix.cpp` (pending_op) + `editor_ops.cpp` | Partial | path exists; only Delete/Change/Yank ops (`PendingOperator` enum in `editor.hpp:19-24`) — no `gu/gU`, `>`, `<` |
+| 4 | Insert entry: i/a/I/A/o/O | `editor_normal_edit.cpp` → `enter_insert_mode` | Complete | |
+| 5 | Visual selection model (anchor on Window, char/line kinds, normalize to byte ranges) | `includes/editor/selection.hpp`, `includes/editor/window.hpp:62-116` | Complete(-ish) | semantics described in §5 issue 1 |
+| 6 | Visual ops d/x/c/s/y/p/P + motions + scroll + `gg` + `gc` | `src/components/editor_visual.cpp` (all of it, 102 lines) | Partial | **no `o`/`O` cursor-flip, no `<`/`>` indent, no `S` surround** |
+| 7 | `x` delete, `s/S/C`, `p/P` | `src/components/editor_normal_edit.cpp`, `editor_ops.cpp` | Complete | |
+| 8 | `u`/`ctrl+r` undo/redo; `:u`/`:redo` | `editor_normal_edit.cpp`, `ex_commands.cpp` | Complete | also `ctrl+z`/`ctrl+y` config (see §5 issue 4) |
+| 9 | `"/register` prefix, `m`/`'` marks, pending g/bracket prefixes | `editor_normal_prefix.cpp` + pending flags `editor.hpp:22-32` | Complete | |
+| 10 | `:` → CommandLine; `/` `?` search entry; `n/N` | `editor_normal.cpp:76-103,119-122`, `src/ui/ui_ex.cpp:4-31 execute_command` | Complete | `/`+`?` route through CommandLine prompt, not ex |
+| 11 | `K` LSP hover, `gd/gD/gy/gr/gi` LSP jumps, `g t/g T` tabs, `g g` file-start, `g c` comment | `editor_normal_prefix.cpp`, callbacks `editor.hpp:40-48` | Complete | wired in `ui.cpp` `Editor::bind` |
+| 12 | `[d`/`]d` diagnostic jump with wrap | `editor_normal_prefix.cpp` (`pending_bracket_`) | Complete | T6.4 verified |
+| 13 | Insert mode: Backspace/Delete/Tab/Enter/arrows/Page keys; Backspace at col 0 merges lines | `editor_insert.cpp:29-124` | Partial | merge loses indent handling (§5 issue 5) |
+| 14 | Insert mode redo `ctrl+r` hardcoded | `editor_insert.cpp` (raw 18 per sys PART T3) | Complete | |
+| 15 | Terminal-mode key pass-through & DECCKM app-cursor | `src/components/terminal_panel_part2.cpp:102+`, `ui_input.cpp` Terminal branch | Complete | |
+| 16 | Mouse | — | **Stub** | no mousemask/KEY_MOUSE anywhere (grep) |
 
 ## 2.3 Navigation
 
-| Feature | Where | Status | Evidence |
-|---|---|---|---|
-| Split windows (right/down), focus left/right/up/down, resize width/height +/-, close group | `old/includes/editor/window_layout.hpp` (WindowLayout binary tree + compute_rects) + `old/src/editor/window_layout*.cpp` + commands `workbench.action.splitEditorRight/Down`, `focusLeft/Right/…Group` in `old/src/ui/ui_commands_nav.cpp` | Complete (set of 25-registered commands) | draw via `rects_cache_` (`old/src/components/editor_draw.cpp:90-120`) |
-| Per-tab line numbers gutter, markers, gutter marks, right side? (Right side) — Right side** | **`old/src/components/line_number.cpp` handles gutter only similarly (theme pairs 61-82 — GutterAdded/Modified/Deleted from `old/src/ui/theme.cpp:196-297`)** | Complete | documented in `old/sys.txt` PART |
-| Buffer/tabs: new untitled, open file, switch, close, close-all others, next/prev, reorder | `old/src/editor/buffer_manager.cpp` + `old/src/ui/ui_tabs.cpp` close/save; commands in `ui_commands.cpp` | Partial | “close others” is via `closeAsGroup`? (registered command `closeActiveEditorGroup` — exact behavior **Unknown** |
-
-| FilePicker (fuzzy file open, Ctrl+P, `space f f`, `space s s` for FileSearch? Same) | `old/src/components/file_picker.cpp` + `old/src/utils/fuzzy.cpp` FileIndex (background rebuild) | Complete | `sys.txt` verified with dirty flags post T7.7 |
-| BufferPicker (`space f b`, `:buffers`) | `old/src/components/buffer_picker.cpp` | Complete | shows all tabs in BufferManager |
-| LspPicker (locations/symbols/actions/install) | `old/src/components/lsp_picker.cpp` + `old/src/ui/ui_lsp.cpp` | Complete | enter → proper action |
-| CompletionPicker | `old/src/components/completion_picker.cpp` | Complete (per UI code); interact with LSP server pending |
-| Goto line (`:LN` via number | **not in code** (`old/keybinds.txt` line for s1 note) | Stub | noted in `old/keybinds.txt` & `old/keymap-catalog.md` (“go to line” never bound in code), search of src for “gotoLine” returns only `workbench.action.gotoLine`→UI (ui_commands_keymap.cpp:12) producing messages…? |
-| Sidebar tree expand/collapse via h/l/Enter | `old/src/components/sidebar_nav.cpp` + `sidebar.cpp:293-420` | Complete | |
-| Sidebar create/rename/delete + clipboard cut/copy/paste, refresh | `old/src/components/sidebar_fs.cpp`, `sidebar_clip.cpp`, `sidebar_input.cpp`, `ui_sidebar_delete.cpp`, prompts | Complete | uses FS wrappers |
-| Fuzzy quickOpen `space space`, `space f f`; unrelated greenfield menu `f w` (grep word) | grep word stub (see below) | See inventory item “search.grepWord stub” | |
+| # | Feature | Lives in | Status | Evidence |
+|---|---|---|---|---|
+| 1 | Splits (vertical/horizontal), focus traversal, resize ±, close group | `includes/editor/window_layout.hpp` (header-only binary tree), `src/editor/window_layout*.cpp`, commands `workbench.action.splitEditorRight/Down`, `focus*Group`, `increase/decreaseView*` in `src/ui/ui_commands_nav.cpp` | Complete | rects computed per draw (`editor_draw.cpp:90-120`) |
+| 2 | Tab strip UI + per-tab mode | `src/components/tab_bar.cpp`, `src/ui/ui_tabs.cpp sync_active_tab` | Complete | |
+| 3 | Buffer lifecycle (open file/untitled, switch, next/prev, close with save-confirm) | `src/editor/buffer_manager*.cpp`, `src/ui/ui_tabs.cpp` | Complete | BufferManager owns `unique_ptr<Buffer>` + tabs; destroy only when unreferenced (sys) |
+| 4 | Goto line `ctrl+g` → `:NNN` | `src/ui/ui_commands_keymap.cpp:12-19 GotoLine`, ex parser `src/editor/ex_commands.cpp:36-72` | **Broken-looking** | command opens `:` + hint, but parse **skips leading digits** ("range tokens ... future use", `ex_commands.cpp:40-46` → same for `%`, `.`, `$`) and then early-returns silently on empty name (`ex_commands.cpp:121-122`) — typing a number does **nothing** |
+| 5 | FilePicker fuzzy-open (`ctrl+p`, `space f f`, `space space`) | `src/components/file_picker(.cpp,_part2.cpp)`, `src/utils/fuzzy(_index|_detail).cpp FileIndex` | Complete | async rebuild + version guard |
+| 6 | BufferPicker (`space f b`, `:buffers`) | `src/components/buffer_picker(.cpp,_part2.cpp)` | Complete | |
+| 7 | Recent-files picker (`space f r`) | `src/workspace/recent_files.cpp`, `ui_commands_keymap.cpp` | Complete | |
+| 8 | LspPicker (locations/symbols/actions/install-catalog) | `src/components/lsp_picker(.cpp,_part2.cpp)`, `src/ui/ui_lsp.cpp` | Complete | |
+| 9 | Sidebar explorer tree: lazy dirs, expand/collapse, open file, reveal active | `src/components/sidebar*.cpp` (7 files), `src/sidebar/dirscanner*.cpp` | Complete | `reveal_path` in `sidebar_nav.cpp:54-101` |
+| 10 | Sidebar CRUD: add file/folder, rename, delete (confirm), cut/copy/paste, refresh | `sidebar_fs.cpp`, `sidebar_clip.cpp`, `sidebar_input.cpp`, `sidebar_nav.cpp`, `src/ui/ui_sidebar_delete.cpp`, `ui_sidebar_prompt.cpp` | Complete | uses FS helpers |
+| 11 | Workspace root detect (git root → marker walk), `:workspace`/openWorkspace | `src/workspace/workspace.cpp`, `src/ui/ui_workspace.cpp`, ex `:workspace` | Complete | marker list at `workspace.cpp` (sys G6) |
 
 ## 2.4 Search / Replace
 
-| Feature | Where | Status | Evidence |
-|---|---|---|---|
-| In-buffer search `/` `?` prompt, match list, incremental n/N going deeper, highlight current | `old/src/editor/buffer_search.cpp` (whole_word + case + regex per `BufferSearchQuery`) + `old/src/components/editor_search.cpp` access via UI search callbacks | Complete | `BufferSearch::find_all` (regex ECMAScript, case-insens option, whole-word check `buffer_search.cpp:37-118`) |
-| Search highlight in render | `old/src/components/editor_draw_overlay.cpp:85-127` draw_search_highlight | Complete | current match uses SearchMatchCurrent pair |
-| Project-wide async grep with match sampler (skip node_modules, binary dirs) + replaceOne/replaceAll | `old/src/utils/text_search.cpp` + `TextSearch::search_async` + `old/src/ui/ui_search.cpp` + editor action command `old/src/ui/ui_commands_nav.cpp:56-77` | Partial | replaceOne+replaceAll registered but current-match support is per-buffer only; No global “replace all in files” — only per-buffer search panel replace via `EditorCore` |
-| Search side panel (Query field, Replace field, regex/case/whole-word toggles F6/F7/F8, Tab cycling) | `old/src/components/search_panel.cpp` (+ part2/3) + Focus Search in `old/src/ui/ui_input.cpp`; F6/7/8 handled in server, key → focus Search UI | Complete | confirmed in ui_input.cpp hot code (Enter in Query → run search; Enter in Replace → ReplaceAll; Results: `r` ReplaceAll) |
-| Search result open match in editor; replace-all only for active buffer | `old/src/ui/ui_search.cpp` + `old/src/editor/editor_core.cpp` (EditorCore::replace_all) | Partial | per `sys.txt` PART U replaceAll registered but only wired to SearchPanel Replace field — no multi-file replace |
-| Reaction to in-buffer query delete when editing — prune matches | `old/src/editor/buffer_search_part2.cpp` | Complete | |
-
-`space f w` (grep word under cursor) → **Stub** (`old/src/ui/ui_commands_keymap.cpp:63`: only `Messages::info(...)`). Noted in `old/sys.txt` PART AD as PHASE 5.
+| # | Feature | Lives in | Status | Evidence |
+|---|---|---|---|---|
+| 1 | In-buffer search `/` `?` + match set + `n/N` + highlight current match | `src/editor/buffer_search*.cpp` (`BufferSearch::find_all` regex ECMAScript / literal / case / whole-word, `buffer_search.cpp:37-118`), core in `src/editor/editor_core.cpp search_start/next` (`editor_core.cpp:46+`), highlight `editor_draw_overlay.cpp:85-127` | Complete | |
+| 2 | Search UI search-panel side view with Query/Replace fields, F6/F7/F8 (case/whole-word/regex), Tab cycle, Results list with open-match/ReplaceAll | `src/components/search_panel(.cpp,_part2,_part3).cpp`, `src/ui/ui_search.cpp`, focus routing in `ui_input.cpp` | Complete | SearchText vs SearchResults contexts (T1.3) |
+| 3 | Live search while typing in Query field | `search_panel.cpp` run_search on each printed key | Complete | |
+| 4 | Project-wide async grep (skip VCS/vendor/binary dirs, background pool, cancel token) | `src/utils/text_search*.cpp` (`TextSearch::search_async`), skip list `text_search.cpp:7-30` | Complete | |
+| 5 | `replaceOne` / `replaceAll` in active buffer | `src/ui/ui_commands_nav.cpp:56-77`, `src/editor/editor_core.cpp replace_*` | Partial | single-buffer only; no multi-file replace UI |
+| 6 | `space f w` grep-word-under-cursor | `src/ui/ui_commands_keymap.cpp:63` | **Stub** | only `Messages::info("PHASE 5 …")` (sys PART AD) |
 
 ## 2.5 Syntax highlighting
 
-| Feature | Where | Status | Evidence |
-|---|---|---|---|
-| Tree-sitter parse + per-language embedded queries | `old/src/syntax/tree_highlighter.cpp` (`kQueryC/Python/JS/Rust/Bash/Json/Lua/Markdown` queries inline; `old/src/syntax/ts_queries.hpp` fallback references) | Partial (languages C, Cpp, Python, Rust, JS/TS, Go?, Lua, Markdown, Bash, Json; Missing: CSharp, Java, Way more? Go/Java fallback only) | per `old/sys.txt` PART Y mapping table; ts_hl_detail.hpp for missing go/java |
-
-| Fallback lexer per-language | `old/src/syntax/syntax.cpp` highlight_line + `syntax_generic.cpp` + `syntax_kw*.cpp` + `syntax_md.cpp` | Complete (Plain/Markdown/Cpp/C/Py/Rust/Go/JS/TS/JSON/Shell/Lua/Java/CSharp) | used when grammar missing |
-| Grammar auto-download & build (curl+tar or git clone, cc compile to .so, queue, retry 60s, log to `logs/grammar-install.log`) | `old/src/syntax/grammar_installer.cpp` + `grammar_download.cpp`/`grammar_compile.cpp` + `grammar_request.cpp`/`grammar_state.cpp`/`grammar_tools.cpp` | Partial | complete for 10 languages; CSharp and Plain skipped (`so_for_language` returns nullptr); Build on first open + auto-install flag `syntaxAutoInstall` |
-| Search dirs /usr/lib/tree_sitter, ~/.local/share/noni/tree-sitter, <ws>/.noni/tree-sitter, user_dir, /tmp fallback | `grammar_installer.cpp find_grammar` (~line 619+) | Complete | per sys.txt PART Y ordering |
-| Theme: 90 color pairs, custom terminal colors from id 16 when can_change_color | `old/src/ui/theme.cpp:159-297` | Complete | uses 256-cube/gray fallback |
-| Incremental re-parse on edit (ts_tree_edit + incremental parse; fallback full parse) | `tree_highlighter.cpp notify_edit / sync` (~line 660-739) + `old/src/syntax/tree_highlighter_sync.cpp` | Complete | pending edits queue, dirty_from tracking |
+| # | Feature | Lives in | Status | Evidence |
+|---|---|---|---|---|
+| 1 | Fallback lexer per language (Plain/MD/C/C++/Python/Rust/Go/JS/TS/JSON/Shell/Lua/Java/C#) | `src/syntax/syntax.cpp` (+ `syntax_generic/_kw/_kw_cxx/_kw_more/_md/_scan_*.cpp`) | Complete | `Syntax::detect_language` maps ext→Language (sys Y) |
+| 2 | Tree-sitter highlighting with embedded per-language queries | `src/syntax/tree_highlighter*.cpp`, `ts_hl_detail(.hpp|.cpp)`, `ts_queries.hpp` | Partial | queries for C/C++, Python, JS(+TS), Rust, Bash, JSON, Lua, Markdown; **Go/Java: grammar installed but no query → lexer only (`sys` Y); C#: nothing** |
+| 3 | Incremental re-parse (ts_tree_edit per change) + viewport-limited sync | `tree_highlighter.cpp notify_edit/sync` (~357-738), `Buffer::sync_syntax` (`buffer.cpp:156`), paint calls sync with visible rows (`editor_draw.cpp:20`) | Complete | dirty_from tracking + pending edits |
+| 4 | Grammar lookup chain `/usr/lib/tree_sitter` → `~/.local/share/noni/tree-sitter` → `<ws>/.noni/tree-sitter` → user_dir → `/tmp` | `src/syntax/grammar_installer.cpp find_grammar` (~619-648) | Complete | sys Y |
+| 5 | Grammar auto-install: curl tarball or git clone fallback + `cc` shared build, retry 60 s, logs to `logs/grammar-install.log` | `grammar_installer.cpp` + `grammar_download/_compile/_tools/_request/_state.cpp`, trigger `set_auto_install(config)` | Complete | runs on Background pool |
+| 6 | Theme: 90 color pairs, init_color customization when terminal supports | `src/ui/theme.cpp:159-297` (`make_color` 8/256/custom), `includes/ui/theme.hpp` | Complete | fallback chain |
+| 7 | `syntaxAutoInstall` flag (default true) | `config.cpp` bool-only check | Complete | disabled install = silent no-grammar |
 
 ## 2.6 LSP
 
-| Feature | Where | Status | Evidence |
-|---|---|---|---|
-| JSON-RPC framing (Content-Length), request/notification/response; handle inbound; ignore unknown responses, `-32601` for unknown server requests | `old/src/lsp/lsp_jsonrpc.cpp` + `old/src/lsp/lsp_session_msg.cpp` | Complete | sys.txt PART X; `-32601` seen at `lsp_session_msg.cpp:78` |
-| Child process (fork + exec + pipes; stderr → `logs/lsp.stderr.log`; non-blocking stdout pump on main; SIGTERM 1s then SIGKILL) | `old/src/lsp/lsp_process.cpp` | Complete | `stop()` graceful-bounded (`lsp_process.cpp:108-146`); reader thread removed in T7.1 (`sys.txt`) |
-| Session lifecycle: initialize/init handshake, pending didOpen while Starting, state Idle/Starting/Running/Failed/Stopped | `old/src/lsp/lsp_session.cpp` + `old/src/lsp/lsp_service.cpp` | Complete | `sys.txt` PART X section code-checked |
-| didChange full (0/1) + incremental (2, UTF-16) | `old/src/lsp/lsp_service*.cpp` (`did_change_incremental`), config-driven via initialize result | Complete | honored textDocumentSync, but multi-line delete → full retry fallback |
-| didOpen/didSave/didClose (with open_uris_ registry) | `old/src/lsp/lsp_session_doc.cpp` + `lsp_service.cpp` | Complete | |
-| Completion (Ctrl+Space), CompletionList data | `old/src/lsp/lsp_session_req.cpp request_completion`, results via `old/src/lsp/lsp_result.cpp` + models `old/includes/lsp/completion.hpp` | Complete | |
-| Definition / Declaration / TypeDefinition / References / DocumentSymbol / WorkspaceSymbol / Rename / CodeAction requests | `lsp_session_req.cpp` + `old/src/lsp/lsp_parse_edit.cpp`/`lsp_parse_item.cpp` | Partial | CodeAction handling: only apply when action has `edit`; forward `command`-only actions → **stub** (`old/ui/ui_lsp.cpp:184` messages “Code action command not executed”) |
-| Diagnostics (publish → Buffer diagnostics snapshot version-gated) | `old/src/lsp/lsp_dispatch_diag.cpp` + `old/includes/lsp/diagnostics.hpp` + Buffer::set_diagnostics | Complete | |
-| Diagnostics gutter marks + hover overlay highlight | `old/src/components/line_number.cpp` draw + `old/src/components/editor_draw_overlay.cpp:129+` | Complete | |
+| # | Feature | Lives in | Status | Evidence |
+|---|---|---|---|---|
+| 1 | JSON-RPC framing (Content-Length), request/notification/response demux | `src/lsp/lsp_jsonrpc.cpp`, `lsp_session_msg.cpp` | Complete | unknown server requests → `-32601` (`lsp_session_msg.cpp:78`) |
+| 2 | Process layer: fork/exec pipes, stderr → `logs/lsp.stderr.log`, non-blocking stdout pumped on main, SIGTERM→1 s wait→SIGKILL | `src/lsp/lsp_process.cpp` (start 20-106, stop 108-146, write_all 153-172) | Complete-as-designed | **write_all is a blocking loop on the UI thread** (§5 issue 2) |
+| 3 | Session state machine Idle/Starting/Running/Failed/Stopped, restart on crash, pending didOpen while Starting | `src/lsp/lsp_service*.cpp`, `lsp_session*.cpp` | Complete | (sys X; T1.6) |
+| 4 | didOpen/didChange (0 none / 1 full / 2 incremental UTF-16)/didSave/didClose, `open_uris_` registry | `lsp_session_doc.cpp`, `lsp_service.cpp did_change_incremental` | Complete | multi-line change degrades to full resend (sys X; noted gap) |
+| 5 | Completion (ctrl+space) with CompletionList → CompletionPicker → `apply_completion` | `lsp_session_req.cpp request_completion`, `lsp_result.cpp`, `src/ui/ui_completion.cpp`, `editor.cpp apply_completion` | Complete | |
+| 6 | Definition/Declaration/TypeDefinition/References/Symbols/Rename | `lsp_session_req.cpp`, parse in `lsp_parse_item.cpp`/`lsp_parse_edit.cpp`, routing `src/ui/ui_lsp.cpp` | Complete | version-gated pending map (drop stale responses) |
+| 7 | Code actions (quickFix) — **edit-only** | `ui_lsp.cpp:184` + `includes/lsp/lsp_models.hpp:53` | Partial/Stub | actions with only `command` are logged, never executed |
+| 8 | WorkspaceEdit application (textDocument/edit only; CreateFile/RenameFile/DeleteFile skipped) | `src/lsp/lsp_edits.cpp`, `lsp_models.hpp` | Partial | documentChanges limited to TextDocumentEdit (sys X) |
+| 9 | Diagnostics publish → version-gated Buffer snapshot → gutter + strike/underline overlay + `[d ]d` + `space x x` picker | `lsp_dispatch_diag.cpp`, `includes/lsp/diagnostics.hpp`, `buffer.hpp:116-124 set_diagnostics`, `line_number.cpp`, `editor_draw_overlay.cpp:129+` | Complete | |
+| 10 | Hover `K` → HoverPopup | `editor_normal.cpp:123-126`, `src/components/hover_popup.cpp` | Complete | T6.3 |
+| 11 | Formatting request + apply (+ formatOnSave) | `lsp_service.cpp` request_formatting/take_format_result, `ui_tabs.cpp:85-110` | Partial | 2 s blocking poll on main (§5 issue 2) |
+| 12 | `$ /cancelRequest` never sent; no pending-request timeout | `lsp_service.cpp cancel_pending` (`sys` X) | Partial | cancel only clears local map |
+| 13 | Server auto-installer: pylsp (pip venv), tsserver (npm/bun prefix), clangd (curl GitHub zip 19.1.2), gopls (go), rust-analyzer (curl zip); dirs `~/.local/share/noni/lsp` → `<ws>/.noni/lsp` → `/tmp/noni-lsp-<uid>`; `:lsp` picker + `lsp.restart/showStatus`, status bar log | `src/lsp/lsp_installer*.cpp` (+ `_detail.hpp`), `src/components/lsp_picker.cpp`, `src/ui/ui_lsp.cpp` | Partial | 5-server catalog; servers without `lsp.servers[].language` install but never auto-spawn (sys K) |
+| 14 | rootMarkers: walk file dir upward, else workspace | `lsp_service.cpp session_for` (~950-1008) | Complete | C/Cpp fallback `"cpp"`/`"c"` |
 
-| Diagnostic jump [d / ]d (wrap) | editor prefix pending_bracket_ (`old/src/components/editor_normal_prefix.cpp`) | Complete | T6.4 |
-| Hover `K` → HoverPopup component | `on_hover_` + `old/src/components/hover_popup.cpp` | Complete | T6.3 |
-| Retry failed sessions with pending_opens_ re-doOpen | `old/src/lsp/lsp_session.cpp session_for` on fail | Complete | state machine per sys.txt T1.6 |
-| Restart / status commands (lsp.restart, lsp.showStatus) | `old/src/ui/ui_commands_nav.cpp:117-135` | Complete | |
-| Cancellation of in-flight LSP requests (no `$/cancelRequest` sent) | `old/src/lsp/lsp_service.cpp cancel_pending` | Partial | only local pending map does not blow it down |
-| 🖼 **Server auto-installer** (pylsp pip venv / tsserver npm-or-bun prefix / clangd curl GitHub zip / gopls go install / rust-analyzer curl zip), install dir `~/.local/share/noni/lsp` → `<ws>/.noni/lsp` → `/tmp/noni-lsp-<uid>`; :lsp install picker | `old/src/lsp/lsp_installer.cpp` + `_backends.cpp` + `_util.cpp` + `lsp_picker.cpp` LSP install catalog | Partial | catalog has 5 servers; language map “without lsp.servers[].language cannot auto-spawn” |
-| rootMarkers walk from file path then workspace root | `old/src/lsp/lsp_service.cpp session_for` (T1.6) | Complete | |
-| Format-on-save (2s) + manual format | `old/src/ui/ui_tabs.cpp:85-110` + `editor.action.formatDocument` | Partial | 2s freeze on UI thread → see Known Problems |
+## 2.7 Git (SCM) — via git CLI (no libgit2)
 
-## 2.7 Git (SCM)
-
-| Feature | Where | Status | Evidence |
-|---|---|---|---|
-| Repo root detection for status path handling | `old/includes/utils/git.hpp` `Git::is_repo` (checks `<root>/.git` exists) | Complete | `.git` dir presence — shallow |
-| git repo resolution for SCM + workspace root markers | `git CLI popen · old/src/utils/git.cpp (popen with shell-quoted args via shell_quote())` | Complete | sequence: `old/src/utils/git.cpp:3-16 shell_quote`, `run_git` → `run`/`run_ok` (streams captured) |
-| Status porcelain parse (scm_git + part2) | `old/src/scm/scm_git.cpp`, `scm_git_part2.cpp`, `old/includes/scm/scm_types.hpp` | Partial | no branch graph handling, no upstream |
-| Diff parsing for gutter | `old/src/scm/scm_diff.cpp parse_unified` (leading diff -U0) + `scm_types.hpp` | Partial | only -U0-style single-file edits; no renames + copy sources |
-| Async refresh service with generation counters | `old/src/scm/scm_service.cpp` + part2 + `Background` pool | Complete | stale token guard on UI (`scm_diff_gen_seen_` ui.hpp:90-92) |
-| Commands: stage/unstage/discard worktree file, show status, show diff, refresh, refreshDiff | `old/src/ui/ui_commands_nav.cpp:85-112` + ScmService stage/unstage/discard | Partial | completed for “whole file”; Author marked hunk-level ops as out of scope (“stage/preview hunk” listed as PHASE 5 in `old/sys.txt` PART AD). `space g p` (git.previewHunk) is a **Stub** (`old/src/ui/ui_commands_keymap.cpp:66-67`) |
-| Branch badge in Header + statusbar SCM badge | `old/src/components/header.cpp` + `statusbar.cpp` `set_scm_badge` (Nonce via theme ids) + diff cache `ui.hpp:91-95 scm_diff_cache_` | Complete | |
-
-NOTE (no libgit2): the prompt's assumption was wrong. The old repo originally tried libgit2
-but dropped it (T0, `old/PROGRESS.md` line 12); all Git features run the `git` CLI via
-popen.
+| # | Feature | Lives in | Status | Evidence |
+|---|---|---|---|---|
+| 1 | Repo detection (`<root>/.git` exists) + popen wrapper with shell-quoting | `src/utils/git.cpp` (`shell_quote` `git.cpp:3-16`, `run/run_ok`), `includes/utils/git.hpp` | Complete | |
+| 2 | Status porcelain parse (branch, file states) | `src/scm/scm_git(.cpp,_part2.cpp)`, `includes/scm/scm_types.hpp` | Complete for stated scope | no upstream/HEAD-tracking features |
+| 3 | Diff → gutter marks (added/modified/deleted) | `src/scm/scm_diff.cpp parse_unified` (`-U0`), `scm_service.cpp request_file_diff`, cache `ui.hpp:91-95 scm_diff_cache_`, draw `line_number.cpp:69-80` + `Theme::Gutter*` | Complete | file-level only |
+| 4 | Async refresh on Background + generation counters, diff cache invalidation by path/lines/gen | `src/scm/scm_service(.cpp,_part2.cpp)`, `ui.cpp sync_scm_ui/diff` | Complete | |
+| 5 | Commands: showStatus / showDiff / refresh(+Diff) / stage / unstage / discard (confirm) | `src/ui/ui_commands_nav.cpp:85-112`, handlers `ui_scm.cpp scm_stage_active` etc. | Partial | **stage/unstage/discard run git synchronously on the main thread**, then request_refresh (`sys` G5) — see §5 issue 11 |
+| 6 | Hunk preview / hunk-level stage | `ui_commands_keymap.cpp:66-68` | **Stub** | `space g p git.previewHunk` → `Messages::info("PHASE 5 …")` only; hunk nav listed as PHASE 5 in `sys` AD |
+| 7 | Branch badge (Header) + SCM badge (statusbar) | `src/components/header.cpp`, `statusbar.cpp set_scm_badge` | Complete | |
 
 ## 2.8 Terminal panel
 
-| Feature | Where | Status | Evidence |
-|---|---|---|---|
-| forkpty session per panel (shell via config `terminal.shell` or `$SHELL` or `/bin/sh`) | `old/src/terminal/pty_session.cpp` | Complete | handle KE_RESIZE etc. passed through |
-| VT parser (ANSI/VT100/xterm): CSI streams, SGR color/attributes, cursor movement, scroll regions, DECCKM application cursor keys, OSC (title), wide-char support | `old/src/terminal/vt_parser.cpp` + `vt_parser_csi.cpp` + `vt_parser_sgr.cpp` + `old/includes/terminal/terminal_cell.hpp` | Partial | `sys.txt` note “DECCKM: CSI ?1h/l → TerminalScreen::application_cursor_keys”; no Sixel; no full truecolor test |
-| TerminalScreen grid + scrollback ring; scrollback configurable (default 5000) | `old/src/terminal/terminal_screen.cpp` + `-part2/-part3` + `old/includes/terminal/terminal_screen.hpp` | Complete | drain + scroll |
-| TerminalPanel draw + input UI | `old/src/components/terminal_panel.cpp` + `_part2` + `sysPARTS` | Complete | toggle/hide via control workbench.action.terminal.toggle etc.) |
-| Terminal toggle/clear/kill commands; ScrollUp/Down keys | `old/src/ui/ui_commands.cpp terminal.* + old/src/ui ui_input focus terminal` → leave 29 Ctrl+] or ctrl+t toggle | Complete | |
-| PTY pump (read + write) on main thread via poll() | `old/src/terminal/pty_session.cpp pump_readable` + `old/src/ui/ui_loop.cpp` | Complete | no reader thread (T7.1) |
-| F-bound keys + Home/End/Insert/Delete/ PageUp/Down/ Tab/Enter/Backspace | `old/src/components/terminal_panel_part2.cpp:102-133` | Complete | via keymap translate |
-
-| Echo term when F1..F12 (xterm seq) | `old/src/ui/ui_input.cpp` Terminal-focus branch | Complete | |
-| Mouse support | **not implemented** | Stub | no mousemask/KEY_MOUSE (`grep` confirmed) |
-| PTY exit handling, child process restart after exit | `pty_session.cpp` + `TerminalSession` state | Partial | exit → panel stops; no respawn UI (Unknown exact UX) |
-| `workbench.action.terminal.*` | `ui_commands.cpp` | Complete | clear/kill/scrollUp/Down/focus/toggle registered |
+| # | Feature | Lives in | Status | Evidence |
+|---|---|---|---|---|
+| 1 | forkpty shell session (config `terminal.shell` → `$SHELL` → `/bin/sh`) | `src/terminal/pty_session(.cpp,_part2.cpp)` | Complete | |
+| 2 | VT parser: CSI dispatch, SGR color/attrs, OSC, DECCKM app-cursor keys | `src/terminal/vt_parser(.cpp,_csi.cpp,_sgr.cpp)`, `TerminalScreen::application_cursor_keys` | Partial | no test coverage; sys treats as verified-by-code only |
+| 3 | Screen grid + scrollback ring (default 5000, min 0), scroll keys | `src/terminal/terminal_screen(.cpp,_part2,_part3).cpp`, `src/components/terminal_panel_part2.cpp` | Complete | |
+| 4 | Panel draw + focus/leave semantics (Esc → PTY, Ctrl+] raw 29 / `ctrl+t` leave; resolved engine keys dispatched) | `src/components/terminal_panel(.cpp,_part2.cpp)`, `src/ui/ui_input.cpp` Terminal branch | Complete | T1.4 verified design |
+| 5 | Key forwarding: enter/bs/del/arrows (SS3 vs CSI by DECCKM)/home/end/tab/PgUp-PgDn/F1-12 (xterm SS3/CSI)/ctrl bytes/printable/8-bit meta (UNVERIFIED path) | `terminal_panel_part2.cpp:102+`, `sys` T3 Terminal table | Complete | 8-bit-meta path flagged unverified by author |
+| 6 | Terminal commands: toggle/clear/kill/focus/scrollUp/scrollDown | `src/ui/ui_commands.cpp:125-152` | Complete | no respawn-on-exit UI (Unknown UX beyond panel dying) |
+| 7 | Mouse | — | **Stub** | none (grep) |
+| 8 | Sixel / image protocols | — | **Stub** | no support |
 
 ## 2.9 UI / Layout
 
-| Feature | Where | Status | Evidence |
-|---|---|---|---|
-| Editor full-screen ncurses layout: header title + `Statusbar` (mode/file/git badge/cursor/echo hints/chord), `TabBar`, `Sidebar` (Explorer tree + SearchPanel side-view), `LineNumber` gutter, Editor area, bottom-row overlays (CommandLine/ConfirmPrompt/InputPrompt), bottom terminal section | `old/src/ui/ui_layout.cpp` UI::resize_resizer + `ui_init.cpp` + components | Complete | `sys.txt` PART C layout numbers |
-| Focus enum + hardcoded per-widget input routing (Editor/Sidebar/Terminal/Search/Command/Messages/pickers/Confirm/Prompt) | `old/includes/ui/ui_types.hpp` Focus + `old/src/ui/ui_input.cpp handle_inputs` | Complete | overlay/Hard-coded non-config keys, 12, 3200-3497 |
-| Keybinding engine: config.json `keybindings[]` only for engine chords; vim keys/panel keys hardcoded in source; engine owns ctrl/alt/F/Space/Esc in Normal/Visual (`engine_owns_token`) | `old/src/configs/keybindings*.cpp` + `old/src/components/editor*` | Complete | config-only design documented (`old/sys.txt` PART J) |
-| Dirty-bitmap render pipeline (only changed WINDOWs repaint; force repaint on focus/visibility/buffer/cursor/SCM deltas; per-widget `mark_dirty()`) | `old/src/ui/ui_render.cpp`, `old/src/ui/ui_render_dirty.cpp`, `old/src/ui/ui_render_paint.cpp`, visible flag via members `ui.hpp:100-115` | Complete | T7.2 |
-| Buffer line display metrics caches (`line_disp_width_` + hot prefix) | `old/src/editor/buffer_metrics.cpp` + Buffer fields `buffer.hpp:58-61` | Complete | invalidates on TextChange (`note_metrics_edit`) |
-| Chord state “prefix pending” display in status bar, no timeout in editor mode, Esc to cancel | `old/src/components/statusbar.cpp set_chord` + `old/src/configs/keybindings.cpp resolve` pending vector | Complete | |
-| !Important — `gotoLine` accepts a number after `:` | `old/src/ui/ui_ex.cpp` + UI::ex_* | Complete | `:123` goes to line 123 (author asks/gocase **Unknown after code check?** — search of `old/src/editor/ex_commands.cpp` colon parse shows numeric-only accepted) |
-| HoverPopup floating widget (LSP hover) | `old/src/components/hover_popup.cpp` + `old/includes/components/hover_popup.hpp` | Complete | |
-| Git diff gutter (added/modified/deleted marks) | `old/src/components/line_number.cpp` + ScmDiff cache | Complete | |
-| Statusbar chord/echo/mode; Header branch | components | Complete | |
-| TUI color theme (90 pairs, code + Theme tokens) | `old/src/ui/theme.cpp` 159-297, `old/includes/ui/theme.hpp` | Complete | |
-
-| Windows layout: sidebar width from config; force-open Search side min width 36; bottom = statusbar + optional terminal band (height/center clamped 5..(n-1)/2) | `ui_layout.cpp` + config in `ui.cpp` | Complete | |
-| Corner case: INVALID DIMENSIONS print when screen < sb + ln widths | `ui.cpp` resize | Complete (render guard) | |
-| Component base class with create/resize/clear (WINDOW wrapper) | `old/includes/ui/UIComponent.hpp` + `old/src/ui/UIComponent.cpp` | Complete | |
-| Extension system (add/activate/deactivate, EditorEvents, ExtensionContext with addKeybinding/registerCommand/extension config) | `old/src/extensions/*` | Partial | only one in-tree demo extension `noni.hello` shim; no real-world plugins yet |
-| Help overlay pages (`:help`, topic list, command/doc pages) | `old/src/help/help_docs.cpp` + `help_pages_core.cpp` + `help_pages_more.cpp` | Complete | registered for ex and ex-help topics |
-| MessagesPanel (`:messages`, `:logs`) | `old/src/components/messages_panel.cpp` + Messages ring in `old/src/utils/messages.cpp` + `old/src/utils/logger.cpp` | Complete | tail budgets (noni/lsp/install/grammar logs) |
-| Session save/restore (tabs, cursor, scroll, sidebarVisible, terminalVisible, recent files) | `old/src/workspace/session.cpp` + `old/src/ui/ui_session.cpp` + command in `ui_commands_nav.cpp:149-156` | Complete | `session.json` persisted; untitled tabs skipped |
-
-| Crash recovery snapshots per dirty buffer (id-hash per file path, min 2s granularity) | `old/src/workspace/recovery.cpp` + `old/src/ui/ui_recovery.cpp` prompts at startup | Complete | |
-| RecentFiles MRU | `old/src/workspace/recent_files.cpp` + `noni.search.recent` command (`ui_commands_keymap.cpp:61-62`) | Complete | |
-| Workspace change (`:workspace` / openWorkspace with picker) | `old/src/ui/ui_commands.cpp:108` + `apply_workspace_root` in `old/src/ui/ui_workspace.cpp` + FSM handler + ScmService reset + FsWatcher set_workspace + Sidebar set_project_path | Complete | |
-| FsWatcher (inotify, non-blocking, poll after poll() on main; no watcher thread) | `old/src/utils/fs_watcher.cpp` + `_part2` + `old/includes/utils/fs_watcher.hpp` | Complete | triggers sidebar refresh debounce |
-| DirScanner (async tree enumeration on Background pool; expansion state kept in Sidebar) | `old/src/sidebar/dirscanner.cpp` + `_part2` + `old/src/components/sidebar*.cpp` | Complete | cache + seen_version |
-| FilePicker FileIndex background rebuild | `old/src/utils/fuzzy.cpp FileIndex` | Complete | version-based swap on the Background thread |
-| Multi-buffer pretty header/tab strip + icons (Codicon-mapped per file ext) | `old/src/ui/icons*.cpp/hpp` + `old/src/components/tab_bar.cpp/header.cpp` | Complete | map of icon glyphs — large static data (~5 files in `icons_file*.cpp`), sizeable. |
-| Log tailing + logging format (two-line messages: header + source loc) | `old/src/utils/logger.cpp` | Complete | truncates `logs/noni.log` at startup (`logger.cpp:124`) |
+| # | Feature | Lives in | Status | Evidence |
+|---|---|---|---|---|
+| 1 | Screen composition: Header, TabBar, Sidebar/Search side, LineNumber gutter, editor area (splits), bottom CommandLine/Confirm/Input row, Terminal band, Statusbar | `src/ui/ui_layout.cpp` resize + `ui_init.cpp` | Complete | layout numbers in `ui.cpp` (sys C/AA) |
+| 2 | `Focus` enum routing with per-widget `handle_input` hard-coded dispatch; overlay Esc/Enter shortcuts | `src/ui/ui_input.cpp` (big switch), `ui_types.hpp` | Complete | 12 focus kinds (`sys` T2) |
+| 3 | Dirty-bitmap render: per-component `mark_dirty`, painted-state mirror, `force_paint_all` on resize, single `doupdate` | `src/ui/ui_render.cpp` + `_dirty.cpp` + `_paint.cpp`, mirrors `ui.hpp:100-115` | Complete | T7.2; widgets must call mark_dirty themselves (late bug fix sys AA) |
+| 4 | Config-driven engine keybindings + when-flags recalculated from focus+mode each key | `src/configs/keybindings*.cpp`, `when_context` in `ui_sidebar.cpp` | Complete | `sys` J/T |
+| 5 | Chord prefix display + no-timeout pending semantics | `statusbar.cpp set_chord`, `keybindings.cpp resolve_pending` | Complete | deliberate (sys T3) |
+| 6 | HoverPopup (floating LSP hover widget) | `src/components/hover_popup.cpp` | Complete | |
+| 7 | Messages ring + `:messages` panel + statusbar echo TTL | `src/utils/messages.cpp`, `src/components/messages_panel.cpp`, `statusbar.cpp set_echo` | Complete | |
+| 8 | `:logs` tail (noni/lsp/install/grammar) | `ui_ex.cpp ex_logs` | Complete | E149 on unknown key |
+| 9 | `:help` pages + topic list | `src/help/help_docs.cpp` + `help_pages_core/_more.cpp` | Complete | incl. `:commands` page |
+| 10 | Command palette-ish? — none; `:h ex` page lists ex commands | — | **Stub** | no ctrl+shift+s command palette; workbench.command-aliases only in help |
+| 11 | Session save/restore (`session.json`, tabs+cursor+scroll+visibilities; untitled skipped), `space s s/s w` | `src/workspace/session.cpp`, `src/ui/ui_session.cpp`, commands `ui_commands_nav.cpp:149-156` | Complete | |
+| 12 | Crash recovery snapshots (every ≥2 s while dirty; startup prompts) | `src/workspace/recovery.cpp`, `src/ui/ui_recovery.cpp`, tick in render | Complete | |
+| 13 | RecentFiles MRU + `space f r` | `src/workspace/recent_files.cpp`, `ui_commands_keymap.cpp:61-62` | Complete | |
+| 14 | FsWatcher (inotify, non-blocking, drain on main, debounced sidebar refresh) | `src/utils/fs_watcher(.cpp,_part2.cpp)` | Complete | no watcher thread |
+| 15 | DirScanner + sidebar tree (async on Background, version snapshot swap) | `src/sidebar/dirscanner*.cpp` | Complete | |
+| 16 | File icons (Codicon-ish static glyph tables per extension) | `src/ui/icons_file_part1..5.cpp`, `icons_lookup.cpp`, header-only `includes/ui/icons*.hpp` | Complete | ~large static data |
+| 17 | Window split separators drawing | `editor_draw.cpp:94-113` | Complete | adjacent-rect detection |
+| 18 | INVALID DIMENSIONS guard | `ui.cpp` resize | Complete | |
+| 19 | `UIComponent` WINDOW wrapper (create/resize/clear/dtor) | `src/ui/UIComponent.cpp` | Complete | |
+| 20 | Lazy `window_layout` header-only split tree | `includes/editor/window_layout.hpp` | Complete | |
 
 ## 2.10 Config
 
-| Feature | Where | Status | Evidence |
-|---|---|---|---|
-| config.json load order: $PWD → exe dir → ~/.config/noni; parse fail → statusbar echo, fall back to defaults; never writes the file back | `old/src/configs/config.cpp` + `old/src/ui/ui_init.cpp load_config` | Complete | `old/sys.txt` PART S |
-| JSON parser (mini_json, in-repo, no third-party): objects/arrays/strings/numbers/bools/null; no comments; duplicate keys first-wins; trailing junk error | `old/src/configs/mini_json.cpp` + `old/src/configs/mini_json_parse.cpp` | Partial | **no `\uXXXX` decoding** (`mini_json_parse.cpp:119-138` pushes the backslash char verbatim or raw char), **no exponent** (`parse_number` handles only leading `-` and one `.` fraction) — hard limitation for LSP responses; also double parsing overhead on long LSP payloads |
-| Keybindings resolution: chord tokens (whitespace, mod prefixes + keynames), when-clauses (&&/|| on context flags), first-match wins, no-prefix timeout; keybinding→command (engine-owns control keys with editor-mode gates) | `old/src/configs/keybindings.cpp` + `_part2` + `keybindings_detail.hpp` + `keybindings_raw.cpp` + `keybindings_ext.cpp` | Complete | matches `old/sys.txt` PART T |
-| Startup “unbound commands” diagnostic logging + “unknown binding” warning | `old/src/commands/command_registry.cpp diagnose` + UI ctor log | Complete | |
-| “escape goes to noni.mode.normal” when set (empty when) + special-cased `Esc` in Terminal | `ui_input.cpp` + config.json | Complete | T1.4 |
-| Config echo into statusbar on startup (“loaded N bindings…”) | `ui_init.cpp` | Complete | T1.1 |
+| # | Feature | Lives in | Status | Evidence |
+|---|---|---|---|---|
+| 1 | config.json load order `$PWD` → exe dir → `~/.config/noni`; first existing regular file wins; parse fail → defaults + statusbar echo; never writes back | `src/configs/config.cpp`, `src/ui/ui_init.cpp load_config` | Complete | (sys S, T1.1) |
+| 2 | JSON parser (rolled by hand) | `src/configs/mini_json(.cpp,_parse.cpp)` | Partial | **no `\uXXXX` decoding** (`mini_json_parse.cpp:119-138` copies the escape's raw char; cases like `\"` handled but `\u` not decoded) and **no numeric exponent** (`parse_number):3-5` handles only optional `-` and one fraction) — matters for LSP payloads |
+| 3 | Keybinding engine: chord tokenizer, when-clause `&&`/`||` tokens, first-match-wins, leader (Space) rules, pending prefix w/o timeout, engine ownership of ctrl/alt/F/Esc/Space in editor modal contexts | `src/configs/keybindings(_part2,_raw,_ext).cpp` + `keybindings_detail.hpp engine_owns_token` | Complete | T4/T5 verified |
+| 4 | Startup diagnostic of unbound/unknown bindings (statusbar + logs) | `src/commands/command_registry.cpp diagnose` + UI ctor | Complete | |
+| 5 | Esc semantics: empty-when `escape→noni.mode.normal`; Terminal special-cased to let Esc reach PTY (leave via Ctrl+] or `ctrl+t`) | `config.json`, `src/ui/ui_input.cpp` (Terminal branch handles ch==27 & raw 29 before resolve) | Complete | T1.4 verified |
 
 ## 2.11 Other
 
-| Feature | Where | Status | Evidence |
-|---|---|---|---|
-| Background job pool with token guard (stale result drop) | `old/src/utils/async.cpp` + call sites (DirScanner, FileIndex, TextSearch, ScmService, installers) | Complete | |
-| EventWake (eventfd/pipe) wakeups for jobs | `old/src/utils/event_wake.cpp` | Complete | |
-| Logger with writer thread, ring — logs to `logs/noni.log` | `old/src/utils/logger.cpp` | Complete | |
-| Debug/tracing gate `NONI_KEYLOG=1` env → logged raw key names | `old/src/ui/ui_input.cpp:57` + `old/src/ui/ui_init.cpp` | Complete | |
-| `Args` argv parsing (single path only; no flags) | `old/src/utils/args.cpp` | Complete | only argv[1] honored |
-| `.clangd` file for tooling | `old/.clangd` (CompileFlags add -std=c++23) | Complete (tooling, not app) | |
-
-| PROGRESS.md work queue + sys.txt doc (good intent) | `old/PROGRESS.md`, `old/sys.txt`, `old/simpletodo.txt` | Complete (docs, not code) | author maintained |
+| # | Feature | Lives in | Status | Evidence |
+|---|---|---|---|---|
+| 1 | Background job pool (2 workers, stale-token invalidation) | `src/utils/async.cpp`, per-module next-token guards | Complete | |
+| 2 | EventWake (eventfd/pipe) wakeups | `src/utils/event_wake.cpp` | Complete | |
+| 3 | Logger (writer thread, 2-line format, truncate on init) | `src/utils/logger.cpp` (init truncate at `logger.cpp:124`) | Complete | |
+| 4 | `NONI_KEYLOG=1` raw-key tracing | `ui_input.cpp:57` | Complete | |
+| 5 | Atomic FS write / path helpers | `src/utils/fs*.cpp` | Complete | |
+| 6 | Fuzzy matcher + FileIndex (async rebuild + version) | `src/utils/fuzzy(.cpp,_index.cpp)` | Complete | T7.7 perf done |
+| 7 | TextMetrics (UTF-8 decode, display widths incl. tabs, UTF-16 ↔ byte) | `src/utils/text_metrics(.cpp,_part2.cpp)` | Complete | used everywhere incl. LSP |
+| 8 | Fd-based `poll` main loop | `src/ui/ui_loop.cpp` | Complete | T7.1 |
+| 9 | Extension API (EditorEvents bus, register command/keybinding, per-extension config) | `src/extensions/*` | Partial | one demo extension `noni.hello` (`extension.hello.ping` unbound) |
+| 10 | CLI args | `src/utils/args.cpp` | Complete | only `argv[1]` used |
+| 11 | `Author note files` (sys.txt/PROGRESS.md/simpletodo.txt/keymap-catalog.md/keybinds.txt) — documentation only, never loaded | — | Complete-as-notes | `sys` H: keybinds.txt is not loaded by the app |
+| 12 | `workbench.view.explorer/.search`; `workbench.action.openWorkspace` | `src/ui/ui_commands.cpp:73-81 etc.` | Complete | side/terminal/workspace commands |
 
 ---
 
 # 3. Keybindings (full table)
 
-All chord bindings come from **config.json only** for engine keys; all vim-mode and
-panel keys are **hard-coded in source**. `mode` column = the when-window in which the
-binding is active (`editorFocus && normalMode || visualMode …` etc.).
+Two layers, `sys` PART J: engine chords come **only** from `config.json`
+(`AppConfig::defaults().keybindings = {}` — empty in code); everything else is
+hard-coded in components. When-flags are:
+`editorFocus`, `sidebarFocus`, `searchFocus`, `commandFocus`, `messagesFocus`,
+`fileSearchFocus`, `bufferSearchFocus`, `lspPickerFocus`, `completionFocus`,
+`confirmFocus`, `promptFocus`, `terminalFocus`, `normalMode`, `insertMode`,
+`visualMode`, `sidebar(Hidden)Visible`, `terminal(Hidden)Visible` — computed in
+`UI::when_context()` (`src/ui/ui_sidebar.cpp`) and matched in
+`KeybindingEngine::when_matches` (`keybindings.cpp:303-342`).
 
-## 3.1 config.json → workbench commands (`.json` “Where”) — the engine
+## 3.1 `config.json` → commands (63 entries; file: `old/config.json`)
+"leader" below = when string
+`editorFocus && normalMode || editorFocus && visualMode || sidebarFocus || searchFocus`.
 
-File: `old/config.json` (63 bindings). Defaults empty in code
-(`AppConfig::defaults().keybindings = {}`, `old/src/configs/config.cpp`,
-`old/sys.txt` PART S). Resolution via
-`old/src/configs/keybindings.cpp/part2/raw/ext` and `InputContext`/`when_context()`
-from `old/src/ui/ui_sidebar.cpp`.
-
-| Key | Command | when | Notes |
-|---|---|---|---|
-| `escape` | `noni.mode.normal` | *(empty → all)* | |
-| `ctrl+s` | `workbench.action.files.save` | `editorFocus` | duplicate of vim `:w` |
-| `ctrl+p` / `space space` / `space f f` | `workbench.action.quickOpen` | `editorFocus` / leader-chords | override of `space f f` (dup) |
-| `ctrl+b`, `space e` | `workbench.action.toggleSidebarVisibility` | `editorFocus` / leader | duplicate (2 entries) |
-| `ctrl+t`, `space t t` | `workbench.action.terminal.toggle` | `editorFocus` / leader | duplicate |
-| `ctrl+z` | `editor.action.undo` | `editorFocus` | undo also available via vim `u`, `:undo` |
-| `ctrl+y` | `editor.action.redo` | `editorFocus` | Vim **already has** `ctrl+r` as redo — duplication. ⚠ same key as `redo`; the maker's inserted `ctrl+y` (in *Normal* only) uses engine `redowhen editorFocus; not insert` — see Bugs |
-| `ctrl+f` | `actions.find` | `editorFocus` | search panel UI |
-| `ctrl+g` | `workbench.action.gotoLine` | `editorFocus` | |
-| `ctrl+space` | `editor.action.triggerSuggest` | `editorFocus` | also vim cmp-bound equivalent unavailable |
-| `f2`, `space r n` | `editor.action.rename` | `editorFocus` / leader | |
-| `f12`, `space l d` | `editor.action.revealDefinition` | `editorFocus` / leader | |
-| `ctrl+/` | `editor.action.commentLine` | `editorFocus` | |
-| `ctrl+a` | `editor.action.selectAll` | `editorFocus` | |
-| `ctrl+c` | `editor.action.clipboardCopyAction` | `editorFocus` | |
-| `ctrl+x` | `editor.action.clipboardCutAction` | `editorFocus` | |
-| `ctrl+v` | `editor.action.clipboardPasteAction` | `editorFocus` | In **Insert** mode this is engine-bound too? check: notes says “ctrl when=insertFocus” — no insertMode flag so available in insert too (`sys.txt` T4 partial: ctrl+h/j/k/l not bound for insert) |
-| `ctrl+e` | `editor.action.copyLinesDownAction` | `editorFocus` | |
-| `alt+j`, `alt+down` | `editor.action.moveLinesDownAction` | `editorFocus` | |
-| `alt+k`, `alt+up` | `editor.action.moveLinesUpAction` | `editorFocus` | |
-| `ctrl+d` | `editor.action.deleteLines` | `editorFocus && insertMode` | vim CURP conflict: normal-mode CtrlD = half-page (hardcoded raw 4 in editor_normal.cpp:64-66) — the config has both; the normal one only reaches Normal path when in insert — OK, separated by when |
-| `ctrl+d` | `editor.action.halfPageDown` | `editorFocus && normalMode` | |
-| `ctrl+u` | `editor.action.halfPageUp` | `editorFocus && normalMode` | plus hardcoded raw 21 in normal |
-| `ctrl+left/right/up/down` | `workbench.action.focusLeft/Right/Above/BelowGroup` | `editorFocus && normalMode` | window focus |
-| `space f g` | `workbench.action.findInFiles` | leader chords | side search panel |
-| `space f w` | `noni.search.grepWord` | leader chords | **stub** (see 2.4) |
-| `space f b` | `workbench.action.showAllEditors` | leader chords | buffer picker |
-| `space f r` | `noni.search.recent` | leader chords | recent files |
-| `space o` | `noni.focus.sidebar` | leader chords | |
-| `space b n`, `space b b` | `workbench.action.nextEditor` / `previousEditor` | leader chords | buffer jump |
-| `space b d` | `workbench.action.closeActiveEditor` | leader chords | |
-| `space w` | `workbench.action.files.save` | leader chords | |
-| `space q q` | `workbench.action.quit` | leader chords | |
-| `space c a` | `editor.action.quickFix` | leader chords | code actions picker |
-| `space c f` | `editor.action.formatDocument` | leader chords | |
-| `space l d` | `editor.action.revealDefinition` | leader chords | dup with f12 |
-| `space l r` | `editor.action.goToReferences` | leader chords | |
-| `space l s` | `workbench.action.gotoSymbol` | leader chords | |
-| `space l w` | `workbench.action.showAllSymbols` | leader chords | |
-| `space l R` | `lsp.restart` | leader chords | |
-| `space l S` | `lsp.showStatus` | leader chords | |
-| `space x x` | `noni.diagnostics.list` | leader chords | diagnostics picker |
-| `space g s` | `git.showStatus` | leader chords | branch search listing? (opens git status picker) |
-| `space g a` | `git.stage` | leader chords | whole-file stage |
-| `space g u` | `git.unstage` | leader chords | |
-| `space g x` | `git.discard` | leader chords | confirm prompt |
-| `space g d` | `git.showDiff` | leader chords | |
-| `space g f` | `git.refreshDiff` | leader chords | |
-| `space g R` | `git.refresh` | leader chords | |
-| `space g p` | `git.previewHunk` | leader chords | **stub** (`ui_commands_keymap.cpp:67` Messages only) |
-| `space s s` | `workbench.action.restoreSession` | leader chords | |
-| `space s w` | `workbench.action.saveSession` | leader chords | |
-
-## 3.2 Hard-coded Normal/Visual/Insert-mode keys (`.cpp` “Where”)
-
-File(s): `old/src/components/editor.cpp` (mode dispatch), `editor_normal.cpp`,
-`editor_normal_prefix.cpp`, `editor_normal_edit.cpp`, `editor_visual.cpp`,
-`editor_visual_state.cpp`, `editor_insert.cpp`, `editor_cursor.cpp`.
-Vim prefixes (`m`/`g`/`"`/`'/`[`/`]`/op-enter) block all other input waiting for a
-second key. Insert escape exits via `jk` (config escape also works by engine).
-
-| Mode | Keys | Action |
+| key | command | when |
 |---|---|---|
-| Normal | `h j k l / arrows` | motion |
-| Normal | `w b e` | word motions |
-| Normal | `0 ^ $ G` `gg` `gt/gT` | line start/first-nonblank/eol/EOM/goto top/tabs |
-| Normal | `v V` | visual char/line mode |
-| Normal | `d c y` + motion | delete/change/yank operators (also `dd cc yy`) |
-| Normal | `m <a-z>` / `'<char>` | set mark / jump to mark |
-| Normal | `/` `?` | search prompt (CommandLine) |
-| Normal | `n N` | next/prev match |
-| Normal | `i a I A o O` | insert entries |
-| Normal | `x` | delete char (yank) |
-| Normal | `s S C` | subst/change-to-eol |
-| Normal | `p P` | paste after/before |
-| Normal | `" <reg>` | pending register prefix for `y/d/p` |
-| Normal | `u` Ctrl-R / `:u` `:redo` | undo/redo |
-| Normal | Ctrl-U/D, PgUp/Dn | scroll half/full page |
-| Normal | `:` | open CommandLine (ex mode) |
-| Normal | `K` | LSP hover |
-| Normal | `g d g D g y g r g i` | LSP navigation + last insert; `g c` comment operator, `g t g T` tabs, `g g` top |
-| Normal | Tab / Ctrl-I, Ctrl-O | jump list forward / back (Tab binding to Sidebar removed per T5) |
-| Normal | `[` `]` + d | diagnostic jump (wrap) |
-| Visual | `d x c s y p P` | delete/change/yank/paste on selection; `p/P` also left visual |
-| Visual | motions | extend selection; `gg` jump; no `o` cursor-flip, no `<` `>` indent, no gc-with-exchange |
-| Visual | `esc` | leave visual (clear selection) |
-| Visual | Ctrl-D/U PageUp/Down | scroll |
-| Insert | `jk` | exit insert (deletes pending j — matches publisher; old note said jj but code has jk per T4) |
-| Insert | esc, arrows, PgUp/Dn | move / page (with txn split) |
-| Insert | Backspace, Delete, Tab, Enter | usual insert keys (Backspace merges with prev line) |
-| Insert | Ctrl-D | `editor.action.deleteLines` from config (workbench) — separate |
-| Insert | Ctrl-R | redo (hardcoded 18) |
-| Insert | KEY_SIC | paste clipboard |
-| Insert | printable | insert char; `j` arms `pending_j` |
+| escape | noni.mode.normal | (empty — all) |
+| ctrl+s | workbench.action.files.save | editorFocus |
+| ctrl+p | workbench.action.quickOpen | editorFocus |
+| ctrl+b | workbench.action.toggleSidebarVisibility | editorFocus |
+| ctrl+t | workbench.action.terminal.toggle | editorFocus |
+| ctrl+z | editor.action.undo | editorFocus |
+| ctrl+y | editor.action.redo | editorFocus |
+| ctrl+f | actions.find | editorFocus |
+| ctrl+g | workbench.action.gotoLine | editorFocus |
+| ctrl+space | editor.action.triggerSuggest | editorFocus |
+| f2 | editor.action.rename | editorFocus |
+| f12 | editor.action.revealDefinition | editorFocus |
+| ctrl+/ | editor.action.commentLine | editorFocus |
+| ctrl+a | editor.action.selectAll | editorFocus |
+| ctrl+c | editor.action.clipboardCopyAction | editorFocus |
+| ctrl+x | editor.action.clipboardCutAction | editorFocus |
+| ctrl+v | editor.action.clipboardPasteAction | editorFocus |
+| ctrl+e | editor.action.copyLinesDownAction | editorFocus |
+| alt+j / alt+down | editor.action.moveLinesDownAction | editorFocus |
+| alt+k / alt+up | editor.action.moveLinesUpAction | editorFocus |
+| ctrl+d | editor.action.deleteLines | editorFocus && insertMode |
+| ctrl+d | editor.action.halfPageDown | editorFocus && normalMode |
+| ctrl+u | editor.action.halfPageUp | editorFocus && normalMode |
+| ctrl+left/right/up/down | workbench.action.focusLeft/Right/Above/BelowGroup | editorFocus && normalMode |
+| space space / space f f | workbench.action.quickOpen | leader |
+| space f g | workbench.action.findInFiles | leader |
+| space f w | noni.search.grepWord (**stub**) | leader |
+| space f b | workbench.action.showAllEditors | leader |
+| space f r | noni.search.recent | leader |
+| space e | workbench.action.toggleSidebarVisibility | leader |
+| space o | noni.focus.sidebar | leader |
+| space b n / space b b | workbench.action.next/previousEditor | leader |
+| space b d | workbench.action.closeActiveEditor | leader |
+| space w | workbench.action.files.save | leader |
+| space q q | workbench.action.quit | leader |
+| space r n | editor.action.rename | leader |
+| space c a | editor.action.quickFix | leader |
+| space c f | editor.action.formatDocument | leader |
+| space l d | editor.action.revealDefinition | leader |
+| space l r | editor.action.goToReferences | leader |
+| space l s | workbench.action.gotoSymbol | leader |
+| space l w | workbench.action.showAllSymbols | leader |
+| space l R | lsp.restart | leader |
+| space l S | lsp.showStatus | leader |
+| space x x | noni.diagnostics.list | leader |
+| space g s | git.showStatus | leader |
+| space g a | git.stage | leader |
+| space g u | git.unstage | leader |
+| space g x | git.discard | leader |
+| space g d | git.showDiff | leader |
+| space g f | git.refreshDiff | leader |
+| space g R | git.refresh | leader |
+| space g p | git.previewHunk (**stub**) | leader |
+| space t t | workbench.action.terminal.toggle | leader |
+| space s s | workbench.action.restoreSession | leader |
+| space s w | workbench.action.saveSession | leader |
 
-## 3.3 Hardcoded per-widget keys (not via KeybindingEngine; each widget's own handle_input)
+Engine plumbing: `src/configs/keybindings.cpp/_part2/_raw/_ext.cpp` +
+`includes/commands/command.hpp` (`context_is_literal`, `context_allows_leader`) +
+`engine_owns_token` (`keybindings_detail.hpp:17`, T4). from_raw mapping table
+(`27=Esc`, `13=Enter` via `nonl`, `10=ctrl+j`, `8=ctrl+h`, `127=Backspace`,
+F1-24, ctrl bytes 1-26, raw 28/29/31) lives in `keybindings_raw.cpp`.
 
-| Widget / Focus | Keys | Action | File |
-|---|---|---|---|
-| CommandLine | Enter | submit | `old/src/components/commandline.cpp` |
-|  | esc / ctrl+c | close (config escape shortcut may preempt) | UOOM also `ui_input.cpp` |
-|  | Backspace | pop char | |
-|  | printable | append | |
-| FilePicker | Enter, esc|Cy, arrows, PgUp/Dn, Home/End, Backspace+printable (depending on “allows type-through”) | old/src/components/file_picker.cpp (up to `take_selection`) |
-| BufferPicker | Enter, esc, Up/Down wrap, Pg/PgUp, Backspace, printable filter | old/src/components/buffer_picker.cpp |
-| LspPicker | same plus display uses different (wrap Up/Down, page) | old/src/components/lsp_picker.cpp |
-| CompletionPicker | Enter accept, esc cancel, Tab accept, Up/Down wrap, PgUp/Dn page | old/src/components/completion_picker.cpp |
-| SearchPanel | F6 case / F7 whole-word / F8 regex; Tab & Shift-Tab cycles Query → Replace → Results; Enter on Query→run; Enter on Replace→replaceAll; results with j/k/g/G/Enter/r | old/src/components/search_panel*.cpp |
-| MessagesPanel | esc, k/Up j/Down PgUp/PgDn g/G | old/src/components/messages_panel.cpp |
-| ConfirmPrompt | y/Yes, n/No, c Cancel, esc | old/src/components/confirm_prompt.cpp |
-| InputPrompt | Enter resolve, esc cancel, Backspace, printable | old/src/components/input_prompt.cpp |
-| Sidebar | arrows/h j k l, Enter open, `a` add file, `A` add dir, `d` delete, `r` rename, `x` cut, `c` copy, `p` paste, `R` refresh, `q` back to editor | old/src/components/sidebar.cpp 293-420 + sidebar_nav.cpp |
-| TerminalPanel | arrows (SS3 via DECCKM), Home/End \033OH/\033OF, PgUp/PgDn scrollback or PTY, Del \033[3~, Tab `\t`, Enter `\r`, Backspace 127, Ctrl-pills 1-26 raw, printable; Ctrl+] (29)/ctrl+t leave focus; esc → PTY | old/src/components/terminal_panel_part2.cpp (+ `ui_input.cpp` terminal branch) |
-| Hover popup | (no key interactivity; dismissed by moving cursor/modes) | old/src/components/hover_popup.cpp |
+## 3.2 Hard-coded vim/panel keys (`.cpp`)
 
-## 3.4 Keybinding-engine internals (evidence for the config table)
+Normal mode — `src/components/editor_normal.cpp`,
+`editor_normal_prefix.cpp`, `editor_normal_edit.cpp`:
 
-File(s): `old/src/configs/keybindings.cpp` + `keybindings_part2.cpp`
-+ `keybindings_raw.cpp` (from_raw mapping of every get_wch result: 27=Esc,
-127=Backspace, 8=ctrl+h, 10=ctrl+j, 13=Enter via nonl(), F1-24, ctrl 1-26 etc.)
+| key(s) | action |
+|---|---|
+| h j k l w b e 0 ^ $ G arrows | motions |
+| d c y (+motion or doubled) | delete/change/yank operators (`PendingOperator`) |
+| dd/cc/yy | linewise |
+| " r | register prefix |
+| m x / ' x | mark set / jump |
+| g g / g t / g T | buffer top / next tab / prev tab |
+| g d g D g y g r g i | LSP definition/declaration/typedef/references/last-insert |
+| g c | comment toggle (also `gcc`) |
+| [ d / ] d | prev/next diagnostic (wrap) |
+| v / V | visual char/line |
+| i a I A o O | insert |
+| x / s / S / C | delete-char/subst/change-line/change-eol |
+| p / P | paste after/before |
+| u / ctrl+r | undo / redo |
+| / ? | search forward/backward (opens CommandLine) |
+| n / N | next/prev match |
+| : | open CommandLine |
+| K | hover |
+| ctrl+u / ctrl+d / PgUp / PgDn | half/full page |
+| Tab / ctrl+I | jump forward |
+| ctrl+O | jump back |
 
-- Chords: whitespace-separated tokens with `ctrl/alt/shift` prefixes; named keys
-  (`enter return space slash period comma semicolon quote apostrophe backtick
-  backslash leftbracket rightbracket minus equals underscore + also `;`
-  and F1..F12 = KEY_F with `shift+F` variant).
-- `when` clauses: context flags joined by `&&` and `||` only (no `!` negation);
-  context built on each key (focus + mode + visibilities) —
-  `old/src/ui/ui_sidebar.cpp::when_context()`.
-- Prefix (partial chord) → Pending: no timeout; cleared on Unmatched/Esc and on focus
-  change. `sys.txt` T4 documented: Engine ownership rules in Editor normal/visual
-  (`engine_owns_token` — `old/src/configs/keybindings_detail.hpp:17`) so the engine
-  only consumes ctrl/alt/F/Esc/Space, forcing all other keys to the vim layers.
-- Escape + `noni.mode.normal` works everywhere via config but Terminal is
-  special-cased before resolve (`old/src/ui/ui_input.cpp` terminal branch, T1.4).
-- The engine keys and vim keys interplay is confirmed by
-  `old/src/configs/keybindings_detail.hpp` + `old/sys.txt` PART T4.
+Visual mode — `src/components/editor_visual.cpp`:
+`d x` delete, `c s` change, `y` yank, `p P` paste (leaves visual), any motion key
+extends selection, `v` `V` toggle kind, `g g` jump to top, `g c` comment, ctrl+u/d
+and PgUp/PgDn scroll, `esc` leaves. **No `o`/`O`, no `<` `>`.**
+
+Insert mode — `src/components/editor_insert.cpp`
+`jk` exit (pending_j), `esc` exit, arrows/Page keys move (split txn), Backspace
+(merge on col 0), Delete, Tab `\t`, Enter, `ctrl+r` redo, `ctrl+d` deleteLines
+(engine; when-gated by config), KEY_SIC clipboard paste, printable insert (`j`
+arms pending_j).
+
+/widgets — each component's `handle_input` (files listed in §2 per widget):
+CommandLine (`commandline.cpp`, Enter/Esc/Backspace/printable),
+FilePicker, BufferPicker, LspPicker, CompletionPicker (Enter/Tab accept,
+Esc cancel, arrows wrap, PgUp/Dn),
+SearchPanel (`search_panel*.cpp`: F6/F7/F8 toggles, Tab/Shift-Tab field cycle,
+Enter per field, `r` ReplaceAll in results, `q`/Esc leave),
+MessagesPanel (j/k/PgUp/PgDn/g/G),
+ConfirmPrompt (y/n/c/Esc), InputPrompt (Enter/Esc/Backspace/printable),
+Sidebar (`sidebar.cpp:293-420` + `sidebar_nav.cpp`: h/l/Enter open/expand,
+j/k/arrows/PgUp/Dn/g/G, `a`/`A` add, `r` rename, `d` delete, `x c p` clipboard,
+`R` refresh, `q` back),
+Terminal (`terminal_panel_part2.cpp` + `ui_input.cpp` Terminal branch:
+Esc→PTY, 29 Ctrl+] leave, Ctrl+t/`ctrl+t` config toggle, arrows etc.),
+HoverPopup (passive).
 
 ---
 
-# 4. Config options (every key in `config.json`)
+# 4. Config options (`old/config.json` + defaults in `src/configs/config.cpp/hpp`)
 
-File: `old/config.json` (the shipped file) + `old/src/configs/config.cpp` +
-`old/includes/configs/config.hpp` (defaults). `old/sys.txt` PART S cross-checked.
-
-| Key | Type | Default (code) | Shipped value | Effect |
+| key | type | default (code) | shipped (old/config.json) | effect |
 |---|---|---|---|---|
-| `appName` | string | `"noni"` (`config.hpp` in-class) | `"noni"` | **Stored only; not read anywhere else** (nothing uses it after load) |
-| `sidebarWidth` | int | `25` | `25` | Explorer/search sidebar column width (`ui.cpp` layout: hidden when 0, search side min 36) |
-| `lineNumberWidth` | int | 5 (in code) | `7` | line-number gutter columns |
-| `escDelayMs` | int | 25 | `25` | ncurses Esc vs CSI sequencing window (`set_escdelay` in `ui_init.cpp`) |
-| `syntaxAutoInstall` | bool | true (only `is_bool` check) | `true` | background grammar install on first open of a language (`GrammarInstaller::set_auto_install`, `ui.cpp`) |
-| `keybindings` | array | `{}` (vector; load wipes and rebuilds) | 63 entries | chord→command table; engine-only layer (see §3) |
-| `lsp.autoInstall` | bool | true | `true` | missing server binaries → background install (LspInstaller) |
-| `lsp.servers[].language` | string | — | `"cpp"`, `"python"` | matches `Language` names — `cpp`/`c` fallback logic for C/C++ |
-| `lsp.servers[].command` | string[] | — | `["clangd"]`, `["pylsp"]` | argv passed to child; argv[0] resolved from PATH or installer dir |
-| `lsp.servers[].rootMarkers` | string[] | — | `["compile_commands.json",".git"]`, `["pyproject.toml",".git"]` | workspace root scan order (file dir then workspace root) |
-| `terminal.shell` | string | `""` → `$SHELL` → `/bin/sh` | `""` | PTY shell command |
-| `terminal.height` | int | 12 | `12` | bottom terminal rows, clamped 5…(screen/2) |
-| `terminal.scrollback` | int | 5000 | `5000` | ring buffer lines in TerminalScreen (min 0) |
-| `extensions.*` | object map | empty | `noni.hello:{greet:"Welcome back"}` | per-extension `ExtensionContext::extension_config()` |
-| `formatOnSave` | bool | true (T6 default, per config defaults) | `true` | await LSP format (up to 2s) on every save (see freeze issue below) |
-| `clipboard.sync` | bool | true | `true` | sync yank/copy/cut to system clipboard (wl-copy/xclip/xsel/OSC52) |
-| `autosave.mode` | `"off xhttp"` \| `"afterDelay"` | `"afterDelay"` | `"afterDelay"` | autosave tick behavior |
-| `autosave.delayMs` | int | 1000 | `1000` | autosave delay |
+| appName | string | `"noni"` (config.hpp) | `"noni"` | stored only; no reader found (grep) |
+| sidebarWidth | int | 25 | 25 | explorer column width (search side forces min 36) |
+| lineNumberWidth | int | 5 (code) | 7 | gutter column count |
+| escDelayMs | int | 25 | 25 | `set_escdelay` (Esc vs CSI) |
+| syntaxAutoInstall | bool | true (bool-only check) | true | background grammar install |
+| keybindings | array | `{}` (empty) | 63 entries | engine chord→command table |
+| lsp.autoInstall | bool | true | true | missing servers auto-install |
+| lsp.servers[].language | string | — | `"cpp"`, `"python"` | maps to `Syntax` language names (+ C/C++ fallback) |
+| lsp.servers[].command | string[] | — | `["clangd"]`, `["pylsp"]` | server argv; argv[0] path-resolved |
+| lsp.servers[].rootMarkers | string[] | — | e.g. `.git`, `compile_commands.json` | root-walk triggers |
+| terminal.shell | string | `""` → `$SHELL` → `/bin/sh` | `""` | PTY shell |
+| terminal.height | int | 12 | 12 | terminal rows (clamped 5…half screen) |
+| terminal.scrollback | int | 5000 | 5000 | screen scrollback lines |
+| extensions.* | object-map | `{}` | `noni.hello: {greet: "Welcome back"}` | ExtensionContext config lookup |
+| formatOnSave | bool | true (T6 default) | true | LSP format (≤2 s wait) on save |
+| clipboard.sync | bool | true (ClipboardConfig) | true | yank/copy/cut/paste → system clipboard |
+| autosave.mode | `"off"` \| `"afterDelay"` | `"afterDelay"` | `"afterDelay"` | autosave behavior |
+| autosave.delayMs | int | 1000 | 1000 | autosave delay |
 
-Also in filesystems referenced but NOT config keys (paths hardcoded):
-`~/.local/share/noni/lsp` and `~/.local/share/noni/tree-sitter`, workspace-level
-`<ws>/.noni/{session.json, recovery/, tree-sitter/, lsp/}` (XDG dirs per `old/sys.txt`
-PART H). XDG_DATA_HOME is documented as **unused**.
-
----
-
-# 5. Known problems (mapped from your notes + prompt examples)
-
-Each item: what the note said, evidence in code, verdict **DESIGN** or **BUG**.
-
-1. **“Visual mode selection galat hai” (visual selection not behaving)** — **DESIGN** + partial BUG.
-   Root causes traced:
-   - Selection is a `Window`-owned view (anchor + cursor) with `SelectionKind`
-     (`old/includes/editor/selection.hpp`), but a mismatch in the reverse-mode normalization:
-     `normalize_character_range` treats *cursor-at-EOL* as including the newline of that
-     line and then the next line start (`selection.hpp:97-101`) — editing right after a
-     Visual-reverse selection at EOL can therefore merge lines unexpectedly; vim instead
-     keeps an exclusive-end at the cursor cell. This is a semantics bug, not just UX.
-   - There is **no `o`/`O` cursor-flip in Visual mode** (`old/src/components/editor_visual.cpp`
-     has no `o` handling — only `g g` for file start at lines 37-49, `d/x/c/s/y/p/P`), so
-     once the cursor passes the anchor users lose the ability to shrink back without
-     re-descending — classic vim-mode selection feels “galat”.
-   - No cross-split consistency is enforced (selections are per-Window;
-     `old/includes/editor/window.hpp` stores `selection_` per Window while Buffer is
-     shared) — poor coupling if the same Buffer is open in two splits, potential
-     unsupported `Window::selection` when window dies while Buffer persists —
-     **DESIGN** smell too.
-
-2. **“LSP freeze karta hai”** — **DESIGN** (with at least 3 concrete root causes):
-   - `formatOnSave` path (`old/src/ui/ui_tabs.cpp:85-110`): the save action **spin-waits
-     on the main/UI thread** for a formatting response (`while … lsp().pump(); sleep 20ms`
-     up to a 2s deadline) — a slow/failing server stalls every save, i.e. the whole editor.
-   - `LspProcess::write_all` (`old/src/lsp/lsp_process.cpp:153-172`) performs a **blocking
-     `write()` to the server's stdin pipe** from the main thread; if a server stops
-     reading (clangd busy on a big project) the pipe buffer fills and the editor hard-freezes
-     while trying to push `didChange`. Same class of issue for `Clipboard::write`
-     (`old/src/utils/clipboard.cpp::exec_write`, blocking `waitpid` on the main thread for
-     wl-copy/xclip/xsel) — any external write/click can block the UI for seconds.
-   - `LspProcess::stop()` (`old/src/lsp/lsp_process.cpp:108-146`): poll-wait SIGTERM grace
-     of up to 1s (`usleep(50000)` loop) runs on the main thread → quitting/restarting a
-     misbehaving server freezes the UI while the process exits.
-   - Net verdict: the pump-on-main design (`sys.txt` T7.1 removed reader threads to fix a
-     different threading bug, and T8 kept pending requests with no `$ /cancelRequest`,
-     no timeout) puts **all server interaction synchronously on the UI thread** —
-     a DESIGN problem where any server/pipe hiccup becomes a UI freeze.
-
-3. **`ctrl+y` redo bug-like effect** — **BUG** (keymap design).
-   - `ctrl+y` is engine-bound to `editor.action.redo` with `when="editorFocus"` only
-     (`old/config.json` entry + `old/src/ui/ui_commands_nav.cpp:18`). Because the when
-     clause is not `normalMode`-gated, pressing `ctrl+y` in **Insert** mode also triggers
-     redo instead of literal behavior; worse, `ctrl+y` is also the standard vim
-     scroll-line-up key, so the mapping both *duplicates* `ctrl+r` and *steals* a
-     scroll key. Combined with `editor_normal_edit.cpp` hardcoded `ctrl+R` redo, undo/redo
-     ownership is triple-mapped (`u`, `ctrl+r`, `ctrl+y`, `:u`/`:redo`).
-
-4. **“Backspace after space at indent” / merge-indent** — **BUG** (behavior gap).
-   - Insert-mode Backspace at col 0 merges with the previous line
-     (`old/src/components/editor_insert.cpp:77-82`) but carries the full previous line's
-     *end* state — it does not strip leading indent on join (no smart-join at all;
-     buffer `delete_char_before(line, 0)` just removes the newline and leaves whatever
-     indent spacing followed) and does not restore the “col-0 after newline” column:
-     this makes the reported “backspace after space at indent” and “indent inside
-     #if/#endif → object-init” repros visible. The vim/nvim equivalent always handles
-     indent on join.
-
-5. **Missing “col 0 edit after newline+enter” handling** — **BUG**.
-   - Probably the same root cause as (4): `insert_newline` in Buffer does not copy current
-     indentation (`old/src/editor/buffer_insert.cpp` raw_insert_newline) unless the caller
-     was explicit; editor-level Insert Enter (`editor_insert.cpp:93-100`) does not compute
-     an indent — pretty sure there's no autoindent feature at all (grep confirmed no
-     indent computation on Insert Enter).
-
-6. **“Backspace flow / command-line boxing around entry” (search cockpit)** — **BUG** (minor).
-   - Insert `jk`/`jj` handling: `editor_insert.cpp:108-117` uses the `key >= 32 && key <= 126`
-     literal-ASCII gate to arm `pending_j`, but the UTF-8 path (`insert_utf8`) inserts a
-     **string** that could start with `'j'`, which sets `pending_j = false` and thus
-     breaks the “j then k” sequence if a multi-byte char begins with 'j' bytes (0x6A is ASCII —
-     multi-byte UTF-8 never starts with 0x6A, so this specific case is safe) — the real
-     residue is that the editor does not arm pending_j for **full-width or multi-byte**
-     'j'-shaped chars because the codepoint path resets the flag (editor_insert.cpp:130),
-     so `jk` can be defeated by a non-ASCII 'j'-looking char — minor.
-
-7. **Font fallback / UTF-8 popup rendering in Hover popup** — **Unknown**, root candidate.
-   - `HoverPopup` (old/src/components/hover_popup.cpp) draws decoded UTF-8 on the fly
-     using `mvwaddnstr` (wide-char build); no font fallback logic is inside Noni (it
-     depends on the terminal font + ncursesw), so reported glyph fallback issues are
-     environmental — **Unknown** in code.
-
-8. **陡`space f w` “grep word” and `space g p` “preview hunk” are placeholders** — **Stub**,
-   confirmed: `old/src/ui/ui_commands_keymap.cpp:63` and `:67` are the only implementations
-   (Messages::info with “PHASE 5”), matching `old/sys.txt` PART AD.
-
-9. **Code actions that are command-only can't be executed** — **Stub/partial**:
-   `old/src/ui/ui_lsp.cpp:184` logs “Code action command not executed: {}”;
-   LspCodeAction has `command` but no execution path (`old/includes/lsp/lsp_models.hpp:53`).
-
-10. **`git.stage`/`unstage`/`discard` whole-file only** — **Partial** (design said so).
-    - `ScmService` (old/src/scm/scm_service.cpp) exposes file-level ops only.
-      Hunk-level stage/preview was explicitly deferred (`old/sys.txt` PART AD list).
-    - `ScmGit` uses bare `.git` presence for repo detection with no upstream/branch graph —
-      minor.
-
-11. **No thread/mutex on Buffer content; all edits on main thread** (author data model) —
-    **DESIGN** mitigation already present (all mutations main-only), but if the rewrite
-    adds background indexing it must keep the same rule, else undo/redo+syntax+diagnostics
-    (internal to Buffer: undo stacks, `TreeHighlighter`, `DiagnosticSnapshot`) race.
-
-12. **`statusbar chord` display for pending prefix is good but keybinding reset rules
-    around focus changes are subtle** (`KeybindingEngine::clear_chord` is called from
-    many places) — **DESIGN** note; rewrite should unify (no per-callsite spellings).
-
-13. **LSP didChange incremental UTF-16 with multi-line deletes falls back to full resend**
-    (`old/src/lsp/lsp_service.cpp` did_change_incremental fallback around code 1076-1080)
-    — **BUG**/performance gap; correct fix is proper multi-line UTF-16 arithmetic in
-    `TextMetrics`.
-
-14. **`Syntax` fallback lexer treats JSON with C-style comments**` (`uses_c_comments`
-    includes JSON — `old/src/syntax/syntax.cpp` highlight path, noted in `old/sys.txt`
-    PART Y fallback section) — **BUG**: JSON with `//` comments will be mis-tokenized
-    (also json standard doesn't have comments; tolerance is intentional but affects
-    `//`-styled `jsonc` vs strict `json`).
-
-15. **Prompt's claimed “no statusbar after-typing caret”: the caret/visual cursor is
-    drawn via `wmove` only for the *active* window** (`old/src/components/editor_draw.cpp:62-68`
-    draws cursor only when `is_active`) — matches editor conventions, safe.
-
-16. **T1.4 unknown-key fallback** — engine drops led chords (old `sys.txt` T1.2) —
-    partially fixed by T4 but engine prefix rules (“Prefix rule lost the last byte”)
-    were consciously accepted (documented in `old/sys.txt`); rewrite should unify.
-
-17. **`ramRectangle` unknown/`search ext` unknown** — prose terms in the user's notes
-    which don't map to any code symbol in `old/` — **Unknown**.
-
-18. **`research/Git trees` “delete tabs on cloud change” — cloud, unknown** — **Unknown**
-    (no data in old repo; recovered sessions skip untitled buffers, `session.cpp:76-77`).
-
-19. **`Ctrl+e copy-line-down` runs clipboard sync write with 3 subprocess git/popenc/
-    appropriateness** (see Clipboard write tree, same problem family as (2)) —
-    **DESIGN**: any external command on UI thread.
-
-20. **“in-Buffer regex behavior” (soft query)** — currently uses ECMAScript + icase
-    + whole-word checks with try/catch silently swallowing errors after validation
-    (`old/src/editor/buffer_search.cpp:11-118`); plus `BufferSearchQuery` has no test
-    path for happened-in-file-but-not-in-editor-corrections (only per-session) —
-    Partial, not necessarily Bug from the code only.
+Not in config but hardcoded data dirs: `~/.local/share/noni/{lsp,tree-sitter}`,
+`<workspace>/.noni/{session.json,recovery/,tree-sitter/,lsp/}`, `/tmp/noni-*-<uid>`
+fallbacks; `XDG_DATA_HOME` is ignored (sys H/S).
 
 ---
 
-# 6. Design smells (for the rewrite)
+# 5. Known problems (root causes; DESIGN vs BUG verdict)
 
-1. **UI god-class / god-object**: `old/includes/ui/ui.hpp` (the `UI` class) owns **16**
-   widget members + core/config/keys/extension-manager/fs-watcher + layout ints + a dozen
-   painted-delta flag mirrors (`ui.hpp:45-115`). Almost everything is coupled through it.
-2. **Buffer couples syntax+diagnostics+FS into one class** (`old/includes/editor/buffer.hpp`
-   owns `TreeHighlighter`, `DiagnosticSnapshot`, `FS`, listeners, mtime, display caches,
-   and undo stacks). Rewrite should split: - document model - parse - diagnostics - persistence.
-3. **Vim key handling duplicated in three switch statements** (Normal/Visual/Insert)
-   with `is_motion_key` helpers re-implemented per file
-   (`old/src/components/editor_normal.cpp:75-103`, `editor_visual.cpp:68-74`,
-   `editor_insert.cpp` for Insert routing) — no unified command/“action” abstraction below
-   the hard-coded layers; command registry (`old/src/commands/command.cpp`) only holds
-   workbench commands.
-4. **Editor holds UI callbacks instead of events**
-   (`old/includes/components/editor.hpp:37-53`: `on_next_tab_`, `on_search_forward_`,
-   `on_command_open_`, `on_goto_definition_`, `on_hover_`, … attached by
-   `old/src/ui/ui.cpp`) — editor ⇄ UI concurrency through raw function slots; should be
-   event/commands.
-5. **Shared mutable LSP/SCM state with locks (no owner object)**
-   (`old/sys.txt` PART AB table: `LspService::mu_`, `ScmService::mu_`, `PtySession out_buf`
-   without mutex “T7.6” etc.) — a mixed model where background jobs write under mutex
-   while main reads directly. Trackable but fragile for rewrite.
-6. **Blocking subprocesses on the UI thread** (clipboard exec, git CLI popen in
-   ScmService background is ok, but git **stage/unstage/discard run synchronously on
-   main** `scm_service.cpp`; also `Clipboard::write` on yank) — see (2) in problems.
-7. **In-place 200-line split created artificial fragmentation** — e.g. UI logic smeared
-   over `ui_*.cpp` (15+ files) with headers like `ui_private.hpp` to share hidden state;
-   same for lsp (`lsp_service*.cpp` 6 files) and search_panel (3 files). The
-   `sys.txt` file map lists where every piece landed only approximately — the rewrite
-   should not inherit this organization.
-8. **Single global Focus enum + per-widget handle_input routing is hard-coded** in
-   `ui_input.cpp`; adding a widget means editing the god object + focus enum + when_context
-   + hand routing — 4 places. Rewrite should use a widget stack with automatic routing.
-9. **Engine-owns-key rules encode T1-series bug fixes as special cases**
-   (`engine_owns_token`, literal-context Space handling, Esc/Ctrl+] in terminal,
-   pending-chord clears on focus changes, insert `jk` handled in editor not engine:
-   see `old/src/configs/keybindings_detail.hpp`, `ui_input.cpp`, `editor_insert.cpp:8-27`)
-   — key-ownership logic that is currently spread across ≥ 4 files; should be one
-   declarative table.
-10. **`MiniJson` is written instead of a dependency, and is incomplete** (see 2.10) —
-    LSP correctness depends on it. Rewrite: use a real JSON lib.
-11. **SessionStore writes untitled buffers skipped; recovery requires market “≥2s dirty”;
-    recent files tracked but no command palette** — scattered, duplicated workspace state
-    paths (`old/src/workspace/*` vs `old/src/ui/ui_workspace.cpp`).
-12. **`git stage` runs `git add` synchronously on main** (`old/src/scm/scm_service.cpp`
-    stage/unstage/discard_worktree sync + `request_refresh` after) — must be background
-    in rewrite.
-13. **`TreeHighlighter` is per-Buffer but shares a static grammar cache with
-    `GrammarInstaller::generation()`** for cache invalidation (`old/src/syntax/
-    tree_highlighter.cpp meta_changed`) — implicit global dependency.
-14. **Undo transactions store cursor positions inside Buffer** (undo txn heads) —
-    the “cursor” lives in Window, not Buffer; whether the restore matches the active
-    split semantics was the source of subtle bugs (see Problem (1)) — unify in rewrite.
+Sources: the two examples you cited ("Visual mode selection galat hai",
+"LSP freeze karta hai") plus issues auto-derived from `old/PROGRESS.md` UNVERIFIED
+list, `old/sys.txt` PART AD/UNVERIFIED, and direct code reads in this pass.
+
+1. **Visual mode selection misbehaves** — **DESIGN** (+2 concrete gaps).
+   - Selection is anchored on the `Window`, normalized to byte ranges by
+     `normalize_character_range` (`includes/editor/selection.hpp:70-108`); when the
+     "high" cursor sits at EOL, the normalized range is extended across the newline
+     into the next line (`selection.hpp:97-101`) — that merge-on-edit asymmetry is the
+     observable "selection feels wrong" case.
+   - There is **no `o`/`O` cursor swap in Visual mode** (`editor_visual.cpp` handles
+     `gg`/ops only) and the effective visual endpoint logic makes it hard to extend
+     backward comfortably — missing-feature coupling of keyboard behavior and
+     mode-implementation (deferred in design; both are v1-fixable).
+2. **LSP can freeze the UI** — **DESIGN** (architecture-level, with several concrete spots).
+   - `formatOnSave` spin-waits on the UI thread (`src/ui/ui_tabs.cpp:85-110`) —
+     up to 2 s stall per save when a server is slow.
+   - `LspProcess::write_all` does a **blocking pipe `write()` from the main thread**
+     (`lsp_process.cpp:153-172`): if a server stops reading, the UI hard-freezes on
+     every `didChange`/`didOpen`.
+   - `Clipboard::write/read` spawn subprocesses with blocking `waitpid`/popen on the
+     main thread (`clipboard.cpp:74-92 exec_write, run_capture:25-39`) — yank/copy/cut/paste
+     can stall seconds when clipboard tools are slow/absent (falls back to OSC52 only after
+     all three binaries fail).
+   - `LspProcess::stop()` sleeps up to 1 s in a main-thread loop
+     (`lsp_process.cpp:114-133`).
+   - Pending LSP requests have no timeout and no `$ /cancelRequest`
+     (`lsp_service.cpp cancel_pending`, `sys` X).
+   Verdict: a **DESIGN** problem (all external interaction marshalled on the UI thread
+   with no async-write path), not a simple bug.
+3. **`:NNN` / `ctrl+g` goto-line is a silent no-op** — **BUG**.
+   `Ctrl+g` opens `:` and tells you to "type number, Enter" (`ui_commands_keymap.cpp:12-19`),
+   but the ex parser skips leading digits/%/`./$` as "range tokens for future use"
+   (`ex_commands.cpp:40-46`) and then early-returns when `parsed.name` is empty
+   (`ex_commands.cpp:121-122`) — no command ever runs.
+4. **`ctrl+y` redo overlaps/steals keys** — **BUG (keymap design)**.
+   In `old/config.json` `ctrl+y` is bound to `editor.action.redo` with
+   `when="editorFocus"` only — i.e. active in Insert mode too, and duplicated with the
+   already-hardcoded `ctrl+r` redo and `u`/`:redo`; `ctrl+y` is also the standard vim
+   scroll-line-up key. `old/keymap-catalog.md` (OPEN DECISIONS section) calls this an
+   open question; the config when-clause can't disambiguate Insert-vs-Normal because
+   the binding lacks a `normalMode` gate.
+5. **No auto-indent / broken backspace-join at col 0** — **BUG** (missing feature).
+   Insert-mode Backspace at column 0 simply drops the newline
+   (`editor_insert.cpp:77-82` → `buffer.delete_char_before(line,0)`); there is no
+   leading-indent handling on join and **no autoindent on Enter** either
+   (`buffer_insert.cpp raw_insert_newline` copies nothing; `editor_insert.cpp:93-100`
+   computes no indent). Notes called this "backspace after space at indent" +
+   "object-init indent"; realistic UX gap, not coupling.
+6. **`Insert` `jk` only for ASCII `j`** — minor **BUG**.
+   `pending_j` is armed only in the `key >= 32 && key <= 126` printable path
+   (`editor_insert.cpp:108-117`) — typing via the UTF-8 path never arms/chains the
+   `jk` chord (safe because `\uXXXX`-free, but surprising for users who exit via
+   non-ASCII text). Low severity.
+7. **`space f w` grep-word and `space g p` preview-hunk are placeholders** — **Stub**.
+   `ui_commands_keymap.cpp:63` and `:67` only `Messages::info("PHASE 5 …")`
+   (matches `sys` PART AD inventory).
+8. **Code actions with only a `command` are dropped** — **Stub**.
+   `ui_lsp.cpp:184` logs "Code action command not executed"; no command-runner exists.
+9. **LSP didChange multi-line change loses incremental fidelity** — **Partial**.
+   Incremental path sends UTF-16 one-line diff; multi-line deletes fall back to a
+   full resend (`lsp_service.cpp did_change_incremental`, sys X) — perf gap, correct
+   fix is UTF-16 range math in TextMetrics.
+10. **JSON lexer uses C-style comments** — **Partial** (tolerated JSONC vs strict JSON).
+    `old/sys.txt` PART Y fallback section states `uses_c_comments` includes JSON —
+    `highlight_generic` mis-tokenizes strict JSON containing `//`-style text.
+11. **git stage/unstage/discard block the UI thread** — **DESIGN**.
+    `scm_service.cpp` runs those git commands synchronously on main, then
+    `request_refresh` (sys G5). Same root cause family as #2.
+12. **Visual `<` `>` indent ops missing** — **Stub** (gap), confirmed by reading
+    `editor_visual.cpp` switch (no case for `<`/`>`).
+13. **Docs drift** — `old/keymap-catalog.md` describes an older keymap (it still
+    mentions `ctrl+k …` chords, `jj` insert-exit, `space ;`, `space l n/o/a`,
+    `space m r/s` session keys) that the T5 config rewrite removed; `old/config.json`
+    and `old/sys.txt` PART T are authoritative. **DESIGN**-process issue (docs out of
+    sync, no single source of truth).
+14. **Mouse unsupported** — **Stub** (grep: no mousemask/KEY_MOUSE/KEY_RESIZE-mouse
+    handling).
+15. **Items from your notes that could NOT be tied to code** — **Unknown**:
+    any notes about "font fallback in popups" (font fallback is terminal/ncurses
+    environment; Noni just draws wide chars in `HoverPopup`), and anything outside the
+    source tree (e.g. async term records, plugin marketplace) — no matching code found
+    (`SEARCH: src/ for plugin/marketplace/ssh/debugger returned nothing`).
 
 ---
 
-# 7. Must-keep vs can-drop (suggestion — not from the notes)
+# 6. Design smells
 
-## 7.1 Must keep for v1 rewrite (core product)
+1. **UI god-class**: `old/includes/ui/ui.hpp` `UI` owns 16 widgets + core/config/keys/
+   extension manager/fs watcher + layout ints + painted-state mirrors
+   (`ui.hpp:45-115`) + ex/session/SCM/LSP glue. Almost no isolation boundary.
+2. **Editor-module ↔ UI callback ping-pong**: `Editor` carries 11 raw
+   `std::function` slots set by UI (`includes/components/editor.hpp:37-53`) —
+   UI modules reach into details while components reach back into UI strings.
+3. **Buffer aggregates too much**: one class holds content + undo/redo + syntax
+   engine + diagnostics snapshot + FS + mtime + display-metric caches + listener
+   hooks (`includes/editor/buffer.hpp`) — hard to split conceptually in a rewrite
+   without first factoring policy from data.
+4. **`EditorCore` acts as a mini-service locator**: it binds Buffer change-listener →
+   LSP + SCM + events (`editor_core.hpp attach_lsp_document`) and holds
+   search/replaces/registers/marks/jumps — a bag of interrelated members with no clear
+   ownership direction (reached from UI, Editor, widgets).
+5. **MiniJson is a hand-rolled dependency** (no `\uXXXX`, no exponent, no comments) —
+   LSP correctness hinges on it (`src/configs/mini_json*.cpp`).
+6. **Panel-specific key handling duplicated** `statusbar.cpp`/`ui_input.cpp`/editor
+   floor space: e.g. both `ui_input.cpp` and `search_panel.cpp` define focus-level
+   Esc/E-sc handling; `Commandline::open('/')` used for both `actions.find` and `/`.
+7. **Buffers/registers keyed by pointer-as-id** (`std::uintptr_t` cast of
+   `Buffer*` for LSP docs & marks: `editor_core.cpp`, `search_args` etc.) — fragile
+   identity scheme.
+8. **Two-layer keybinding evaluation** (config engine + hardcoded component switches)
+   has *implicit priority*: engine literal contexts (`keybindings_detail.hpp
+   engine_owns_token`, `command.hpp context_is_literal`) decide what even reaches a
+   widget, while vim chords like insert `jk` (`pending_j`, `editor_insert.cpp:8-27`)
+   and prefix pairs (`g`, `m`, `'`, `"`, `[`) live entirely inside the editor and are
+   invisible to the engine. Any new widget must learn which layer eats which key.
+9. **Buffer::record_change fan-out has no ordering** (`buffer_insert.cpp:5-60
+   record_change` → `apply_forward` → TreeHighlighter invalidation →
+   `change_listener_` LSP) — subscribers are implicit; a rewrite should formalize the
+   notification graph.
+10. **`Selection`/cursor state lives on Window but LSP positions are derived ALL
+    over the UI path** (`ui_lsp.cpp`, `ui.cpp` when applying edits) — position math
+    mixing byte/UTF-16/display columns (`text_metrics.cpp`, `Buffer::display_to_byte_cached`)
+    duplicated rather than encapsulated.
+11. **Threading**: only Logger thread + `Background` pool; SCM/ScmService/Process
+    read path single-threaded — fine, but `ui.cpp` mixes "pump LSP", "pump PTY",
+    "pump fs", "tick autosave", "tick recovery", "sync scm" all inside `render`
+    (`sys` Z-step 12-18 spaghetti). Hard to test, hard to reason about in the rewrite.
+12. **200-line rule fragments files 5×** (e.g. `lsp/lsp_service*.cpp` six files,
+    `ui/ui_commands*` five, `search_panel` three, `terminal_screen` three, `fs_watcher`
+    two, `editor_*` twelve, `sidebar` seven, `icons_file` five) — everything that
+    should be one readable module is scattered across `_partN` pairs with
+    `-detail.hpp` headers.
 
-1. **Editing** — Buffer model with undo/redo transactions, mtime-conflict awareness,
-   atomic save, UTF-8 handling (`buffer.hpp`, `buffer_io.cpp`, `fs.cpp`).
-2. **Modal vim editing** with the current motions/operators set (fills the practical
-   80% of vim editing; fill gaps like `r`, counts, `%`, `o` later).
-3. **Keybinding engine with config.json when-clauses + engine-owns-{ctrl,alt,F,esc,space}**
-   (this is what makes the workbench layer declarative;
-   `keybindings*.cpp` + `command.hpp`).
-4. **Command registry + workbench command IDs** (`command.cpp` + `ui_commands*.cpp`) —
-   the “VS Code-identifier” pattern is good for keymap reuse.
-5. **Buffer search `/ ? n N`** with case/whole-word/regex options.
-6. **Project search panel (read-only results + open match)**.
-7. **Split-window layout + focus traversal** (`window_layout.hpp`) — it already works
-   well enough.
-8. **-sidebar absent list (for continuity):** sidebar tree with async scandir + expand +
-   open/rename/delete — essential for "editor" completeness, keep.
-9. **LSP** — completion/definition-references/rename/diagnostics/hover with the
-   hardened process/session state machine (`lsp_service*`, `lsp_session*`,
-   `lsp_process.cpp` fixes: non-blocking write, timeouts, cancellation).
-   - drop LSP auto-installer for v1? (it works; biggest risk of breakage — can keep
-     but must never block UI).
-10. **Tree-sitter highlighting with the GrammarInstaller** (including the caching and
-    per-line incremental parse) + the fallback lexer for languages without grammars.
-11. **Integrated terminal (PTY + VT + scrollback)** — important product feature; gotcha:
-    keep the poll-based single-thread pumping, but never let writes block.
-12. **Git status + branch badge + gutter diff** via `git` CLI (no libgit2 dependency).
-13. **Session save/restore + crash recovery** (`workspace/session.cpp`, `recovery.cpp`)
-    — they were designed carefully (no auto-overwrite of sources).
-14. **Autosave afterDelay** + **format…(on save or manual)** — but fix the freeze first.
-15. **Status bar + header + line-number gutter** visuals (cheap, expected).
+---
 
-## 7.2 Can drop / postpone for v1
+# 7. Must-keep vs can-drop (SUGGESTION)
 
-- LSP **auto-installer** backends (pip/npm/curl/go) — users can install servers
-  themselves; the catalog is nice-to-have (`lsp_installer_backends.cpp`).
-- **Extension/plugin API** — only a demo extension exists; defer until the core is
-  stable (`extensions/*`).
-- **`:help` engine** page system (nice, but text-only anyway; can be a few markdown
-  pages without a loader) — keep `:messages`/`:logs`.
-- Icons/`icons_file*.cpp` (5 large static-data files for per-file glyphs) — cosmetic.
-- LSP **code actions** beyond `edit`-only (i.e. command-only actions) — stub anyway.
-- `git.previewHunk` + hunk-level git ops.
-- `space f w` grep-word (until search panel grows word-at-cursor entry).
-- Visual-mode `<`/`>` indent ops (implement once Buffer/splits firmed up).
-- Hover popup with rich styling (keep plain popup only).
-- Window focus shortcuts binding beyond current few; polish later.
+## 7.1 Keep for v1 rewrite (essential)
 
-## 7.3 Unknown / not fully analyzed files (for `new/` planning)
+1. Buffer model + undo/redo transactions + load-error state + atomic save + external-
+   change detection (`editor/buffer*.cpp|hpp`, `buffer_io.cpp`, `utils/fs.cpp`).
+2. Modal editing (Normal/Insert/Visual/VisualLine) with the existing motion/operator
+   surface, registers/marks/jumps — extend gracefully rather than reinvent
+   (`components/editor*.cpp`, `includes/editor/*`).
+3. Declarative keybinding engine (config.json chords + when-flags + engine-owned
+   syntax) — but consolidate the layering rules into one place
+   (`configs/keybindings*`, `commands/command.hpp`).
+4. Command registry with stable string IDs (vs-code-like identifiers carry over well
+   to config docs/`keymap-catalog` habits) (`commands/*`).
+5. Search: in-buffer `/ ? n N` + project search side panel + `replaceAll` single
+   buffer (`editor/buffer_search*`, `ui/ui_search.cpp`, `components/search_panel*`).
+6. LSP core (sessions, completion, LSP navigation, rename, diagnostics, hover,
+   formatting) **with the freeze fixes of §5-2 first** (`lsp/*`).
+7. Tree-sitter highlighting + fallback lexer + per-language embedded queries +
+   GrammarInstaller (nice-to-have but already built; low risk to keep)
+   (`syntax/*`).
+8. Git: status + branch + diff-gutter + stage/unstage/discard, **backgrounded**
+   (`scm/*`, `utils/git.cpp`); no libgit needed.
+9. Integrated terminal (PTY + VT parser + screen + scrollback) — keep as one panel
+   (`terminal/*`, `components/terminal_panel*`).
+10. UI: dirty-render pipeline + `UIComponent` base (`ui/ui_render*.cpp`,
+    `UIComponent.*`) plus Focus routing table; header/tab-bar/status-bar/gutter
+    widgets (`components/{header,tab_bar,statusbar,line_number}.cpp`).
+11. Session persistence + crash recovery + autosave + recent files
+    (`workspace/*`).
+12. Config loader semantics (search order + no-write-back + config echo)
+    (`configs/config.cpp`).
+13. Fuzzy FilePicker/BufferPicker/Recent files (`utils/fuzzy*`, `components/*picker*`).
+14. Message/log surfaces (`utils/messages.cpp`, `logger.cpp`, `:messages`/`:logs`).
 
-Listed from `old/src/`, not duplicated in full sections above; analysis came from
-`old/sys.txt` PART Q/R (verified 2026-09-26) rather than direct read (deemed stable given
-git log Sep 26 = last function change; light confidence):
+## 7.2 Defer to later milestones (can drop for v1)
 
-- `old/src/syntax/ts_hl_detail.cpp` + `ts_queries.hpp` (TS capture mapping specifics)
-- `old/src/syntax/grammar_download.cpp` / `grammar_tools.cpp` / `grammar_request.cpp` /
-  `grammar_state.cpp` (URL building details per language)
-- `old/src/terminal/vt_parser_csi.cpp` subtleties (full CSI dispatch, no table in sys.txt)
-- `old/src/components/lsp_picker.cpp*` mapping between picker kinds and results
-- `old/src/sidebar/dirscanner_detail.hpp` + `old/src/sidebar/dirscanner_part2.cpp` details
-- `old/src/editor/window_layout.cpp` split-tree edge cases (root replacement,
-  window close when 2 leaves left)
-- `old/src/ui/ui_recovery.cpp` prompt ordering details
-- `old/src/utils/fs_watcher_part2.cpp` (inotify event classes watched)
-- 200-line-split microfiles like `old/src/components/editor_lines.cpp`,
-  `editor_jump.cpp` (titles derived from naming; content not read line-by-line)
+- LSP auto-installer backends (pip/npm/curl/go) — maintainable later, not core
+  (`lsp/lsp_installer*`).
+- Extension API + demo extension (`extensions/*`) until the core is stable.
+- `:help` page system (nice-to-have; static markdown helper suffices)
+  (`help/*`).
+- hover_popup styling beyond plain text (`components/hover_popup.cpp`).
+- Window split resize/close/`openWorkspace` extras beyond basics
+  (`ui_commands_nav.cpp` viewWidth/Height group).
+- LSP auto-installer configs from `lsp.servers[]` docs overlay — defer the
+  `language`-gap CSharp/Java/Go etc. (`syntax/grammar_installer.cpp`).
+- `space f w` grepWord and `space g p` previewHunk (already stubs).
+- Icons/per-file-glyph datasets (keep a compact map; drop the 5 giant static tables
+  `ui/icons_file_part1..5.cpp`).
+- Anything GUI/marketplace/SSH/debugger (none exists — the prompt's libgit
+  assumption was already removed).
 
-*(sys.txt's T8 “LAST VERIFIED” line (2026-09-26) plus unchanged file mtimes after that
-date gave high confidence in the inventory above.)*
+## 7.3 Files I could not fully analyze (from `old/`)
+
+- Deep behavioral edge cases of `src/terminal/vt_parser_csi.cpp` dispatch (sys
+  describes its purpose; full per-opcode matrix not read line-by-line).
+- `src/ui/ui_recovery.cpp` prompt-ordering nuance (sys Z-step 18; code skimmed only).
+- `icons_file_part1..5.cpp` (static data tables + `icons_lookup.cpp` — data content,
+  low value to re-verify).
+- `extension/builtin_hello greeting` interaction with `extensions.noni.hello.greet`
+  (behavior inferred from code+config only).
+- `workspace/recovery.cpp` `id = hash(path)` specifics (sys AC) — code briefly read.
