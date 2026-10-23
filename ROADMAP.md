@@ -66,14 +66,17 @@ v1 total = **127 tasks** (P0–P16).
 
 ### P0.2 Targets + layer include enforcement
 - goal: static libs per ARCHITECTURE §1; `target_link_libraries` order
-  core ← services ← app ← ui ← noni; per-target include scoping so a wrong
-  include fails to compile.
+  core ← services ← app ← ui ← noni; include scoping so a wrong include fails
+  (ncursesw/tree-sitter attached only to their owning targets).
 - depends: P0.1
-- files: `new/CMakeLists.txt`, stub headers per target
-- ACCEPT: intentional `#include <ncurses.h>` in `core/` fails the build (temp check,
-  reverted).
-- edges: pkg-config `tree-sitter` optional until P12 → `if(PKG_CONFIG_FOUND)` guard,
-  P12 enables it; `ncursesw` guarded until P7.
+- files: `new/CMakeLists.txt`, stub headers per target, `tests/layer_lint.sh`
+- ACCEPT: configure+build with all layer stubs links clean; `ctest` runs the
+  layer lint green; the `noni` exe links the stub chain end-to-end.
+- edges: TOOLCHAIN-VERIFIED DEVIATION — this box also has `ncurses.h` on the
+  default `/usr/include` path, so a wrong `#include` in `core/` still compiles;
+  enforcement is therefore (a) link direction (ncursesw/tree-sitter targets in
+  the owning chain only) + (b) the `layer_lint` ctest grep gate, both running
+  at every merge gate.
 - done: target graph exists; `noni` links empty main.
 
 ### P0.3 doctest + main stub + ctest smoke

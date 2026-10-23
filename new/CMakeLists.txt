@@ -81,3 +81,5 @@ enable_testing()
 add_test(NAME layer_lint
          COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/tests/layer_lint.sh)
 set_tests_properties(layer_lint PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+
+add_subdirectory(tests)
