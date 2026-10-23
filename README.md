@@ -1,9 +1,9 @@
 # Noni
 
 A small, fast, **Vim-style terminal text editor** written in modern C++23.
-Noni is an editor, not an IDE: it does modal editing, search, syntax highlighting
-and file navigation, and leaves git, terminals and build tools to the tools that
-already do them well (tmux, lazygit, your shell).
+Modal editing, windows and tabs, search, syntax highlighting, LSP, a file
+explorer and a built-in terminal. No git integration (use git / lazygit
+in the terminal).
 
 ## Features
 
@@ -14,20 +14,21 @@ already do them well (tmux, lazygit, your shell).
 - Windows and tabs: `:sp`, `:vs`, `Ctrl-w` commands, `:tabnew`, `gt`/`gT`
 - Search and replace: `/ ? n N * #`, `:s///`, `:%s///gc`
 - Ex commands: `:w :q :wq :e :b :bn :bd :ls :set :<number> :!cmd`
-- Fuzzy file picker (`<space>ff`), project grep (`<space>fg`), simple explorer (`<space>e`)
+- Fuzzy file picker (`<space>ff`), project grep (`<space>fg`), sidebar explorer (`<space>e`)
 - Syntax highlighting via tree-sitter (C, C++, Python, Rust, ...)
+- LSP (async): completion, hover, definition, references, rename, diagnostics, format
+- Built-in terminal panel (`:term`)
 - Autosave, crash recovery, session restore
 - One small `config.json`
 
 ## Not included (on purpose)
 
-Git integration, embedded terminal, plugin system, mouse support, GUI.
-LSP is planned as an optional late addition.
+Git integration, plugin system, mouse support, GUI.
 
 ## Build
 
-Requirements: GCC 14+ (or any compiler with C++23 `<print>` and `<expected>`),
-CMake 3.28+, ncursesw, tree-sitter.
+Requirements: GCC 14+ (C++23 `<print>`, `<expected>`), CMake 3.28+,
+ncursesw, tree-sitter.
 
     cmake -B build -DCMAKE_BUILD_TYPE=Debug
     cmake --build build
@@ -48,33 +49,39 @@ Debug builds enable AddressSanitizer and UBSan.
 | `:w` `:q` `:wq` | Save / quit |
 | `:sp` `:vs` `Ctrl-w h/j/k/l` | Split windows and move |
 | `<space>ff` / `<space>fg` / `<space>e` | Find file / grep / explorer |
+| `gd` / `K` / `<space>rn` | LSP definition / hover / rename |
+| `:term` | Terminal panel |
 
 ## Configuration
 
-`~/.config/noni/config.json` (falls back to the current directory, then defaults):
+`~/.config/noni/config.json` (falls back to current directory, then defaults):
 
     { "tabwidth": 4, "expandtab": true, "number": true,
-      "relativenumber": true, "scrolloff": 5 }
+      "relativenumber": true, "scrolloff": 5,
+      "lsp": { "servers": [ { "language": "cpp", "command": ["clangd"],
+                               "rootMarkers": ["compile_commands.json", ".git"] } ] },
+      "terminal": { "shell": "/bin/bash", "height": 12 } }
 
 Runtime changes with `:set`, e.g. `:set relativenumber`.
 
 ## Project layout
 
-    src/core/   pure editing logic: buffer, undo, motions, operators, registers, ex parser
-    src/app/    event loop, reducer, config, background workers
-    src/ui/     ncurses rendering only
-    src/syntax/ tree-sitter highlighting
-    tests/      doctest unit tests and scripted key-session tests
+    src/core/     pure editing logic: buffer, undo, motions, operators, ex parser
+    src/app/      event loop, reducer, config, background workers
+    src/ui/       ncurses rendering only
+    src/syntax/   tree-sitter highlighting
+    src/lsp/      async LSP client
+    src/terminal/ PTY + VT parser
+    tests/        doctest unit tests and scripted key-session tests
 
-Rules: `core/` never includes ncurses or threads; all state changes go through one
-reducer; the main thread never blocks. See `ARCHITECTURE.md`.
+Rules: `core/` never includes ncurses or threads; all state changes go through
+one reducer; the main thread never blocks. See `ARCHITECTURE.md`.
 
 ## Development
 
-Work is organised in small tasks (`ROADMAP.md`), each with acceptance tests.
+Work is organised in small tasks (`ROADMAP.md`) with acceptance tests.
 `PREVIEW.md` shows what each phase looks like. Vim behaviour is checked against
-`nvim --headless` in differential tests; Neovim's source is used as a reference
-only, never copied.
+`nvim --headless` in differential tests; Neovim's source is a reference only.
 
 ## License
 
