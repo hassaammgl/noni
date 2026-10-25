@@ -6,7 +6,10 @@
 #include <string_view>
 #include <utility>
 
+#include <algorithm>
+
 #include "core/text.hpp"
+#include "core/undo.hpp"
 
 namespace noni {
 
@@ -136,6 +139,63 @@ void Buffer::apply_change(const TextChange& change) {
                   change.new_lines.begin(), change.new_lines.end());
     dirty_ = true;
     ++revision_;
+    undo_.push(change); // fresh edits from the present truncate the redo branch
+}
+
+void Buffer::apply_inverse(const TextChange& change) {
+    const auto first = lines_.begin()
+                       + static_cast<std::ptrdiff_t>(change.first_line);
+    const auto last = first + static_cast<std::ptrdiff_t>(change.new_lines.size());
+    // Internal precondition: undo replays against the exact state the change
+    // left behind (shared invariant of the line-span model).
+    assert(std::equal(change.new_lines.begin(), change.new_lines.end(), first, last)
+           && "undo/redo baseline drift");
+    lines_.erase(first, last);
+    lines_.insert(lines_.begin() + static_cast<std::ptrdiff_t>(change.first_line),
+                  change.old_lines.begin(), change.old_lines.end());
+    dirty_ = true;
+    ++revision_;
+}
+
+eresult<Buffer::UndoResult> Buffer::undo() {
+    auto unit = undo_.pop_undo();
+    if (!unit) {
+        return std::unexpected(Error{"undo: nothing to undo"});
+    }
+    for (auto it = unit->changes.rbegin(); it != unit->changes.rend(); ++it) {
+        apply_inverse(*it); // inverses in REVERSE order
+    }
+    const UndoResult res{unit->changes.front().cur_before};
+    undo_.push_redo(std::move(*unit));
+    return res;
+}
+
+eresult<Buffer::UndoResult> Buffer::redo() {
+    auto unit = undo_.pop_redo();
+    if (!unit) {
+        return std::unexpected(Error{"redo: nothing to redo"});
+    }
+    for (const auto& change : unit->changes) {
+        // Re-apply forward. Reuse apply_change WITHOUT re-recording:
+        // record_text_change would push a new unit and clear redo. So splice
+        // manually (apply_inverse's assert inverted).
+        const auto first = lines_.begin()
+                           + static_cast<std::ptrdiff_t>(change.first_line);
+        const auto last =
+            first + static_cast<std::ptrdiff_t>(change.old_lines.size());
+        assert(std::equal(change.old_lines.begin(), change.old_lines.end(),
+                          first, last)
+               && "redo baseline drift");
+        lines_.erase(first, last);
+        lines_.insert(lines_.begin()
+                          + static_cast<std::ptrdiff_t>(change.first_line),
+                      change.new_lines.begin(), change.new_lines.end());
+        dirty_ = true;
+        ++revision_;
+    }
+    const UndoResult res{unit->changes.back().cur_after};
+    undo_.push_redo_return(std::move(*unit));
+    return res;
 }
 
 void Buffer::record_text_change(const TextChange& change) {

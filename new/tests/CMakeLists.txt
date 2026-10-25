@@ -10,7 +10,8 @@ fetchcontent_makeavailable(doctest)
 add_executable(noni_tests
     smoke_test.cpp
     text_test.cpp
-    buffer_test.cpp)
+    buffer_test.cpp
+    undo_test.cpp)
 
 target_link_libraries(noni_tests PRIVATE noni_core noni_ext noni_terminal
                                          noni_syntax noni_lsp noni_app noni_ui

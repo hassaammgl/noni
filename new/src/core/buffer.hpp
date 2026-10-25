@@ -9,29 +9,9 @@
 #include <vector>
 
 #include "core/pos.hpp"
+#include "core/undo.hpp" // TextChange/EditKind/UndoStack (undo model, P1.4)
 
 namespace noni {
-
-// Coarse edit kinds for undo grouping. Typing runs merge (see P1.4/1.5);
-// says Bulk otherwise.
-enum class EditKind : std::uint8_t {
-    InsertChar, // single-codepoint insertion (typing runs)
-    EraseChar,  // single-codepoint erase (backspace/delete runs)
-    Bulk,       // everything else (ranges, multi-line, paste, replace)
-};
-
-// One applied edit expressed at LINE granularity: lines
-// [first_line, first_line+old_lines.size()) had `old_lines` before and
-// `new_lines` after the change. `cur_before`/`cur_after` are optional cursor
-// hints (used by undo to restore cursor position, P1.4).
-struct TextChange {
-    EditKind kind = EditKind::Bulk;
-    std::uint32_t first_line = 0;
-    std::vector<std::string> old_lines; // content BEFORE the change
-    std::vector<std::string> new_lines; // content AFTER the change
-    Pos cur_before;
-    Pos cur_after;
-};
 
 class Buffer {
 public:
@@ -88,15 +68,31 @@ public:
     // Reserved for the reducer (P2+): push a caller-built change directly.
     void record_text_change(const TextChange& change);
 
+    // --- undo/redo (P1.4). Units = one undoable edit. Cursor restore comes
+    // from the unit's cur_before (undo) / cur_after (redo) hints.
+    struct UndoResult {
+        Pos cursor;
+    };
+    [[nodiscard]] eresult<UndoResult> undo();
+    [[nodiscard]] eresult<UndoResult> redo();
+    void begin_undo_group() { undo_.begin_group(); }
+    void end_undo_group() { undo_.end_group(); }
+    [[nodiscard]] std::size_t undo_depth() const { return undo_.undo_depth(); }
+    [[nodiscard]] std::size_t redo_depth() const { return undo_.redo_depth(); }
+
 private:
-    // Splices `change` into `lines_`, marks dirty, bumps revision. P1.4 hooks
-    // undo recording right here.
+    // Splices `change` into `lines_`, marks dirty, bumps revision, and records
+    // it in the undo history (P1.4).
     void apply_change(const TextChange& change);
+    // Inverse splice (undo: new->old; redo internal check uses old->new path of
+    // apply_change itself). Debug-asserts content match before splicing.
+    void apply_inverse(const TextChange& change);
 
     std::vector<std::string> lines_ = {""}; // invariant: size() >= 1
     std::filesystem::path path_;
     bool dirty_ = false;
     std::uint64_t revision_ = 0;
+    UndoStack undo_;
 };
 
 // Load/save helpers shared by Buffer and later modules (tests use them too).
