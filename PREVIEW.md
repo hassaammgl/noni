@@ -38,7 +38,8 @@ noni v2 (CMake skeleton) — UI arrives in P7
 
 Try:
 1. `./build/noni --version` → prints version line, exit 0.
-2. `./build/noni` (no args) → error "UI arrives in P7", exit 2.
+2. `./build/noni` (no args) → info line "editor UI arrives in P7", exit 0
+   (real editor launch waits for P7).
 3. Deliberate break check: temporarily add `#include <ncurses.h>` into a
    `src/core/` header → build FAILS (layer check works) → revert.
 4. `ctest --test-dir build` → smoke test Passed.

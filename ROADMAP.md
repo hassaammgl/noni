@@ -27,25 +27,25 @@ Differential reference for editing semantics: `nvim --headless -u NONE`
 
 ## Summary
 
-| Phase | Title | Tasks | User capability after phase |
-|---|---|---|---|
-| P0  | CMake skeleton | 3  | empty ui-less binary builds, ctest runs a placeholder |
-| P1  | Core buffer + undo | 8  | (library only) tested text edits + undo/redo |
-| P2  | Motions | 10 | (tested) full motion vocabulary incl. counts |
-| P3  | Operators + text objects | 9  | (tested) d/c/y/</>/gu/gU/g~/= over motions+objects |
-| P4  | Registers/marks/dot/macros | 9  | (tested) p/P, `.`, q/@, marks, jumplist |
-| P5  | Modes + reducer | 7  | headless vim session replaying a key stream |
-| P6  | Ex commands | 8  | `:` prompt, :w :q :e :b :bn :bd :s/// :N :set (no screen) |
-| P7  | Renderer | 9  | **first visible editor**: single window, scroll |
-| P8  | Windows + tabs | 8  | :sp :vs ctrl+w, :tabnew gt/gT |
-| P9  | Search + substitute | 7  | / ? n N * # :noh :s/// :%s///g + highlights |
-| P10 | Picker + explorer + grep | 8  | <space>ff fuzzy files, <space>fg grep, <space>e explorer |
-| P11 | Config | 4  | config.json honored, :set works end-to-end |
-| P12 | Syntax (tree-sitter) | 6  | c/cpp/python/rust highlighting, incremental main-thread parse |
-| P13 | LSP | 11 | completion/hover/def/refs/rename/diag/format, async |
-| P14 | Terminal + `:!` + OSC52 | 7 | :term bottom split, :!cmd async, "+ OSC52 yank |
-| P15 | Extras | 6  | ctrl+v block visual, :map/:nnoremap, J/gJ, visual u/U |
-| P16 | Session/recovery/autosave | 7  | restore across runs, crash recovery prompts |
+| Phase | Title                      | Tasks | User capability after phase                                   |
+| ----- | -------------------------- | ----- | ------------------------------------------------------------- |
+| P0    | CMake skeleton             | 3     | empty ui-less binary builds, ctest runs a placeholder         |
+| P1    | Core buffer + undo         | 8     | (library only) tested text edits + undo/redo                  |
+| P2    | Motions                    | 10    | (tested) full motion vocabulary incl. counts                  |
+| P3    | Operators + text objects   | 9     | (tested) d/c/y/</>/gu/gU/g~/= over motions+objects            |
+| P4    | Registers/marks/dot/macros | 9     | (tested) p/P, `.`, q/@, marks, jumplist                       |
+| P5    | Modes + reducer            | 7     | headless vim session replaying a key stream                   |
+| P6    | Ex commands                | 8     | `:` prompt, :w :q :e :b :bn :bd :s/// :N :set (no screen)     |
+| P7    | Renderer                   | 9     | **first visible editor**: single window, scroll               |
+| P8    | Windows + tabs             | 8     | :sp :vs ctrl+w, :tabnew gt/gT                                 |
+| P9    | Search + substitute        | 7     | / ? n N * # :noh :s/// :%s///g + highlights                   |
+| P10   | Picker + explorer + grep   | 8     | <space>ff fuzzy files, <space>fg grep, <space>e explorer      |
+| P11   | Config                     | 4     | config.json honored, :set works end-to-end                    |
+| P12   | Syntax (tree-sitter)       | 6     | c/cpp/python/rust highlighting, incremental main-thread parse |
+| P13   | LSP                        | 11    | completion/hover/def/refs/rename/diag/format, async           |
+| P14   | Terminal + `:!` + OSC52    | 7     | :term bottom split, :!cmd async, "+ OSC52 yank                |
+| P15   | Extras                     | 6     | ctrl+v block visual, :map/:nnoremap, J/gJ, visual u/U         |
+| P16   | Session/recovery/autosave  | 7     | restore across runs, crash recovery prompts                   |
 
 v1 total = **127 tasks** (P0–P16).
 
@@ -85,7 +85,9 @@ v1 total = **127 tasks** (P0–P16).
 - depends: P0.2
 - files: `new/tests/smoke_test.cpp`, `new/src/main.cpp`
 - api: `int main(int argc, char** argv)` skeleton in main.cpp (no ncurses yet:
-  `noni --version` → stdout, else error "UI arrives in P7", exit 2).
+  `noni --version` → stdout, exit 0; no args → info line, exit 0 [deviation:
+  bare `make run` must not look like a failure until P7; reverts to launching
+  the editor in P7.5]; unknown args → error, exit 2).
 - ACCEPT: `ctest --test-dir build` runs smoke test; `./build/noni --version` prints.
 - edges: FetchContent behind proxy → document manual fallback in commit body.
 - done: ctest green; committed `P0.3`.

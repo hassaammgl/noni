@@ -4,6 +4,7 @@
 #   make          configure + build (new/build)
 #   make run      build + run ./new/build/noni (ARGS="-foo" to pass args)
 #   make test     build + ctest
+#   make sanitize run the test binary under ASan+UBSan
 #   make clean    delete new/build
 #   make help
 
@@ -14,15 +15,22 @@ TESTS     := $(BUILD_DIR)/tests/noni_tests
 
 ARGS ?=
 
-.PHONY: all configure build run test clean help
+.PHONY: all configure build run test sanitize clean help
 
 all: build
 
+# quiet-then-loud: cmake chatter is hidden while it succeeds; on failure the
+# full output is dumped so errors/warnings are never swallowed.
 configure:
-	@cmake -S $(NEW_DIR) -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Debug
+	@out=$$(cmake -S $(NEW_DIR) -B $(BUILD_DIR) -DCMAKE_BUILD_TYPE=Debug \
+	        -Wno-deprecated 2>&1); status=$$?; \
+	if [ $$status -ne 0 ]; then printf '%s\n' "$$out" >&2; exit $$status; fi
 
 build: configure
-	@cmake --build $(BUILD_DIR) -j4
+	@out=$$(cmake --build $(BUILD_DIR) -j4 2>&1); status=$$?; \
+	printf '%s\n' "$$out" | grep -E ':[[:space:]]*(error|warning):' >&2 || true; \
+	if [ $$status -ne 0 ]; then printf '%s\n' "$$out" >&2; exit $$status; fi; \
+	echo "build: ok"
 
 run: build
 	@./$(BIN) $(ARGS)
@@ -39,7 +47,7 @@ clean:
 	rm -rf $(BUILD_DIR)
 
 help:
-	@echo "make        = configure + build"
+	@echo "make        = configure + build (quiet; errors surface fully)"
 	@echo "make run    = build + run $(BIN) [ARGS=...]"
 	@echo "make test   = build + ctest"
 	@echo "make sanitize = run test binary under ASan+UBSan"

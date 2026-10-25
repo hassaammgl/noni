@@ -17,6 +17,8 @@ int main(int argc, char** argv) {
                      "noni: unknown argument '{}' — UI arrives in P7", arg);
         return 2;
     }
-    std::println(stderr, "noni: UI arrives in P7");
-    return 2;
+    // No args, no UI yet: informational success (bare `make run` must not look
+    // like a failure until P7 gives the editor a real screen).
+    std::println("noni v0.1.0 — editor UI arrives in P7 (`noni --version` works)");
+    return 0;
 }
