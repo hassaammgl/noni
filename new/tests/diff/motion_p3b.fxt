@@ -1,0 +1,43 @@
+fixture: name keys startLine,startCol endLine,endCol | init @ final
+b_mid_word b 1,7 1,5 | foo.bar baz @ foo.bar baz
+b_from_word_start b 1,5 1,4 | foo.bar baz @ foo.bar baz
+b_from_punct_start b 1,4 1,1 | foo.bar baz @ foo.bar baz
+b_at_buffer_start_stays b 1,1 1,1 | foo.bar baz @ foo.bar baz
+b_over_blanks b 1,5 1,1 | ab  cd @ ab  cd
+b_line_cross_to_prev b 2,1 1,1 | first|sec @ first|sec
+b_stops_on_empty b 3,1 2,1 | ab||cd @ ab||cd
+b_from_empty_line b 2,1 1,1 | ab||cd @ ab||cd
+b_on_blank b 1,2 1,1 | a  b @ a  b
+b_count2 2b 1,7 1,3 | a b c d @ a b c d
+b_skips_blankonly_line b 3,1 1,1 | x|  |y @ x|  |y
+b_to_line_start_nonearlier b 2,1 1,1 | ab|cd @ ab|cd
+b_from_line_start_own_word b 1,2 1,1 | first|sec @ first|sec
+e_mid_word e 1,2 1,3 | foo.bar baz @ foo.bar baz
+e_from_word_end e 1,3 1,4 | foo.bar baz @ foo.bar baz
+e_from_punct e 1,4 1,7 | foo.bar baz @ foo.bar baz
+e_from_blank e 1,8 1,11 | foo.bar baz @ foo.bar baz
+e_from_first_char e 1,1 1,3 | foo.bar baz @ foo.bar baz
+e_crossing_to_next_line e 1,5 1,7 | abc def|xyz @ abc def|xyz
+e_cross_empty e 1,2 3,2 | ab||cd @ ab||cd
+e_count2 2e 1,1 1,8 | a bc def @ a bc def
+e_punct_word e 1,1 1,3 | ... abc @ ... abc
+e_last_char_of_file_stays e 1,1 1,1 | x @ x
+e_last_word_of_file e 1,4 1,5 | aa bb @ aa bb
+e_from_last_char_of_file e 1,5 1,5 | aa bb @ aa bb
+e_from_empty_line e 2,1 3,2 | ab||cd @ ab||cd
+e_count_past_eof 7e 1,1 1,7 | abc def @ abc def
+B_whole_word B 1,9 1,1 | foo.bar baz @ foo.bar baz
+B_from_middle B 1,10 1,9 | foo.bar baz @ foo.bar baz
+B_word_within_line B 1,5 1,4 | xx yy zz @ xx yy zz
+B_at_buffer_start_stays B 1,1 1,1 | foo.bar baz @ foo.bar baz
+B_skips_blankonly_line B 3,1 1,1 | x|  |y @ x|  |y
+B_stops_on_empty B 3,1 2,1 | ab||cd @ ab||cd
+E_end_of_word E 1,2 1,7 | foo.bar baz @ foo.bar baz
+E_from_word_end E 1,7 1,11 | foo.bar baz @ foo.bar baz
+E_last_char_of_file E 1,4 1,5 | aa bb @ aa bb
+E_from_last_char_stays E 1,5 1,5 | aa bb @ aa bb
+E_cross_empty E 1,2 3,2 | ab||cd @ ab||cd
+e_to_empty_last_line e 1,2 3,1 | ab|| @ ab||
+e_from_line_end_to_next e 1,3 2,3 | abc|def @ abc|def
+b_from_mid_of_first_line_word b 1,2 1,1 | abcd ef @ abcd ef
+E_mid_word_line_local E 1,2 1,5 | a...b c @ a...b c

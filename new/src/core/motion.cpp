@@ -83,6 +83,146 @@ namespace {
     }
 }
 
+// One vim `b`/`B` (big) step from `from` (P3.2). Fixture: motion_p3b.fxt.
+// Summary of the decode:
+//   Phase A: cursor on NON-BLANK, walk back within the line to the START of
+//            its class run ("foo.bar baz" mid-"bar" -> 'b'; word START ->
+//            no step here, Phase B takes over).
+//   Phase B: scan backward: blanks skipped (a blank-only line is run
+//            through), an EMPTY line (len 0) is a word and STOPS at col 0;
+//            on the first non-blank, walk to the start of ITS class run.
+//   BOF fail: cursor stays exactly where it was.
+[[nodiscard]] Pos word_back_step(const std::vector<std::string>& lines,
+                                 const Pos from, const bool big) {
+    const auto len_of = [&](const std::uint32_t l) {
+        return static_cast<std::uint32_t>(line_len_cp(lines[l]));
+    };
+    const auto is_blank_cp = [&](const char32_t cp) {
+        return big ? (cp == U' ' || cp == U'\t') : is_blank(cp);
+    };
+    std::uint32_t l = from.line;
+    std::uint32_t col = from.col;
+    const std::uint32_t len = len_of(l);
+
+    // Phase A: cursor inside a run, but not at its start -> run start.
+    if (col < len && !is_blank_cp(cp_at_col(lines[l], col))) {
+        const CharClass cl = classify(cp_at_col(lines[l], col));
+        while (col > 0) {
+            const char32_t prev = cp_at_col(lines[l], col - 1);
+            if (big ? is_blank_cp(prev) : (classify(prev) != cl)) {
+                break;
+            }
+            --col;
+        }
+        if (col != from.col) {
+            return Pos{l, col};
+        }
+    }
+
+    // Phase B: travel backward to the previous word's start.
+    std::uint32_t j = l;
+    std::int64_t c = static_cast<std::int64_t>(col) - 1;
+    for (;;) {
+        if (c < 0) {
+            if (j == 0) {
+                return from; // no previous word: BOF fail, cursor stays
+            }
+            --j;
+            const std::uint32_t plen = len_of(j);
+            if (plen == 0) {
+                return Pos{j, 0}; // empty line is a word stop
+            }
+            c = static_cast<std::int64_t>(plen) - 1;
+            continue;
+        }
+        const char32_t cp = cp_at_col(lines[j], static_cast<std::uint32_t>(c));
+        if (is_blank_cp(cp)) {
+            --c;
+            continue;
+        }
+        // First non-blank: walk to the start of its class run.
+        const CharClass cl = classify(cp);
+        while (c > 0) {
+            const char32_t prev =
+                cp_at_col(lines[j], static_cast<std::uint32_t>(c - 1));
+            if (big ? is_blank_cp(prev) : (classify(prev) != cl)) {
+                break;
+            }
+            --c;
+        }
+        return Pos{j, static_cast<std::uint32_t>(c)};
+    }
+}
+
+// One vim `e`/`E` (big) step from `from` (P3.2). Fixture: motion_p3b.fxt.
+// Summary of the decode:
+//   Phase A: cursor on NON-BLANK, walk forward within the line to the END of
+//            its class run ("ab" mid-word -> 'b'; at the run END already ->
+//            Phase B).
+//   Phase B: scan FORWARD: blanks skipped (blank-only and EMPTY lines are
+//            run through — e does NOT stop on empty lines), on the first
+//            non-blank walk to the END of ITS class run.
+//   EOF fail: last char of the last line, or col 0 when that line is empty
+//            (probe e_to_empty_last_line lands ON the empty last line).
+[[nodiscard]] Pos word_end_step(const std::vector<std::string>& lines,
+                                const Pos from, const bool big) {
+    const auto len_of = [&](const std::uint32_t l) {
+        return static_cast<std::uint32_t>(line_len_cp(lines[l]));
+    };
+    const auto is_blank_cp = [&](const char32_t cp) {
+        return big ? (cp == U' ' || cp == U'\t') : is_blank(cp);
+    };
+    std::uint32_t l = from.line;
+    std::uint32_t col = from.col;
+    const std::uint32_t len = len_of(l);
+
+    // Phase A: cursor inside a run, but not at its end -> run end.
+    if (col < len && !is_blank_cp(cp_at_col(lines[l], col))) {
+        const CharClass cl = classify(cp_at_col(lines[l], col));
+        while (col + 1 < len) {
+            const char32_t next = cp_at_col(lines[l], col + 1);
+            if (big ? is_blank_cp(next) : (classify(next) != cl)) {
+                break;
+            }
+            ++col;
+        }
+        if (col != from.col) {
+            return Pos{l, col};
+        }
+    }
+
+    // Phase B: travel forward to the next word's end.
+    std::uint32_t j = l;
+    std::int64_t c = static_cast<std::int64_t>(col) + 1;
+    for (;;) {
+        if (c >= static_cast<std::int64_t>(len_of(j))) {
+            if (j + 1 >= lines.size()) {
+                const std::uint32_t elen = len_of(j);
+                return elen == 0 ? Pos{j, 0} : Pos{j, elen - 1};
+            }
+            ++j;
+            c = 0;
+            continue;
+        }
+        const char32_t cp = cp_at_col(lines[j], static_cast<std::uint32_t>(c));
+        if (is_blank_cp(cp)) {
+            ++c;
+            continue;
+        }
+        // First non-blank: walk to the end of its class run.
+        const CharClass cl = classify(cp);
+        while (c + 1 < static_cast<std::int64_t>(len_of(j))) {
+            const char32_t next =
+                cp_at_col(lines[j], static_cast<std::uint32_t>(c + 1));
+            if (big ? is_blank_cp(next) : (classify(next) != cl)) {
+                break;
+            }
+            ++c;
+        }
+        return Pos{j, static_cast<std::uint32_t>(c)};
+    }
+}
+
 } // namespace
 
 Pos Motion::apply(const MotionContext& ctx, const Pos from,
@@ -165,6 +305,34 @@ Pos Motion::apply(const MotionContext& ctx, const Pos from,
         Pos p = from;
         for (std::uint32_t i = 0; i < count; ++i) {
             const Pos next = word_forward_step(lines, p, big);
+            if (next == p) {
+                break;
+            }
+            p = next;
+        }
+        return p;
+    }
+    case MotionId::WordBack:
+    case MotionId::WordBackUpper: {
+        // `b`edging toward BOF: a no-op step ends the loop (cursor stays).
+        const bool big = id == MotionId::WordBackUpper;
+        Pos p = from;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const Pos next = word_back_step(lines, p, big);
+            if (next == p) {
+                break;
+            }
+            p = next;
+        }
+        return p;
+    }
+    case MotionId::WordEnd:
+    case MotionId::WordEndUpper: {
+        // `e` at the file end repeats the fail-landing (stays); loop breaks.
+        const bool big = id == MotionId::WordEndUpper;
+        Pos p = from;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const Pos next = word_end_step(lines, p, big);
             if (next == p) {
                 break;
             }

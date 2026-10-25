@@ -22,6 +22,10 @@ enum class MotionId : std::uint8_t {
             // already the last line (oracle probes n2..n8)
     Word,   // 'w'  start of next word (word/WORD class runs, P3.1)
     WordUpper, // 'W' start of next WORD (blank-vs-nonblank runs, P3.1)
+    WordBack,      // 'b' start of previous word (P3.2)
+    WordBackUpper, // 'B' start of previous WORD (P3.2)
+    WordEnd,       // 'e' end of next word (P3.2)
+    WordEndUpper,  // 'E' end of next WORD (P3.2)
 };
 
 // What a motion sees: the line vector + tab expansion width (w/b/e etc in

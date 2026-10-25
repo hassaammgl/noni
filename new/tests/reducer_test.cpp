@@ -39,6 +39,10 @@ TEST_CASE("reducer: mode-aware dispatch table") {
     CHECK(app::command_for_key(st, ch(U'$')).motion == MotionId::Dollar);
     CHECK(app::command_for_key(st, ch(U'w')).motion == MotionId::Word);
     CHECK(app::command_for_key(st, ch(U'W')).motion == MotionId::WordUpper);
+    CHECK(app::command_for_key(st, ch(U'b')).motion == MotionId::WordBack);
+    CHECK(app::command_for_key(st, ch(U'B')).motion == MotionId::WordBackUpper);
+    CHECK(app::command_for_key(st, ch(U'e')).motion == MotionId::WordEnd);
+    CHECK(app::command_for_key(st, ch(U'E')).motion == MotionId::WordEndUpper);
     // 'A' enters insert at the append position (at_eol flavor).
     CHECK(app::command_for_key(st, ch(U'A')).at_eol);
     CHECK(!app::command_for_key(st, ch(U'i')).at_eol);

@@ -155,6 +155,38 @@ TEST_CASE("motion: differential replay of the P2 nvim oracle fixture") {
     }
 }
 
+TEST_CASE("motion: differential replay of the P3.2 b/B/e/E fixture") {
+    const auto path = find_fixture("motion_p3b.fxt");
+    REQUIRE_MESSAGE(path.has_value(),
+                    "tests/diff/motion_p3b.fxt not found (build dir relative)");
+    std::ifstream in(*path);
+    REQUIRE(in.good());
+
+    std::vector<OracleCase> cases;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (auto c = parse_line(line)) {
+            cases.push_back(*c);
+        }
+    }
+    REQUIRE_MESSAGE(cases.size() >= 40, "fixture parsed too few oracle cases");
+
+    for (const OracleCase& c : cases) {
+        INFO("oracle case: ", c.name, "  keys: ", c.keys);
+        EditorState st;
+        st.buffers[0].set_lines(c.lines);
+        st.win().cursor = c.start;
+        st.win().desired_col = c.start.col;
+        st.mode = Mode::Normal;
+
+        for (const Key& k : decode_keys(c.keys)) {
+            key(st, k);
+        }
+
+        CHECK(st.win().cursor == c.want);
+        CHECK(st.buffers[0].lines() == c.final_lines);
+    }
+}
 TEST_CASE("motion: differential replay of the P3 word-motion fixture") {
     const auto path = find_fixture("motion_p3.fxt");
     REQUIRE_MESSAGE(path.has_value(),
