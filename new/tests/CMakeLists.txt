@@ -19,4 +19,10 @@ target_link_libraries(noni_tests PRIVATE noni_core noni_ext noni_terminal
                                          doctest::doctest)
 
 include(CTest)
-add_test(NAME smoke COMMAND noni_tests)
+# P1.8 phase check: tests carry P1-prefixed names so `ctest -R P1` is the
+# phase ACCEPT gate; each entry filters one doctest TEST_CASE family.
+add_test(NAME P1.smoke COMMAND noni_tests -tc=smoke:*)
+add_test(NAME P1.text COMMAND noni_tests -tc=text:*)
+add_test(NAME P1.buffer COMMAND noni_tests -tc=buffer:*)
+add_test(NAME P1.undo COMMAND noni_tests -tc=undo:*)
+add_test(NAME P1.search COMMAND noni_tests -tc=search:*)
