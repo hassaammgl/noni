@@ -76,7 +76,22 @@ public:
     [[nodiscard]] eresult<UndoResult> undo();
     [[nodiscard]] eresult<UndoResult> redo();
     void begin_undo_group() { undo_.begin_group(); }
+    void begin_undo_group(EditKind kind) { undo_.begin_group(kind); }
     void end_undo_group() { undo_.end_group(); }
+    // P1.5 — the ONE sanctioned grouping entry point for the reducer. Nesting
+    // reuses the inner group. CONTRACT: `f` must not throw (policy: no
+    // exceptions anywhere); an early return inside `f` closes the group the
+    // same way — the undo state stays consistent either way.
+    template <class F>
+    void with_edit(EditKind kind, F&& f) {
+        if (undo_.group_open()) {
+            f(); // nested: the inner group owns the unit
+            return;
+        }
+        begin_undo_group(kind);
+        f();
+        end_undo_group();
+    }
     [[nodiscard]] std::size_t undo_depth() const { return undo_.undo_depth(); }
     [[nodiscard]] std::size_t redo_depth() const { return undo_.redo_depth(); }
 

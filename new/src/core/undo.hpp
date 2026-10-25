@@ -39,9 +39,11 @@ struct TextChange {
     Pos cur_after;
 };
 
-// One undoable edit: changes in FORWARD application order.
+// One undoable edit: changes in FORWARD application order. `tag` mirrors the
+// with_edit group label (innermost wins when nested; informational).
 struct UndoUnit {
     std::vector<TextChange> changes;
+    EditKind tag = EditKind::Bulk;
 };
 
 class UndoStack {
@@ -51,13 +53,16 @@ public:
     // --- grouping -----------------------------------------------------------
     // Nested begin/end reuse the innermost logical group (P1.5 contract).
     void begin_group() { ++group_depth_; }
+    void begin_group(EditKind kind) { ++group_depth_; group_tag_ = kind; }
     // Returns true when the OUTER level closed and pending changes were
     // committed as one unit.
     bool end_group();
     [[nodiscard]] bool group_open() const { return group_depth_ > 0; }
 
     // Record a change. With an open group it is appended to the pending unit;
-    // otherwise it commits as its own unit (typical single-op path).
+    // otherwise it commits as its own unit — OR extends the previous committed
+    // unit when it continues a char-level run (typing/backspace streams,
+    // P1.5): same kind, same line, cursor hint continuity, no redo branch.
     void push(const TextChange& change);
 
     // --- history queries/plumbing -------------------------------------------
@@ -72,12 +77,14 @@ public:
 
 private:
     void commit_pending();
+    bool try_extend(UndoUnit& pending);
 
     std::deque<UndoUnit> undo_; // back = most recent
     std::deque<UndoUnit> redo_; // back = next redo
     UndoUnit pending_;
     std::size_t group_depth_ = 0;
     bool pending_has_content_ = false;
+    EditKind group_tag_ = EditKind::Bulk;
 };
 
 } // namespace noni

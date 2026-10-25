@@ -143,3 +143,112 @@ TEST_CASE("undo: nested groups reuse the inner group") {
     REQUIRE(u.has_value());
     CHECK(b.lines()[0] == "aa"); // one undo restores everything
 }
+
+TEST_CASE("undo: typing run merges into ONE undo step (iHell<Esc>u)") {
+    Buffer b{{""}};
+    // Simulated insert-mode run: each keystroke = one with_edit group.
+    const char32_t typed[] = {U'H', U'e', U'l', U'l'};
+    for (std::uint32_t col = 0; col < 4; ++col) {
+        b.with_edit(EditKind::InsertChar, [&] {
+            (void)b.insert_char({0, col}, typed[col]);
+        });
+    }
+    CHECK(b.lines()[0] == "Hell");
+    CHECK(b.undo_depth() == 1); // merged run = single unit
+
+    const auto u = b.undo();
+    REQUIRE(u.has_value());
+    CHECK(b.lines()[0] == "");   // whole run back in one step
+    CHECK(u->cursor == Pos{0, 0});
+}
+
+TEST_CASE("undo: backspace runs merge into ONE undo step") {
+    // Backspace semantics belong to the app (reducer); here we drive the merge
+    // contract directly: EraseChar changes with hint continuity (cur_after ==
+    // next cur_before, cursor stepping left) inside with_edit groups.
+    Buffer b{{"abcd"}};
+    const std::pair<std::uint32_t, std::uint32_t> steps[] = {{3, 2}, {2, 1}, {1, 0}};
+    for (const auto& [cur_before, cur_after] : steps) {
+        b.with_edit(EditKind::EraseChar, [&] {
+            TextChange ch;
+            ch.kind = EditKind::EraseChar;
+            ch.first_line = 0;
+            ch.old_lines.push_back(b.lines()[0]);
+            std::string after = ch.old_lines.front();
+            after.erase(after.begin() + cur_before);
+            ch.new_lines.push_back(std::move(after));
+            ch.cur_before = Pos{0, cur_before};
+            ch.cur_after = Pos{0, cur_after};
+            b.record_text_change(ch);
+        });
+    }
+    CHECK(b.lines()[0] == "a");
+    CHECK(b.undo_depth() == 1); // one unit for the whole run
+
+    const auto u = b.undo();
+    REQUIRE(u.has_value());
+    CHECK(b.lines()[0] == "abcd");
+    CHECK(u->cursor == Pos{0, 3});
+}
+
+TEST_CASE("undo: cursor jump between typed chars breaks the run") {
+    Buffer b{{""}};
+    b.with_edit(EditKind::InsertChar, [&] { (void)b.insert_char({0, 0}, U'a'); });
+    b.with_edit(EditKind::InsertChar, [&] { (void)b.insert_char({0, 1}, U'b'); });
+    // Simulate a user jump: insert at a position != previous cur_after.
+    b.with_edit(EditKind::InsertChar, [&] { (void)b.insert_char({0, 0}, U'c'); });
+    CHECK(b.lines()[0] == "cab");
+    CHECK(b.undo_depth() == 2); // c + (ab) as two units
+
+    CHECK(b.undo().has_value());
+    CHECK(b.lines()[0] == "ab");
+    CHECK(b.undo().has_value());
+    CHECK(b.lines()[0] == "");
+}
+
+TEST_CASE("undo: dw + u restores text AND cursor (session)") {
+    Buffer b{{"alpha beta gamma"}};
+    const TextRange dw{{0, 6}, {0, 11}}; // erase "beta "
+    b.with_edit(EditKind::Bulk, [&] { (void)b.erase_range(dw); });
+    CHECK(b.lines()[0] == "alpha gamma");
+    CHECK(b.undo_depth() == 1);
+
+    const auto u = b.undo();
+    REQUIRE(u.has_value());
+    CHECK(b.lines()[0] == "alpha beta gamma");
+    CHECK(u->cursor == Pos{0, 6}); // cursor restored to op start
+}
+
+TEST_CASE("undo.session.error_inside_group") {
+    // Contract: f may return early (an internal error state; there are no
+    // exceptions per AGENTS.md). The group must still close consistently.
+    Buffer b{{"aa"}};
+    bool inner_error = true;
+    b.with_edit(EditKind::Bulk, [&] {
+        (void)b.insert_char({0, 0}, U'x');
+        if (inner_error) {
+            return; // early exit: no further edits this session
+        }
+        (void)b.insert_char({0, 2}, U'y'); // skipped when erroring
+    });
+    CHECK(b.undo_depth() == 1);     // group closed exactly once
+    CHECK(b.redo_depth() == 0);     // no dangling branch
+    CHECK(b.lines()[0] == "xaa");
+
+    const auto u = b.undo();
+    REQUIRE(u.has_value());
+    CHECK(b.lines()[0] == "aa"); // consistent restore despite early return
+
+    // Nested reuse: outer group keeps accumulating the inner partial group.
+    b.begin_undo_group();
+    b.with_edit(EditKind::Bulk, [&] {
+        (void)b.insert_char({0, 0}, U'Z');
+        if (inner_error) {
+            return;
+        }
+    });
+    (void)b.insert_char({0, 1}, U'W'); // still inside OUTER group
+    b.end_undo_group();
+    CHECK(b.undo_depth() == 1); // one unit for the whole outer session
+    CHECK(b.lines()[0] == "ZWaa");
+}
