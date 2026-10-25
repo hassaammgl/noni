@@ -1,5 +1,9 @@
 #pragma once
-// P0.2 stub — real screen module arrives in P7.1 (ncursesw init/teardown).
+// P2.1 — ui umbrella. The real screen module landed here (ncursesw
+// init/teardown + key reader), not in P7 (revised UI-first ROADMAP).
+#include "input.hpp"
+#include "screen.hpp"
+
 namespace noni::ui {
 bool screen_ready();
 } // namespace noni::ui
