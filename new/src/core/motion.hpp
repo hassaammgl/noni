@@ -1,8 +1,9 @@
 #pragma once
-// P2.7 — motion framework: vim-exact clamping primitive moves. Pure core:
-// no ncurses, no editing writes (motions only position the cursor).
-// Ground truth: tests/diff/motion_p2.fxt (recorded from
-// nvim --headless -u NONE; regenerate via tests/diff/gen_motion.vim).
+// P2.7 + P3 — motion framework: vim-exact clamping primitive moves +
+// word/find motions. Pure core: no ncurses, no editing writes (motions only
+// position the cursor). Ground truth: tests/diff/motion_p2.fxt, motion_p3.fxt
+// (w/W), motion_p3b.fxt (b/B/e/E), motion_p3c.fxt (f/F/t/T/;/,) — recorded
+// from nvim --headless -u NONE; regenerate via the gen_motion*.vim scripts.
 #include <cstdint>
 #include <vector>
 
@@ -26,6 +27,11 @@ enum class MotionId : std::uint8_t {
     WordBackUpper, // 'B' start of previous WORD (P3.2)
     WordEnd,       // 'e' end of next word (P3.2)
     WordEndUpper,  // 'E' end of next WORD (P3.2)
+    FindFwd,  // 'f': count-th occurrence of Motion::arg RIGHT of the col
+              // (current line only; FAILS — no perceived motion) (P3.3)
+    FindBack, // 'F': count-th occurrence LEFT of the col (P3.3)
+    ToFwd,    // 't': lands one char BEFORE FindFwd's char (P3.3)
+    ToBack,   // 'T': lands one char AFTER FindBack's char (P3.3)
 };
 
 // What a motion sees: the line vector + tab expansion width (w/b/e etc in
@@ -37,17 +43,20 @@ struct MotionContext {
 
 struct Motion {
     MotionId id = MotionId::H;
+    char32_t arg = 0; // find targets: the searched {char}
 
-    // Clamped destination; never fails (line-end clamping by design).
+    // Clamped destination; most motions never fail (line-end clamping by
+    // design). FIND MOTIONS DO: no occurrence in the line -> error (cursor
+    // unchanged; the reducer surfaces the message, P3.3).
     // Normal-mode cursor never sits PAST the last char (vim rule): col
     // targets are [0, len-1], with len==0 -> col 0.
     //
     // `desired` is the caller's curswant (see WindowState::desired_col):
     // only J/K read it (col = clamp(desired) on the target line) and leave
     // it untouched; the reducer resets it on every other cursor move.
-    [[nodiscard]] Pos apply(const MotionContext& ctx, Pos from,
-                            std::uint32_t count,
-                            std::uint32_t desired) const;
+    [[nodiscard]] eresult<Pos> apply(const MotionContext& ctx, Pos from,
+                                     std::uint32_t count,
+                                     std::uint32_t desired) const;
 };
 
 } // namespace noni

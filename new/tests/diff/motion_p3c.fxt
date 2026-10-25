@@ -1,0 +1,28 @@
+fixture: name keys startLine,startCol endLine,endCol | init @ final
+f_forward_basic fa 1,2 1,3 | axa abc @ axa abc
+f_count2 2fa 1,1 1,5 | axa abc @ axa abc
+f_too_many_fail 3fa 1,1 1,1 | axa abc @ axa abc
+f_no_match fz 1,1 1,1 | axa abc @ axa abc
+f_last_char_no_left fx 1,3 1,3 | abx @ abx
+f_target_space f<SPC> 1,2 1,3 | aa bb @ aa bb
+F_backward_basic Fa 1,4 1,3 | axa abc @ axa abc
+F_lexc_cycle FaFa 1,4 1,1 | axa abc @ axa abc
+F_crosses_blanks Fa 1,9 1,5 | ab  a  x @ ab  a  x
+F_space_target F<SPC> 1,5 1,4 | a b c @ a b c
+F_count2 2Fa 1,5 1,1 | axa abc @ axa abc
+t_before_target ta 1,1 1,2 | axa abc @ axa abc
+t_fails_no_char tz 1,1 1,1 | abc @ abc
+t_count2 2tx 1,1 1,3 | axaxx @ axaxx
+T_after_target Ta 1,3 1,2 | axa abc @ axa abc
+T_count2 2Tx 1,5 1,3 | axaxx @ axaxx
+semicolon_repeats_forward fx;; 1,1 1,3 | xxxy @ xxxy
+semicolon_repeats_backward Fa;; 1,4 1,1 | axa abc @ axa abc
+comma_reverses_f fa, 1,1 1,1 | aba @ aba
+comma_reverses_t ta, 1,1 1,2 | aba @ aba
+comma_count_after_f fb2, 1,1 1,2 | abab ab @ abab ab
+semicolon_cross_line fbj; 1,1 2,4 | ab|axab @ ab|axab
+semicolon_no_last_find ; 1,1 1,1 | x @ x
+t_adjacent_target_stays tx 1,1 1,1 | ax @ ax
+comma_reverses_F Fa, 1,3 1,3 | aba @ aba
+countfail_state_probe_fwd 3fa; 1,1 1,3 | axa abc @ axa abc
+countfail_state_probe_comma 3Fa, 1,3 1,5 | axa abc @ axa abc

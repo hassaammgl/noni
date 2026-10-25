@@ -1,9 +1,11 @@
-// P2.7 + P3.1 — see motion.hpp.
+// P2.7 + P3 — see motion.hpp.
 #include "core/motion.hpp"
 
 #include <algorithm>
+#include <expected>
 
 namespace noni {
+
 namespace {
 
 // One codepoint at cp-col `col`, or U'\0' past the end (sentinel: callers
@@ -223,10 +225,56 @@ namespace {
     }
 }
 
+// P3.3 — one find attempt (f/F/t/T). Current line only; the search NEVER
+// includes the cursor's own col; with count N the N-th occurrence must
+// exist or the whole motion FAILS (no partial move, oracle-pinned), so the
+// count is consumed in one scan instead of a step loop.
+//   f/F: land ON the occurrence; t/T: one char before it (t, right side) or
+//   after it (T, left side). t with an adjacent target can be a no-move
+//   success (oracle: "ax" + tx stays on col 0).
+[[nodiscard]] eresult<Pos> find_step(const std::vector<std::string>& lines,
+                                     const Pos from, const MotionId id,
+                                     const char32_t cp,
+                                     const std::uint32_t count) {
+    const auto len_of = [&](const std::uint32_t l) {
+        return static_cast<std::uint32_t>(line_len_cp(lines[l]));
+    };
+    const std::uint32_t len = len_of(from.line);
+    const bool forward = id == MotionId::FindFwd || id == MotionId::ToFwd;
+    const bool to = id == MotionId::ToFwd || id == MotionId::ToBack;
+    std::uint32_t seen = 0;
+
+    if (forward) {
+        for (std::uint32_t col = from.col + 1; col < len; ++col) {
+            if (cp_at_col(lines[from.line], col) == cp) {
+                if (++seen == count) {
+                    return to ? Pos{from.line, col - 1}
+                              : Pos{from.line, col};
+                }
+            }
+        }
+    } else {
+        // col signed: the scan may reach 0.
+        for (std::int64_t col = static_cast<std::int64_t>(from.col) - 1;
+             col >= 0; --col) {
+            if (cp_at_col(lines[from.line], static_cast<std::uint32_t>(col))
+                == cp) {
+                if (++seen == count) {
+                    return to ? Pos{from.line,
+                                    static_cast<std::uint32_t>(col) + 1}
+                              : Pos{from.line, static_cast<std::uint32_t>(col)};
+                }
+            }
+        }
+    }
+    return std::unexpected(Error{"find target not found"});
+}
+
 } // namespace
 
-Pos Motion::apply(const MotionContext& ctx, const Pos from,
-                  const std::uint32_t count, const std::uint32_t desired) const {
+eresult<Pos> Motion::apply(const MotionContext& ctx, const Pos from,
+                           const std::uint32_t count,
+                           const std::uint32_t desired) const {
     if (ctx.lines == nullptr || ctx.lines->empty()) {
         return from;
     }
@@ -339,6 +387,12 @@ Pos Motion::apply(const MotionContext& ctx, const Pos from,
             p = next;
         }
         return p;
+    }
+    case MotionId::FindFwd:
+    case MotionId::FindBack:
+    case MotionId::ToFwd:
+    case MotionId::ToBack: {
+        return find_step(lines, from, id, arg, count);
     }
     }
     return from;

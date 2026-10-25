@@ -10,6 +10,28 @@
 
 namespace noni::app {
 
+namespace {
+
+// FindKind -> the motion that "executes" it; `,` swaps the direction
+// (f<->F, t<->T). P3.3.
+[[nodiscard]] MotionId find_motion_id(const FindKind k, const bool reverse) {
+    switch (k) {
+    case FindKind::Fwd:
+        return reverse ? MotionId::FindBack : MotionId::FindFwd;
+    case FindKind::Back:
+        return reverse ? MotionId::FindFwd : MotionId::FindBack;
+    case FindKind::ToFwd:
+        return reverse ? MotionId::ToBack : MotionId::ToFwd;
+    case FindKind::ToBack:
+        return reverse ? MotionId::ToFwd : MotionId::ToBack;
+    case FindKind::None:
+        break;
+    }
+    return MotionId::H; // unreachable; FindKind::None never repeats
+}
+
+} // namespace
+
 // Clamps the active window cursor onto the buffer's grid (exported in the
 // header: App and the resize path reuse it).
 void clamp_cursor(EditorState& st) {
@@ -112,6 +134,19 @@ Command command_for_key(const EditorState& st, const Key& k) {
     Command c; // kind None
     switch (st.mode) {
     case Mode::Normal:
+        // P3.3: while a find is pending, the NEXT printable key is the
+        // {char} target (digits included — they are not a count here).
+        if (st.win().find_pending != FindKind::None) {
+            if (k.kind == KeyKind::Char) {
+                c.kind = Kind::FindTarget;
+                c.cp = k.cp;
+            } else {
+                // Esc / any non-char aborts the pending find (vim discards
+                // the armed count with it).
+                c.kind = Kind::FindCancel;
+            }
+            break;
+        }
         switch (k.kind) {
         case KeyKind::Char:
             if (k.cp >= U'1' && k.cp <= U'9') {
@@ -147,6 +182,22 @@ Command command_for_key(const EditorState& st, const Key& k) {
             case U'B': c.kind = Kind::Motion; c.motion = MotionId::WordBackUpper; break;
             case U'e': c.kind = Kind::Motion; c.motion = MotionId::WordEnd; break;
             case U'E': c.kind = Kind::Motion; c.motion = MotionId::WordEndUpper; break;
+            case U'f': c.kind = Kind::FindArm; c.find_kind = FindKind::Fwd; break;
+            case U'F': c.kind = Kind::FindArm; c.find_kind = FindKind::Back; break;
+            case U't': c.kind = Kind::FindArm; c.find_kind = FindKind::ToFwd; break;
+            case U'T': c.kind = Kind::FindArm; c.find_kind = FindKind::ToBack; break;
+            case U';': case U',': {
+                // Repeat (or reverse-repeat) the remembered find. Empty
+                // last_find: no command at all (oracle: stays put).
+                const FindState& lf = st.win().last_find;
+                if (lf.kind == FindKind::None) {
+                    break;
+                }
+                c.kind = Kind::Motion;
+                c.motion = find_motion_id(lf.kind, k.cp == U',');
+                c.cp = static_cast<char32_t>(lf.cp);
+                break;
+            }
             default: break;
             }
             break;
@@ -199,20 +250,61 @@ Command command_for_key(const EditorState& st, const Key& k) {
 void reducer(EditorState& st, const Command& cmd) {
     using Kind = Command::Kind;
     // Count prefix lifecycle: digits extend it; any other command consumes
-    // it (None also aborts it, vim aborts on unmapped keys).
+    // it (None also aborts it, vim aborts on unmapped keys). FindArm/find
+    // cancel stages must NOT consume it — the count belongs to the COMPLETE
+    // f{char} (oracle: 2fa moves to the 2nd occurrence).
     std::uint32_t count = 1;
     if (cmd.kind == Kind::CountDigit) {
         st.count_prefix = st.count_prefix * 10
                         + static_cast<std::uint32_t>(cmd.cp - U'0');
         return;
     }
-    if (cmd.kind != Kind::None) {
+    if (cmd.kind != Kind::None && cmd.kind != Kind::FindArm
+        && cmd.kind != Kind::FindCancel) {
         count = st.count_prefix == 0 ? 1 : st.count_prefix;
         st.count_prefix = 0;
     }
     switch (cmd.kind) {
     case Kind::None:
         return;
+
+    case Kind::FindArm:
+        st.win().find_pending = cmd.find_kind;
+        return;
+
+    case Kind::FindCancel:
+        st.win().find_pending = FindKind::None;
+        st.count_prefix = 0;
+        return;
+
+    case Kind::FindTarget: {
+        // The count arrived with the arm key and was consumed above,
+        // WindowState::last_find is REMEMBERED even when the scan fails
+        // (oracle: "failed_find_remembered": ; repeats the failed target).
+        WindowState& w = st.win();
+        const FindKind pending = w.find_pending;
+        w.find_pending = FindKind::None;
+        if (pending == FindKind::None) {
+            return;
+        }
+        w.last_find.cp = static_cast<std::uint32_t>(cmd.cp);
+        w.last_find.kind = pending;
+        Buffer* b = st.buffer(w.buffer);
+        if (b == nullptr) {
+            return;
+        }
+        const Motion motion{find_motion_id(pending, false), cmd.cp};
+        const MotionContext ctx{&b->lines(), k_default_tabwidth};
+        const auto r = motion.apply(ctx, w.cursor, count, w.desired_col);
+        if (r) {
+            w.cursor = *r;
+            w.desired_col = w.cursor.col;
+        } else {
+            st.msg = r.error().msg;
+        }
+        st.mark_dirty();
+        return;
+    }
 
     case Kind::EnterInsert:
         st.mode = Mode::Insert;
@@ -270,13 +362,19 @@ void reducer(EditorState& st, const Command& cmd) {
             return;
         }
         // P2.7: the command carries a MotionId; core/motion applies the
-        // vim-exact clamps against the oracle fixture.
-        const Motion motion{cmd.motion};
+        // vim-exact clamps against the oracle fixture. Find motions can
+        // FAIL (no occurrence): error -> message, cursor untouched (P3.3).
+        const Motion motion{cmd.motion, cmd.cp};
         const MotionContext ctx{&b->lines(), k_default_tabwidth};
-        w.cursor = motion.apply(ctx, w.cursor, count, w.desired_col);
-        if (cmd.motion != MotionId::J && cmd.motion != MotionId::K) {
-            // Vertical moves keep the aim; everything else re-anchors it.
-            w.desired_col = w.cursor.col;
+        const auto r = motion.apply(ctx, w.cursor, count, w.desired_col);
+        if (!r) {
+            st.msg = r.error().msg;
+        } else {
+            w.cursor = *r;
+            if (cmd.motion != MotionId::J && cmd.motion != MotionId::K) {
+                // Vertical moves keep the aim; everything else re-anchors.
+                w.desired_col = w.cursor.col;
+            }
         }
         st.mark_dirty();
         return;

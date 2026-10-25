@@ -66,6 +66,34 @@ TEST_CASE("reducer: mode-aware dispatch table") {
     // Unmapped char.
     CHECK(app::command_for_key(st, ch(U'Z')).kind == Command::Kind::None);
 
+    // P3.3: f arms a find, the next printable key becomes the {char}
+    // TARGET (digits included), Esc/other keys cancel.
+    CHECK(app::command_for_key(st, ch(U'f')).kind == Command::Kind::FindArm);
+    CHECK(app::command_for_key(st, ch(U'f')).find_kind == FindKind::Fwd);
+    CHECK(app::command_for_key(st, ch(U'T')).find_kind == FindKind::ToBack);
+    st.win().find_pending = FindKind::Fwd;
+    CHECK(app::command_for_key(st, ch(U'2')).kind == Command::Kind::FindTarget);
+    CHECK(app::command_for_key(st, ch(U'2')).cp == U'2');
+    st.win().find_pending = FindKind::Fwd;
+    CHECK(app::command_for_key(st, ch(U' ')).cp == U' '); // space target ok
+    CHECK(app::command_for_key(st, Key{KeyKind::CtrlChar, U'w'}).kind
+          == Command::Kind::FindCancel);
+    // ';'/' ,' resolve against the remembered find: ';' repeats its
+    // direction, ',' reverses it.
+    st.win().find_pending = FindKind::None;
+    st.win().last_find = FindState{static_cast<std::uint32_t>(U'd'),
+                                   FindKind::ToFwd};
+    const Command semi = app::command_for_key(st, ch(U';'));
+    CHECK(semi.kind == Command::Kind::Motion);
+    CHECK(semi.motion == MotionId::ToFwd);
+    CHECK(semi.cp == U'd');
+    const Command comma = app::command_for_key(st, ch(U','));
+    CHECK(comma.motion == MotionId::ToBack);
+    // From a backward find (F), ',' repeats it FORWARD.
+    st.win().last_find = FindState{static_cast<std::uint32_t>(U'd'),
+                                   FindKind::Back};
+    CHECK(app::command_for_key(st, ch(U',')).motion == MotionId::FindFwd);
+
     // Insert mode mappings.
     st.mode = Mode::Insert;
     CHECK(app::command_for_key(st, ch(U'x')).kind

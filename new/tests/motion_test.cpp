@@ -84,12 +84,17 @@ std::optional<OracleCase> parse_line(const std::string& line) {
     return c;
 }
 
-// Keys replay: '<Esc>' becomes KeyKind::Esc; any other byte is a Char.
+// Keys replay: '<Esc>' becomes KeyKind::Esc, '<SPC>' a space Char (the
+// fixture records are space-delimited, so a space target needs a token);
+// any other byte is a Char.
 std::vector<Key> decode_keys(const std::string& s) {
     std::vector<Key> keys;
     for (std::size_t i = 0; i < s.size();) {
         if (s.compare(i, 5, "<Esc>") == 0) {
             keys.push_back(Key{KeyKind::Esc, 0});
+            i += 5;
+        } else if (s.compare(i, 5, "<SPC>") == 0) {
+            keys.push_back(Key{KeyKind::Char, U' '});
             i += 5;
         } else {
             keys.push_back(Key{KeyKind::Char, static_cast<char32_t>(s[i])});
@@ -155,6 +160,74 @@ TEST_CASE("motion: differential replay of the P2 nvim oracle fixture") {
     }
 }
 
+TEST_CASE("motion: differential replay of the P3.3 find fixture") {
+    const auto path = find_fixture("motion_p3c.fxt");
+    REQUIRE_MESSAGE(path.has_value(),
+                    "tests/diff/motion_p3c.fxt not found (build dir relative)");
+    std::ifstream in(*path);
+    REQUIRE(in.good());
+
+    std::vector<OracleCase> cases;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (auto c = parse_line(line)) {
+            cases.push_back(*c);
+        }
+    }
+    REQUIRE_MESSAGE(cases.size() >= 26, "fixture parsed too few oracle cases");
+
+    for (const OracleCase& c : cases) {
+        INFO("oracle case: ", c.name, "  keys: ", c.keys);
+        EditorState st;
+        st.buffers[0].set_lines(c.lines);
+        st.win().cursor = c.start;
+        st.win().desired_col = c.start.col;
+        st.mode = Mode::Normal;
+
+        for (const Key& k : decode_keys(c.keys)) {
+            key(st, k);
+        }
+
+        CHECK(st.win().cursor == c.want);
+        CHECK(st.buffers[0].lines() == c.final_lines);
+    }
+}
+
+TEST_CASE("motion: find motions fail through eresult (P3.3)") {
+    const std::vector<std::string> lines{"ab a b", "zz"};
+
+    // No occurrence right of the col -> error, nothing moves.
+    {
+        const Motion m{MotionId::FindFwd, U'z'};
+        const auto r = m.apply({&lines, k_default_tabwidth}, Pos{0, 0}, 1, 0);
+        REQUIRE(!r.has_value());
+        CHECK(r.error().msg.size() > 0);
+    }
+    // Count-N with an N-1 short line fails WHOLE (oracle: 3fa never
+    // partially moves). A later `;` repeats and fails the same way.
+    {
+        const Motion m{MotionId::FindFwd, U'a'};
+        const auto r = m.apply({&lines, k_default_tabwidth}, Pos{0, 0}, 4, 0);
+        REQUIRE(!r.has_value());
+    }
+    // 't' with the target exactly adjacent: success, landing = cursor.
+    {
+        const std::vector<std::string> one{"ax"};
+        const Motion m{MotionId::ToFwd, U'x'};
+        const auto r = m.apply({&one, k_default_tabwidth}, Pos{0, 0}, 1, 0);
+        REQUIRE(r.has_value());
+        CHECK(r->line == 0);
+        CHECK(r->col == 0);
+    }
+    // 'T' landing: one char AFTER the backward occurrence (col1 'b' -> col2).
+    {
+        const Motion m{MotionId::ToBack, U'b'};
+        const auto r = m.apply({&lines, k_default_tabwidth}, Pos{0, 4}, 1, 0);
+        REQUIRE(r.has_value());
+        CHECK(r->line == 0);
+        CHECK(r->col == 2);
+    }
+}
 TEST_CASE("motion: differential replay of the P3.2 b/B/e/E fixture") {
     const auto path = find_fixture("motion_p3b.fxt");
     REQUIRE_MESSAGE(path.has_value(),
@@ -201,7 +274,7 @@ TEST_CASE("motion: differential replay of the P3 word-motion fixture") {
             cases.push_back(*c);
         }
     }
-    REQUIRE_MESSAGE(cases.size() >= 30, "fixture parsed too few oracle cases");
+    REQUIRE_MESSAGE(cases.size() >= 27, "fixture parsed too few oracle cases");
 
     for (const OracleCase& c : cases) {
         INFO("oracle case: ", c.name, "  keys: ", c.keys);

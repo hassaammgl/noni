@@ -51,6 +51,20 @@ enum class Mode : std::uint8_t {
     Insert, // cmdline/config modes arrive with P6
 };
 
+// P3.3 — find state kinds (f/F/t/T): per-window like vim's matching state.
+enum class FindKind : std::uint8_t {
+    None = 0, // nothing pending, nothing remembered
+    Fwd,      // 'f': next occurrence of the char to the RIGHT
+    Back,     // 'F': previous occurrence to the LEFT
+    ToFwd,    // 't': lands one char BEFORE the next occurrence
+    ToBack,   // 'T': lands one char AFTER the previous occurrence
+};
+
+struct FindState {
+    std::uint32_t cp = 0; // target codepoint; 0 = never armed
+    FindKind kind = FindKind::None;
+};
+
 struct WindowState {
     BufferId buffer = k_no_buffer;
     Pos cursor{};      // (line, cp col) — ALWAYS clamped to the buffer
@@ -59,6 +73,10 @@ struct WindowState {
     std::uint32_t desired_col = 0; // vim curswant: the col j/k aim at across
                                    // shorter lines; any non-vertical cursor
                                    // move resets it to the new cursor col
+    // P3.3: last f/F/t/T of this window. Set by EVERY find attempt, even a
+    // failed one (oracle: "; after a failed f repeats the failed target).
+    FindState last_find{};
+    FindKind find_pending = FindKind::None; // waiting for the {char} second key
 };
 
 // --- command model (mode-agnostic; app/reducer translates keys) ---------------
@@ -79,12 +97,16 @@ struct Command {
         LeaveInsert,
         Undo,
         Redo,
+        FindArm,     // 'f/F/t/T seen: record find_kind, keep count pending
+        FindTarget,  // the {char} second key; applies the find motion
+        FindCancel,  // aborted pending find (Esc/other non-char)
     };
     Kind kind = Kind::None;
     MotionId motion = MotionId::H; // Motion payload
-    char32_t cp = 0;               // InsertChar / CountDigit payload
+    char32_t cp = 0;               // InsertChar / CountDigit / find target
     std::uint32_t count = 1;       // reserved for P3 command syntax
     bool at_eol = false;           // EnterInsert flavor ('A' appends EOL)
+    FindKind find_kind = FindKind::None; // FindArm payload
 };
 
 class EditorState {
