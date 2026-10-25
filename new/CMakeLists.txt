@@ -39,7 +39,7 @@ set(NONI_COMMON
 )
 add_compile_options(${NONI_COMMON})
 
-add_library(noni_core STATIC src/core/version.cpp)
+add_library(noni_core STATIC src/core/version.cpp src/core/text.cpp)
 target_include_directories(noni_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 add_library(noni_ext STATIC src/ext/ext.cpp)
