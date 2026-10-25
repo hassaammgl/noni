@@ -45,6 +45,8 @@ TEST_CASE("reducer: mode-aware dispatch table") {
     CHECK(app::command_for_key(st, ch(U'E')).motion == MotionId::WordEndUpper);
     CHECK(app::command_for_key(st, ch(U'^')).motion
           == MotionId::FirstNonblank);
+    CHECK(app::command_for_key(st, ch(U'{')).motion == MotionId::ParaBack);
+    CHECK(app::command_for_key(st, ch(U'}')).motion == MotionId::ParaFwd);
     CHECK(app::command_for_key(st, ch(U'G')).motion == MotionId::GotoLast);
     // P3.4: 'g' arms; the second 'g' completes goto-first-line.
     CHECK(app::command_for_key(st, ch(U'g')).kind == Command::Kind::GgArm);

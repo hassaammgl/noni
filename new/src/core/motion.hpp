@@ -36,6 +36,8 @@ enum class MotionId : std::uint8_t {
                    // Count ignored; blank-only line -> LAST char; empty -> 0.
     GotoFirst, // 'gg': line [count] from the top, col CARRIED like j/k (P3.4)
     GotoLast,  // 'G': line [count] or the last one, col carried (P3.4)
+    ParaFwd,   // '}'  next paragraph boundary: first EMPTY line below (P3.5)
+    ParaBack,  // '{'  same upward (P3.5)
 };
 
 // What a motion sees: the line vector + tab expansion width (w/b/e etc in

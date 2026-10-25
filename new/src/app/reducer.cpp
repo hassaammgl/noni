@@ -199,6 +199,8 @@ Command command_for_key(const EditorState& st, const Key& k) {
             case U'g': c.kind = Kind::GgArm; break;
             case U'G': c.kind = Kind::Motion; c.motion = MotionId::GotoLast; break;
             case U'^': c.kind = Kind::Motion; c.motion = MotionId::FirstNonblank; break;
+            case U'{': c.kind = Kind::Motion; c.motion = MotionId::ParaBack; break;
+            case U'}': c.kind = Kind::Motion; c.motion = MotionId::ParaFwd; break;
             case U';': case U',': {
                 // Repeat (or reverse-repeat) the remembered find. Empty
                 // last_find: no command at all (oracle: stays put).

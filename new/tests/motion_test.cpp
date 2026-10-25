@@ -261,6 +261,39 @@ TEST_CASE("motion: find motions fail through eresult (P3.3)") {
     }
 }
 
+TEST_CASE("motion: differential replay of the P3.5 paragraph fixture") {
+    const auto path = find_fixture("motion_p3e.fxt");
+    REQUIRE_MESSAGE(path.has_value(),
+                    "tests/diff/motion_p3e.fxt not found (build dir relative)");
+    std::ifstream in(*path);
+    REQUIRE(in.good());
+
+    std::vector<OracleCase> cases;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (auto c = parse_line(line)) {
+            cases.push_back(*c);
+        }
+    }
+    REQUIRE_MESSAGE(cases.size() >= 22, "fixture parsed too few oracle cases");
+
+    for (const OracleCase& c : cases) {
+        INFO("oracle case: ", c.name, "  keys: ", c.keys);
+        EditorState st;
+        st.buffers[0].set_lines(c.lines);
+        st.win().cursor = c.start;
+        st.win().desired_col = c.start.col;
+        st.mode = Mode::Normal;
+
+        for (const Key& k : decode_keys(c.keys)) {
+            key(st, k);
+        }
+
+        CHECK(st.win().cursor == c.want);
+        CHECK(st.buffers[0].lines() == c.final_lines);
+    }
+}
+
 TEST_CASE("motion: differential replay of the P3.4 caret/gg/G fixture") {
     const auto path = find_fixture("motion_p3d.fxt");
     REQUIRE_MESSAGE(path.has_value(),

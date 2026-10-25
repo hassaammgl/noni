@@ -1,0 +1,24 @@
+fixture: name keys startLine,startCol endLine,endCol | init @ final
+brace_fwd_basic } 1,1 3,5 | aa bb|   |cc dd @ aa bb|   |cc dd
+brace_fwd_col_carry } 1,5 2,1 | one  two||zzzzzzz @ one  two||zzzzzzz
+brace_fwd_multi_blank } 1,1 2,1 | aa|||bb @ aa|||bb
+brace_fwd_on_blank } 2,1 3,2 | aa||bb @ aa||bb
+brace_fwd_on_blank_blanks } 2,1 3,2 | aa|  |bb @ aa|  |bb
+brace_fwd_from_here } 1,4 2,1 |  ab c||x y z @  ab c||x y z
+brace_double }} 1,1 4,1 | a||b||c @ a||b||c
+brace_count2 2} 1,1 4,1 | a||b||c @ a||b||c
+brace_fwd_onto_trailing_blanks }} 1,1 4,1 | aa||bb| @ aa||bb|
+brace_fwd_to_eof_blanks } 1,1 2,3 | aa|    @ aa|   
+brace_fwd_empty_buffer } 1,1 1,1 |  @ 
+brace_fwd_no_move_at_eof }}} 3,1 3,2 | aa||bb @ aa||bb
+brace_back_basic { 3,1 1,1 | cc dd|   |aa bb @ cc dd|   |aa bb
+brace_back_col_carry { 3,6 2,1 | kkkkkkk||two  three @ kkkkkkk||two  three
+brace_back_multi_blank { 4,1 1,1 | aa|   |   |bb @ aa|   |   |bb
+brace_back_on_blank { 2,1 1,1 | aa||c @ aa||c
+brace_back_from_here { 3,4 2,1 |  ab c||x y z @  ab c||x y z
+brace_double_back {{ 5,1 2,1 | a||b||c @ a||b||c
+brace_back_count2 2{ 5,1 2,1 | a||b||c @ a||b||c
+brace_back_onto_leading_blanks { 2,1 1,1 | |bb @ |bb
+brace_back_to_eof_top_blank { 2,1 1,1 |    |aa @    |aa
+brace_back_empty_buffer { 1,1 1,1 |  @ 
+brace_back_no_move_at_bof {{{ 1,1 1,1 | aa||bb @ aa||bb

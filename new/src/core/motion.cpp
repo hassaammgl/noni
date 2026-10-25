@@ -225,6 +225,34 @@ namespace {
     }
 }
 
+// P3.5 — one `{`/`}` paragraph-boundary step. Fixture: motion_p3e.fxt.
+// Decode summary:
+//   The ONLY separators are EMPTY lines (len 0) — a blank-only ('   ') line
+//   is NOT a boundary (the oracle steps keep walking through it); the step
+//   scans the lines below/above the cursor until the first empty one and
+//   lands on its char 0 (a separator is its own paragraph start).
+//   All-boundary-less travel fails at the buffer end exactly like the word
+//   motions: EOF -> last char of the last line (col 0 on an empty last
+//   line); BOF -> (line 0, col 0). Empty single-line buffer: no-op.
+[[nodiscard]] Pos para_step(const std::vector<std::string>& lines,
+                            const Pos from, const bool forward) {
+    const std::int64_t n = static_cast<std::int64_t>(lines.size());
+    const std::int64_t dir = forward ? 1 : -1;
+    for (std::int64_t l = static_cast<std::int64_t>(from.line) + dir;
+         l >= 0 && l < n; l += dir) {
+        if (line_len_cp(lines[static_cast<std::size_t>(l)]) == 0) {
+            return Pos{static_cast<std::uint32_t>(l), 0};
+        }
+    }
+    if (forward) {
+        const std::size_t ll = static_cast<std::size_t>(n - 1);
+        const std::uint32_t len =
+            static_cast<std::uint32_t>(line_len_cp(lines[ll]));
+        return Pos{static_cast<std::uint32_t>(ll), len == 0 ? 0 : len - 1};
+    }
+    return Pos{0, 0};
+}
+
 // P3.3 — one find attempt (f/F/t/T). Current line only; the search NEVER
 // includes the cursor's own col; with count N the N-th occurrence must
 // exist or the whole motion FAILS (no partial move, oracle-pinned), so the
@@ -424,6 +452,21 @@ eresult<Pos> Motion::apply(const MotionContext& ctx, const Pos from,
         }
         return clamp_norm(
             Pos{static_cast<std::uint32_t>(target), desired});
+    }
+    case MotionId::ParaFwd:
+    case MotionId::ParaBack: {
+        // '}'/'{' — one paragraph-boundary step; repeat per count (2{ ==
+        // two single steps, oracle-pinned).
+        const bool forward = id == MotionId::ParaFwd;
+        Pos p = from;
+        for (std::uint32_t i = 0; i < count; ++i) {
+            const Pos next = para_step(lines, p, forward);
+            if (next == p) {
+                break;
+            }
+            p = next;
+        }
+        return p;
     }
     }
     return from;
