@@ -62,6 +62,11 @@ public:
     // revision because a group marks it via with_edit when it lands (P1.5).
     [[nodiscard]] std::uint64_t revision() const { return revision_; }
 
+    // P1.6 — cached immutable snapshot for renderers/threads. The returned
+    // shared_ptr stays stable while the buffer keeps editing (new mutations
+    // rebuild the cache; holders keep the old view alive).
+    [[nodiscard]] std::shared_ptr<const std::vector<std::string>> snapshot_lines();
+
     [[nodiscard]] const std::filesystem::path& path() const { return path_; }
     void set_path(std::filesystem::path path) { path_ = std::move(path); }
 
@@ -108,6 +113,8 @@ private:
     bool dirty_ = false;
     std::uint64_t revision_ = 0;
     UndoStack undo_;
+    std::shared_ptr<const std::vector<std::string>> snapshot_cache_;
+    std::uint64_t snapshot_rev_ = static_cast<std::uint64_t>(-1);
 };
 
 // Load/save helpers shared by Buffer and later modules (tests use them too).

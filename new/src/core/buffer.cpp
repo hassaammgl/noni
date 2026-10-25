@@ -127,7 +127,6 @@ void Buffer::set_lines(std::vector<std::string> lines) {
     dirty_ = true;
     ++revision_;
 }
-
 // --- edit primitives (P1.3) --------------------------------------------------
 
 void Buffer::apply_change(const TextChange& change) {
@@ -440,6 +439,18 @@ TextRange Buffer::join(Pos p, bool smart) {
     const std::uint32_t spot_cp = byte_to_cp(joined, a_keep);
     const TextRange r{Pos{line, spot_cp}, Pos{line, spot_cp}};
     return r;
+}
+
+std::shared_ptr<const std::vector<std::string>>
+Buffer::snapshot_lines() {
+    if (snapshot_cache_ != nullptr && snapshot_rev_ == revision_) {
+        return snapshot_cache_;
+    }
+    auto fresh =
+        std::make_shared<const std::vector<std::string>>(lines_);
+    snapshot_cache_ = fresh;
+    snapshot_rev_ = revision_;
+    return fresh;
 }
 
 } // namespace noni

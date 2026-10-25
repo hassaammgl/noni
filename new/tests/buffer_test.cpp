@@ -247,6 +247,37 @@ TEST_CASE("buffer: revisions bump exactly once per primitive") {
     CHECK(b.revision() == r0 + 2);
 }
 
+TEST_CASE("buffer: snapshot_lines is cached and stable while editing") {
+    SUBCASE("stable while editing behind it") {
+        Buffer b{{"one", "two"}};
+        auto snap = b.snapshot_lines();
+        REQUIRE(snap != nullptr);
+        CHECK(*snap == std::vector<std::string>{"one", "two"});
+
+        (void)b.insert_char({0, 3}, U'!');
+        (void)b.insert_char({1, 0}, U'X');
+        // Held snapshot untouched...
+        CHECK(*snap == std::vector<std::string>{"one", "two"});
+
+        // ...and the cache is rebuilt after the revision moved.
+        auto snap2 = b.snapshot_lines();
+        CHECK(snap2 != snap);
+        CHECK(*snap2 == std::vector<std::string>{"one!", "Xtwo"});
+
+        // No further edits: same cached object returned (no copy churn).
+        CHECK(b.snapshot_lines() == snap2);
+    }
+    SUBCASE("undo/redo revisions also invalidate the cache") {
+        Buffer b{{"a"}};
+        (void)b.insert_char({0, 1}, U'b');
+        (void)b.snapshot_lines();
+        (void)b.undo();
+        CHECK(*b.snapshot_lines() == std::vector<std::string>{"a"});
+        (void)b.redo();
+        CHECK(*b.snapshot_lines() == std::vector<std::string>{"ab"});
+    }
+}
+
 TEST_CASE("buffer: record_text_change (reducer path, reserved)") {
     Buffer b{{"abc"}};
     TextChange ch;
