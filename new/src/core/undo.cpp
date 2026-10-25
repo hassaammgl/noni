@@ -1,6 +1,7 @@
 // P1.4 — see undo.hpp.
 #include "core/undo.hpp"
 
+#include <algorithm>
 #include <cassert>
 
 namespace noni {
@@ -34,14 +35,36 @@ bool UndoStack::try_extend(UndoUnit& pending) {
     const TextChange& prev = last.changes.front();
     if (prev.kind != c->kind
         || (prev.kind != EditKind::InsertChar && prev.kind != EditKind::EraseChar)
-        || prev.first_line != c->first_line || prev.cur_after != c->cur_before) {
+        || prev.cur_after != c->cur_before) {
         return false;
     }
-    // Content continuity (shared invariant): the unit's running line content
-    // must be exactly what the next change started from.
-    assert(prev.new_lines == c->old_lines && "char-run merge drift");
-    last.changes.front().new_lines = c->new_lines;
-    last.changes.front().cur_after = c->cur_after;
+    // P2.6 (nvim oracle `ihello<CR>world<Esc>u`): a typing run crosses the
+    // Enter split -- the whole insert stream is ONE undo. InsertChar changes
+    // may target a different line than the run's head; char-level deletes
+    // (EraseChar) stay line-local.
+    if (prev.kind != EditKind::InsertChar && prev.first_line != c->first_line) {
+        return false;
+    }
+    // Region splice: `c`'s old region must sit exactly inside `prev`'s new
+    // content (rel = line offset within the replaced span). This doubles as
+    // the content-continuity check (the old same-line drift assert).
+    if (c->first_line < prev.first_line) {
+        return false;
+    }
+    const std::size_t rel =
+        static_cast<std::size_t>(c->first_line)
+        - static_cast<std::size_t>(prev.first_line);
+    if (rel + c->old_lines.size() > prev.new_lines.size()
+        || !std::equal(c->old_lines.begin(), c->old_lines.end(),
+                       prev.new_lines.begin()
+                           + static_cast<std::ptrdiff_t>(rel))) {
+        return false; // non-contiguous run: commit separately (safe fallback)
+    }
+    auto& m = last.changes.front();
+    const auto at = m.new_lines.begin() + static_cast<std::ptrdiff_t>(rel);
+    m.new_lines.erase(at, at + static_cast<std::ptrdiff_t>(c->old_lines.size()));
+    m.new_lines.insert(at, c->new_lines.begin(), c->new_lines.end());
+    m.cur_after = c->cur_after;
     return true;
 }
 

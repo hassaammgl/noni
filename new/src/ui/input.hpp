@@ -12,7 +12,12 @@
 // - Alt is an ESC PREFIX: Alt+a arrives as Esc then 'a' (two keys) until P6
 //   gives mods meaning.
 // - Bracketed paste: registered via define_key() so ncurses hands us
-//   dedicated key codes; between the markers everything is Char DATA.
+//   dedicated key codes; between the markers everything is Char DATA
+//   (incl. \r/\n — dispatch turns Enter into a plain split while pasting).
+// - TODO(P13): stdin EOF is a known v2 limitation — ncurses synthesizes one
+//   EOT (0x04) and then hangs internally instead of reporting EOF. The app
+//   exits on user quit (`:q`, P6) only; scripted feeders must end with a
+//   normal-mode `q`. The P13 poll loop owns the terminal fd and fixes this.
 #include <cstdint>
 #include <functional>
 #include <ncurses.h>

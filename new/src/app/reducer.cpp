@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
+#include <utility>
 
 #include "core/text.hpp"
 
@@ -39,6 +40,62 @@ void apply_edit(EditorState& st, EditKind kind,
     b->with_edit(kind, [&] { after = edit(*b, w.cursor); });
     w.cursor = after;
     st.mark_dirty();
+}
+
+// Applies one caller-built line-span change (the P0-reserved
+// record_text_change hook) under the SAME regex-tagged grouping entry as the
+// primitives, and moves the cursor. Reducer-built composite edits (Enter
+// with indent copy, cross-line backspace join, paste splits) arrive here as
+// ONE TextChange so they merge vim-style.
+void record_change(EditorState& st, EditKind tag, const TextChange& ch,
+                   const Pos after) {
+    Buffer* b = st.buffer(st.win().buffer);
+    if (b == nullptr) {
+        return;
+    }
+    b->with_edit(tag, [&] { b->record_text_change(ch); });
+    st.win().cursor = after;
+    st.mark_dirty();
+}
+
+// Erases the single cp LEFT of (l, col) as one TextChange. Hints follow the
+// CURSOR trail (col_before -> col-1), not the delete position — the chain is
+// what keeps backspace runs mergeable across the join.
+TextChange erase_left_change(const Buffer& b, const Pos cur) {
+    const std::string line = b.lines()[cur.line];
+    const std::size_t b_at = cp_to_byte(line, cur.col - 1);
+    std::size_t cp_bytes = 1;
+    if (const auto d = decode_utf8(line, b_at)) {
+        cp_bytes = d->second;
+    }
+    TextChange ch;
+    ch.kind = EditKind::EraseChar;
+    ch.first_line = cur.line;
+    ch.old_lines = {line};
+    ch.new_lines = {line.substr(0, b_at)
+                    + line.substr(b_at + cp_bytes)};
+    ch.cur_before = cur;
+    ch.cur_after = Pos{cur.line, cur.col - 1};
+    return ch;
+}
+
+// Leading whitespace of `line` as (codepoint count, utf8 prefix).
+std::pair<std::uint32_t, std::string> line_indent(const std::string& line) {
+    std::size_t byte = 0;
+    std::uint32_t cps = 0;
+    while (byte < line.size()) {
+        const auto d = decode_utf8(line, byte);
+        if (!d) {
+            break; // malformed byte: not indent we can reason about
+        }
+        const char32_t c = d->first;
+        if (c != U' ' && c != U'\t') {
+            break;
+        }
+        byte += d->second;
+        ++cps;
+    }
+    return {cps, line.substr(0, byte)};
 }
 
 } // namespace
@@ -80,9 +137,23 @@ Command command_for_key(const EditorState& st, const Key& k) {
     case Mode::Insert:
         switch (k.kind) {
         case KeyKind::Char:
-            c.kind = Kind::InsertChar;
-            c.cp = k.cp;
+            if (k.cp == U'\n') {
+                // Paste data: plain split, no indent tricks (P2.6); Enter
+                // itself arrives as KeyKind::Enter.
+                c.kind = Kind::SplitLine;
+            } else {
+                c.kind = Kind::InsertChar;
+                c.cp = k.cp; // includes '\t' as a literal tab
+            }
             break;
+        case KeyKind::Enter:
+            // Paste data '\r'/'\n' bytes decode to Enter — inside a paste
+            // session they are plain splits, not indent-aware newline.
+            c.kind = st.pasting ? Kind::SplitLine : Kind::InsertNewline;
+            break;
+        case KeyKind::Tab: c.kind = Kind::InsertChar; c.cp = U'\t'; break;
+        case KeyKind::PasteBegin: c.kind = Kind::PasteBegin; break;
+        case KeyKind::PasteEnd: c.kind = Kind::PasteEnd; break;
         case KeyKind::Esc: c.kind = Kind::LeaveInsert; break;
         case KeyKind::Backspace: c.kind = Kind::EraseChar; break;
         case KeyKind::ArrowUp: c.kind = Kind::Motion; c.dy = -1; break;
@@ -174,11 +245,71 @@ void reducer(EditorState& st, const Command& cmd) {
 
     case Kind::InsertChar:
         if (st.mode != Mode::Insert || cmd.cp == U'\n') {
-            return; // Enter-in-insert is P2.6 (indent-aware)
+            return; // '\n' as data arrives via SplitLine; Enter via EnterKey
         }
         apply_edit(st, EditKind::InsertChar, [&cmd](Buffer& b, const Pos p) {
             return b.insert_char(p, cmd.cp);
         });
+        return;
+
+    case Kind::InsertNewline: {
+        // P2.6 (nvim oracle): Enter continues the typing run — one TextChange
+        // built here (P0-reserved record hook), one line-span swap.
+        if (st.mode != Mode::Insert) {
+            return;
+        }
+        const WindowState& w = st.win();
+        Buffer* b = st.buffer(w.buffer);
+        if (b == nullptr) {
+            return;
+        }
+        const std::uint32_t l = w.cursor.line;
+        const std::string line = b->lines()[l];
+        const std::size_t head_b = cp_to_byte(line, w.cursor.col);
+        const auto [indent_cps, indent_str] = line_indent(line);
+        TextChange ch;
+        ch.kind = EditKind::InsertChar; // keeps the typing run mergeable
+        ch.first_line = l;
+        ch.old_lines = {line};
+        ch.new_lines = {line.substr(0, head_b), indent_str + line.substr(head_b)};
+        ch.cur_before = w.cursor;
+        ch.cur_after = Pos{l + 1, indent_cps};
+        record_change(st, EditKind::InsertChar, ch, ch.cur_after);
+        return;
+    }
+
+    case Kind::SplitLine: {
+        // '\n' inside a bracketed paste: exact split, no indent copy.
+        if (st.mode != Mode::Insert) {
+            return;
+        }
+        const WindowState& w = st.win();
+        Buffer* b = st.buffer(w.buffer);
+        if (b == nullptr) {
+            return;
+        }
+        const std::uint32_t l = w.cursor.line;
+        const std::string line = b->lines()[l];
+        const std::size_t head_b = cp_to_byte(line, w.cursor.col);
+        TextChange ch;
+        ch.kind = EditKind::InsertChar; // paste stream stays part of the run
+        ch.first_line = l;
+        ch.old_lines = {line};
+        ch.new_lines = {line.substr(0, head_b), line.substr(head_b)};
+        ch.cur_before = w.cursor;
+        ch.cur_after = Pos{l + 1, 0};
+        record_change(st, EditKind::InsertChar, ch, ch.cur_after);
+        return;
+    }
+
+    case Kind::PasteBegin:
+        st.pasting = true;
+        st.mark_dirty();
+        return;
+
+    case Kind::PasteEnd:
+        st.pasting = false;
+        st.mark_dirty();
         return;
 
     case Kind::EraseChar: {
@@ -187,13 +318,34 @@ void reducer(EditorState& st, const Command& cmd) {
         }
         const WindowState& w = st.win();
         if (w.cursor.col == 0) {
-            return; // backspace across line start joins in P2.6
+            // P2.6: backspace at line start JOINS with the previous line
+            // (one cross-line TextChange; no smart-indent deletion until P6).
+            Buffer* b = st.buffer(w.buffer);
+            if (b == nullptr || w.cursor.line == 0) {
+                return;
+            }
+            const std::uint32_t l = w.cursor.line;
+            const std::string prev = b->lines()[l - 1];
+            const std::string cur = b->lines()[l];
+            TextChange ch;
+            ch.kind = EditKind::EraseChar; // backspace run keeps merging
+            ch.first_line = l - 1;
+            ch.old_lines = {prev, cur};
+            ch.new_lines = {prev + cur};
+            ch.cur_before = w.cursor;
+            ch.cur_after = Pos{l - 1,
+                               static_cast<std::uint32_t>(
+                                   line_len_cp(prev))};
+            record_change(st, EditKind::EraseChar, ch, ch.cur_after);
+            return;
         }
-        apply_edit(st, EditKind::EraseChar, [](Buffer& b, const Pos p) {
-            // Backspace erases the cp LEFT of the cursor; erase_char at
-            // {line, col-1} returns that position (= the new cursor).
-            return b.erase_char(Pos{p.line, p.col - 1});
-        });
+        const WindowState& wc = st.win();
+        Buffer* bc = st.buffer(wc.buffer);
+        if (bc == nullptr) {
+            return;
+        }
+        const TextChange ch = erase_left_change(*bc, wc.cursor);
+        record_change(st, EditKind::EraseChar, ch, ch.cur_after);
         return;
     }
 

@@ -61,11 +61,15 @@ struct WindowState {
 
 struct Command {
     enum class Kind : std::uint8_t {
-        None,        // key produced no command in the current mode
-        Motion,      // v0: relative (dy,dx) count times; framework lands P2.7
-        InsertChar,  // insert mode only
-        EraseChar,   // insert-mode backspace (left of the cursor)
-        DeleteChar,  // normal-mode deletion at the cursor ('x')
+        None,          // key produced no command in the current mode
+        Motion,        // v0: relative (dy,dx) count times; framework lands P2.7
+        InsertChar,    // insert mode only
+        InsertNewline, // Enter in insert: split + copy previous line's indent
+        SplitLine,     // '\n' inside a bracketed paste: split, NO indent copy
+        PasteBegin,    // st.pasting = true (bracketed-paste session)
+        PasteEnd,      // st.pasting = false
+        EraseChar,     // insert-mode backspace (left of the cursor; joins)
+        DeleteChar,    // normal-mode deletion at the cursor ('x')
         EnterInsert,
         LeaveInsert,
         Undo,
@@ -111,6 +115,7 @@ public:
     std::vector<Buffer> buffers;
     std::vector<WindowState> windows;
     Mode mode = Mode::Normal;
+    bool pasting = false; // inside a bracketed paste ('\n' inserts as data)
     std::string msg;      // statusline message (P2.4 renders)
     std::string cmdline;  // prompt row reservation (P6 fills it)
 

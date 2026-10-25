@@ -57,11 +57,20 @@ TEST_CASE("reducer: mode-aware dispatch table") {
           == Command::Kind::EraseChar);
     CHECK(app::command_for_key(st, Key{KeyKind::Esc, 0}).kind
           == Command::Kind::LeaveInsert);
-    // Enter/Tab land with P2.6 (v0: no command).
+    // P2.6: Enter is the indentation-aware split; Tab is a literal '\t'.
     CHECK(app::command_for_key(st, Key{KeyKind::Enter, 0}).kind
-          == Command::Kind::None);
-    CHECK(app::command_for_key(st, Key{KeyKind::Tab, 0}).kind
-          == Command::Kind::None);
+          == Command::Kind::InsertNewline);
+    const Command tab = app::command_for_key(st, Key{KeyKind::Tab, 0});
+    CHECK(tab.kind
+          == Command::Kind::InsertChar);
+    CHECK(tab.cp == U'\t');
+    CHECK(app::command_for_key(st, Key{KeyKind::PasteBegin, 0}).kind
+          == Command::Kind::PasteBegin);
+    CHECK(app::command_for_key(st, Key{KeyKind::PasteEnd, 0}).kind
+          == Command::Kind::PasteEnd);
+    // Plain '\n' as Char data splits without indent only while pasting.
+    CHECK(app::command_for_key(st, Key{KeyKind::Char, U'\n'}).kind
+          == Command::Kind::SplitLine);
 }
 
 TEST_CASE("reducer: 40-key scripted session ends in asserted state") {
@@ -270,4 +279,95 @@ TEST_CASE("reducer: follow_cursor keeps the cursor line visible") {
         CHECK(st.win().cursor == Pos{29, 2}); // "29" -> len 2; col clamp
         CHECK(st.win().top_line == 25);       // 29 - (5-1)
     }
+}
+
+TEST_CASE("reducer: P2.6 enter copies indent and the run is ONE undo") {
+    EditorState st;
+    st.buffers[0].set_lines({"  foo"});
+    st.win().cursor = Pos{0, 2};
+    st.mode = Mode::Insert;
+
+    key(st, Key{KeyKind::Enter, 0});
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{"  ", "  foo"});
+    CHECK(st.win().cursor == Pos{1, 2}); // lands on the copied indent
+
+    key(st, ch(U'x'));
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{"  ", "  xfoo"});
+    CHECK(st.buffers[0].undo_depth() == 1); // Enter + 'x' = one run
+
+    key(st, Key{KeyKind::Esc, 0});
+    CHECK(st.mode == Mode::Normal);
+    CHECK(st.win().cursor == Pos{1, 2});
+
+    // nvim oracle: `i...<CR>...<Esc>u` reverts the WHOLE typing stream.
+    key(st, ch(U'u'));
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{"  foo"});
+    CHECK(st.win().cursor == Pos{0, 2});
+    CHECK(st.buffers[0].undo_depth() == 0);
+
+    key(st, Key{KeyKind::CtrlChar, U'r'});
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{"  ", "  xfoo"});
+}
+
+TEST_CASE("reducer: P2.6 backspace joins lines and keeps merging") {
+    EditorState st;
+    st.buffers[0].set_lines({"ab", "cd"});
+    st.win().cursor = Pos{1, 0};
+    st.mode = Mode::Insert;
+
+    key(st, Key{KeyKind::Backspace, 0});
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{"abcd"});
+    CHECK(st.win().cursor == Pos{0, 2});
+
+    key(st, Key{KeyKind::Backspace, 0}); // erases 'b'
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{"acd"});
+    key(st, Key{KeyKind::Backspace, 0}); // erases 'a'
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{"cd"});
+    key(st, Key{KeyKind::Backspace, 0}); // col 0, line 0: no-op
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{"cd"});
+    CHECK(st.buffers[0].undo_depth() == 1); // all backspaces = one run
+
+    key(st, Key{KeyKind::Esc, 0});
+    key(st, ch(U'u')); // one undo restores every backspace incl. the join
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{"ab", "cd"});
+    CHECK(st.win().cursor == Pos{1, 0});
+    CHECK(st.buffers[0].undo_depth() == 0);
+}
+
+TEST_CASE("reducer: P2.6 bracketed paste inserts as data") {
+    EditorState st; // empty buffer
+    st.mode = Mode::Insert;
+
+    // Feeder: markers + raw data (the decoder's PasteBegin/data/PasteEnd).
+    key(st, Key{KeyKind::PasteBegin, 0});
+    key(st, ch(U'h'));
+    key(st, ch(U'i'));
+    key(st, Key{KeyKind::Char, U'\n'}); // paste data: split, NO indent copy
+    key(st, ch(U'e'));
+    key(st, ch(U'd'));
+    key(st, Key{KeyKind::PasteEnd, 0});
+    CHECK(st.pasting == false);
+
+    // The pasted stream (incl. the \n split) merges into ONE unit.
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{"hi", "ed"});
+    CHECK(st.win().cursor == Pos{1, 2});
+    CHECK(st.buffers[0].undo_depth() == 1);
+
+    key(st, Key{KeyKind::Esc, 0});
+    key(st, ch(U'u')); // the pasted stream is one undo unit
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{""});
+    CHECK(st.win().cursor == Pos{0, 0});
+    CHECK(st.buffers[0].undo_depth() == 0);
+}
+
+TEST_CASE("reducer: P2.6 plain enter on an empty buffer") {
+    EditorState st;
+    st.mode = Mode::Insert;
+    key(st, Key{KeyKind::Enter, 0});
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{"", ""});
+    CHECK(st.win().cursor == Pos{1, 0});
+    key(st, Key{KeyKind::Esc, 0});
+    key(st, ch(U'u'));
+    CHECK(st.buffers[0].lines() == std::vector<std::string>{""});
+    CHECK(st.win().cursor == Pos{0, 0});
 }
