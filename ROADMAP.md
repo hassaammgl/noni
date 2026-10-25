@@ -19,6 +19,11 @@ depends on it). Syntax highlighting parses incrementally ON THE MAIN THREAD
 (visible range only); a syntax worker is optional later. Background work =
 file scan + grep (job pool) + terminal PTY worker + `:!` jobs + OSC52 writes.
 
+**Revised 2026-10-25, UI-first:** no long headless stretch. **P2 puts the FIRST
+SCREEN up** (minimal editor: type, move, `x`, undo) right after P1; every phase
+after P2 lands its features LIVE on the visible editor. Core logic stays
+pure and layered (all unit-tested without ncurses); `ui/` only renders.
+
 Conventions for all phases: build = `cmake --build build`; test =
 `ctest --test-dir build --output-on-failure`; sanitize =
 `ASAN_OPTIONS=detect_leaks=1 ./build/noni` (every Debug build is sanitized).
@@ -31,12 +36,12 @@ Differential reference for editing semantics: `nvim --headless -u NONE`
 | ----- | -------------------------- | ----- | ------------------------------------------------------------- |
 | P0    | CMake skeleton             | 3     | empty ui-less binary builds, ctest runs a placeholder         |
 | P1    | Core buffer + undo         | 8     | (library only) tested text edits + undo/redo                  |
-| P2    | Motions                    | 10    | (tested) full motion vocabulary incl. counts                  |
-| P3    | Operators + text objects   | 9     | (tested) d/c/y/</>/gu/gU/g~/= over motions+objects            |
-| P4    | Registers/marks/dot/macros | 9     | (tested) p/P, `.`, q/@, marks, jumplist                       |
-| P5    | Modes + reducer            | 7     | headless vim session replaying a key stream                   |
-| P6    | Ex commands                | 8     | `:` prompt, :w :q :e :b :bn :bd :s/// :N :set (no screen)     |
-| P7    | Renderer                   | 9     | **first visible editor**: single window, scroll               |
+| P2    | **FIRST SCREEN** minimal editor | 9 | visible editor: type, h/j/k/l/0/$, x, u, resize               |
+| P3    | Motions (live)             | 9     | full motion vocabulary usable in the editor                   |
+| P4    | Operators + text objects   | 9     | d/c/y/</>/gu/gU/g~/= over motions+objects, live               |
+| P5    | Registers/marks/dot/macros | 9     | p/P, `.`, q/@, marks, jumplist — live                         |
+| P6    | Modes completion + prompts | 5     | visual/visual-line, cmdline prompt history, full insert rules |
+| P7    | Ex commands                | 9     | `:` live: :w :q :e :b :ls :s/// :set :messages                |
 | P8    | Windows + tabs             | 8     | :sp :vs ctrl+w, :tabnew gt/gT                                 |
 | P9    | Search + substitute        | 7     | / ? n N * # :noh :s/// :%s///g + highlights                   |
 | P10   | Picker + explorer + grep   | 8     | <space>ff fuzzy files, <space>fg grep, <space>e explorer      |
@@ -47,7 +52,7 @@ Differential reference for editing semantics: `nvim --headless -u NONE`
 | P15   | Extras                     | 6     | ctrl+v block visual, :map/:nnoremap, J/gJ, visual u/U         |
 | P16   | Session/recovery/autosave  | 7     | restore across runs, crash recovery prompts                   |
 
-v1 total = **127 tasks** (P0–P16).
+v1 total = **125 tasks** (P0–P16).
 
 ---
 
@@ -86,8 +91,8 @@ v1 total = **127 tasks** (P0–P16).
 - files: `new/tests/smoke_test.cpp`, `new/src/main.cpp`
 - api: `int main(int argc, char** argv)` skeleton in main.cpp (no ncurses yet:
   `noni --version` → stdout, exit 0; no args → info line, exit 0 [deviation:
-  bare `make run` must not look like a failure until P7; reverts to launching
-  the editor in P7.5]; unknown args → error, exit 2).
+  bare `make run` must not look like a failure until P2; reverts to launching
+  the editor there]); unknown args → error, exit 2).
 - ACCEPT: `ctest --test-dir build` runs smoke test; `./build/noni --version` prints.
 - edges: FetchContent behind proxy → document manual fallback in commit body.
 - done: ctest green; committed `P0.3`.
@@ -181,112 +186,186 @@ v1 total = **127 tasks** (P0–P16).
 - ACCEPT: `ctest -R P1` 100%; sanitizer run of `noni_tests` clean.
 - done: phase reported to user with PREVIEW §P1 demo (test output).
 
-## P2 — Motions (pure, still no screen)
+## P2 — FIRST SCREEN — minimal editor
 
-All motion tasks share files `core/motion.hpp/.cpp` + `tests/motion_test.cpp`,
-api style: `struct Motion { MotionId id; args...; Pos apply(const TextView, Pos, uint32_t count); };`
-`TextView` = lines + tabwidth + view scroll (for zz). depends: P1.
-Every task's test set includes **differential cases recorded from
-`nvim --headless -u NONE`** (see AGENTS.md — Neovim is the oracle).
+The headless stretch ends here: after this phase the editor is REAL and VISIBLE.
+Everything above `ui/` stays layered (core/ logic fully unit-tested without
+ncurses); ui/ renders, app/ drives, the reducer stays the ONE edit path.
+From here on every phase's features are demonstrated LIVE in the running editor.
 
-### P2.1 Framework + h j k l 0 $
-- goal: MotionContext, clamping (inclusive last char in Normal), apply(count).
-- ACCEPT: h at col0 stays; `5j` stops at last line; `$` on empty line.
-- edges: movement past end; count 0 → 1.
+Files: `core/editor_state.hpp/.cpp`, `app/reducer.hpp/.cpp`, `app/app.hpp/.cpp`,
+`ui/screen.hpp/.cpp`, `ui/view.hpp/.cpp`, `ui/input.hpp/.cpp`,
+`ui/statusline.hpp/.cpp`. depends: P1, P0.2.
 
-### P2.2 Word motions w W
+### P2.1 Screen init/teardown + Key reader
+- goal: ncursesw init (noecho/cbreak/escdelay 25/keypad), colors init, `Key`
+  reader from get_wch (Esc vs CSI resolve; UTF-8; Alt as ESC-prefix).
+- ACCEPT: temporary debug line shows key codes; removed after P2.4.
+- edges: terminal resize (KEY_RESIZE → App::on_resize); Ctrl+J vs Enter;
+  Unicode input; bracketed-paste sequences decoded as data (markers stripped —
+  small edge fixture test).
+- depends: P1, P0.2.
+
+### P2.2 EditorState skeleton + reducer shell v0
+- goal: `EditorState{buffers, windows, mode, msgs, cmdline,…}` + single
+  `reducer(EditorState&, Command) -> void` — ONE edit path per ARCHITECTURE §4;
+  in-memory key feeder for tests. v0 commands: Motion/InsertChar/EraseChar/
+  EnterInsert/LeaveInsert/Undo/Redo/DeleteChar.
+- files: `app/reducer.hpp/.cpp`, `core/editor_state.hpp/.cpp`, tests.
+- ACCEPT: a 40-key scripted session ends in asserted state (text/mode/cursor).
+- edges: all commands no-op safely when `BufferId` invalid.
+
+### P2.3 View draw + gutter numbers
+- goal: draw buffer lines (single window) with horizontal scroll (long-line
+  clip), tabs expanded, nonprinting markers, current-line highlight + line
+  numbers; `screen_row ↔ buffer_line` mapping API (pure part unit-tested).
+- ACCEPT: scripted render test + manual visual check.
+- depends: P2.1, P2.2.
+
+### P2.4 Statusline + message row + layout fill
+- goal: statusline (mode flag, filename, `[+]`, Ln,Col), bottom message row,
+  cmdline prompt row reserved; single-window layout fill (1-row statusline,
+  1-row message/cmdline, 1-row tab-bar placeholder colored at P8).
+- ACCEPT: PREVIEW walkthrough; mode flag flips with i/Esc.
+
+### P2.5 Main loop + followed cursor
+- goal: `App::run` polls stdin (+ wake fd skeleton), drains the queue, runs the
+  reducer, renders dirty state only; logical cursor via wmove; view follows the
+  cursor minimally (scrolloff honored) until the full scroll set lands (P3.6).
+- ACCEPT: typing session via the headless feeder + manual demo.
+- depends: P2.3, P2.4.
+
+### P2.6 Insert mode v0
+- goal: insert chars incl. UTF-8 stream; Enter inserts a newline (copying the
+  previous line's indent); Backspace (incl. at leading indent); Esc exits.
+  Full rules (o/O, ctrl+w/u, smart options) are P6.1.
+- ACCEPT: typing-flow feeder tests; bracketed paste inserted as data.
+- depends: P2.2, P1.5 (typing runs merge into one undo group).
+
+### P2.7 Normal mode v0 + first motions
+- goal: `core/motion.hpp` framework (MotionContext, clamping at line ends,
+  `apply(count)`) with h j k l 0 $ first; digit-count prefix handled by the v0
+  dispatcher; `x` delete-char (plain unnamed register — full model is P5.1),
+  `u`/`ctrl+r` undo/redo (P1 engine), `i`/`A` enter insert.
+- ACCEPT: h at col0 stays; `5j` stops at last line; `$` on an empty line;
+  `3j` via count prefix (feeder test; live on screen too).
+- depends: P2.5, P1 (undo engine).
+
+### P2.8 Viewport edge cases
+- goal: empty buffer (`~` lanes), lines longer than the screen (horizontal
+  scroll correct with tabs/wide chars), lines ending exactly at the right edge,
+  half-visible last line viewport math.
+- ACCEPT: unit tests over the mapping API; visual check.
+- depends: P2.3.
+
+### P2.9 PHASE CHECK — first visible demo
+- goal: user demo per PREVIEW §P2; ASan+UBSan run of the REAL app.
+
+## P3 — Motions (live on the screen)
+
+All motion tasks extend `core/motion.hpp/.cpp` (framework from P2.7) +
+`tests/motion_test.cpp`, api style:
+`struct Motion { MotionId id; args...; Pos apply(const TextView, Pos, count); };`
+`TextView` = lines + tabwidth + view scroll (for zz). Every task ships
+**differential cases vs `nvim --headless -u NONE`** (AGENTS.md) and is
+immediately usable in the running editor. depends: P2.
+
+### P3.1 Word motions w W
 - goal: vim `w`/`W` incl. end-of-line skip, empty-line boundary.
 - ACCEPT: "foo.bar baz" cases (differential vs nvim); w on trailing blank stops.
 
-### P2.3 Word motions b B e E
+### P3.2 Word motions b B e E
 - goal: backward + end motions; e on last char of file.
 - ACCEPT: tests from vim docs table (word/WORD/punct mixes), differential suite.
 
-### P2.4 f F t T ; ,
+### P3.3 f F t T ; ,
 - goal: find-char with count; `;`/`,` repeat with count; per-line persist; last
   find state stored in Window (`last_find`).
 - ACCEPT: `2fx`, `3;` chains; backward `t`; no match → no move + error flag.
 - edges: no match (no cursor change, error state for msg later).
 
-### P2.5 ^ $ gg G + counts
-- goal: first-nonblank, goto line via count (`123G`), file start/end.
+### P3.4 ^ gg G + counts
+- goal: `^` first-nonblank (distinct from `0`), goto line via count (`123G`),
+  file start/end.
 - ACCEPT: `$` on line with tabs; `3G` on 2-line file → last line (differential).
 
-### P2.6 { } sentence/paragraph
+### P3.5 { } paragraph
 - goal: blank-line paragraph moves; `{`/`}` on empty buffer no-op.
 - ACCEPT: paragraph tests; no infinite loops (differential).
 
-### P2.7 Page + scroll: ctrl+d/u/f/b, H M L, zz zt zb
-- goal: view scrolls (updates TextView scroll), H/M/L pick rows in view.
-- depends: none for logic; touches view state — pure over TextView.
+### P3.6 Page + scroll: ctrl+d/u/f/b, H M L, zz zt zb
+- goal: view scrolls (updates TextView scroll), H/M/L pick rows in view;
+  replaces P2.5's minimal cursor-following.
 - files: same + `core/view.hpp/.cpp` (view scroll state, scrolloff calc).
 - ACCEPT: ctrl+f at EOF clamps; zz keeps line centered.
 - edges: view shorter than screen; scrolloff > half view.
 
-### P2.8 % bracket match
+### P3.7 % bracket match
 - goal: match `(){}[]` forward/backward, plain scan (comments/strings NOT skipped —
   documented limitation), count% jumps.
 - ACCEPT: nested + unmatched → no move (differential).
 
-### P2.9 Cursor column memory
+### P3.8 Cursor column memory
 - goal: `preferred_col` (j/k through short/long lines restore column) — Window
-  field + apply in vertical motions (P2.1 update).
+  field + apply in the vertical motions.
 - ACCEPT: long→short→long keeps column.
 
-### P2.10 PHASE CHECK
+### P3.9 PHASE CHECK
 - goal: motion test sweep (idempotency, count>line fallbacks), differential
-  suite green, phase report.
+  suite green, live demo per PREVIEW §P3.
 
-## P3 — Operators + text objects
+## P4 — Operators + text objects
 
-Files: `core/operator.hpp/.cpp`, `core/textobj.hpp/.cpp`, tests both. depends: P2.
-Differential oracle: `nvim --headless -u NONE` for every op×motion×object case.
+Files: `core/operator.hpp/.cpp`, `core/textobj.hpp/.cpp`, tests both. depends: P3.
+Differential oracle: `nvim --headless -u NONE` for every op×motion×object case;
+every operator is live in the editor the moment its task lands.
 
-### P3.1 Operator parse state
+### P4.1 Operator parse state (Pending FSM) — wire into the v0 dispatcher
 - goal: `Pending` FSM: `[count]op` → wait motion/textobject/doubled-op (linewise) →
   build `Edit{op, start, end, kind}`; register prefix `"x` recorded before/with.
-- files: `core/operator.hpp/.cpp` (+ reducer wiring in P5); tests.
+  Extends P2.7's dispatcher — from now on `[count]Operator` composes live.
+- files: `core/operator.hpp/.cpp`; tests.
 - api: `std::optional<Edit> step(Pending&, Key, const TextView);`
   `std::optional<Edit> step_visual(Pending&, sel);`
 - ACCEPT: `2d3w` = 6 words; `dd` = line; `cc` keeps indent (indent preserved via
-  P3.6 shift machinery, tested here).
+  P4.6 shift machinery, tested here).
 - edges: `d` then Esc cancels; same op repeated → linewise.
 
-### P3.2 d y (delete/yank)
+### P4.2 d y (delete/yank)
 - goal: apply Edit: text→register (Reg kind char/line), cursor to range start
   (line ops → first nonblank of line).
-- depends: P3.1 (unnamed register first full model is P4.1)
-- ACCEPT: `dw` at EOL; `y$` cursor stays; deleted line yank = linewise.
+- depends: P4.1 (unnamed register first full model is P5.1)
+- ACCEPT: `dw` at EOL; `y$` cursor stays; deleted line yank = linewise (live).
 
-### P3.3 c (change)
+### P4.3 c (change)
 - goal: delete + enter Insert; mode transition delivered as
-  `Edit.post_action = EnterInsert` (handled in P5).
+  `Edit.post_action = EnterInsert` (handled by the reducer here).
 - ACCEPT: `cc`/`cw`; `cw` vim-accuracy: cursor on word start does NOT move past
   EOL (vim special case) — differential TEST.
 
-### P3.4 Text objects iw aw ip ap
+### P4.4 Text objects iw aw ip ap
 - goal: selection ranges; `aw` includes trailing space/newline rules.
 - ACCEPT: "foo bar ," samples; `ap` merges trailing blank lines vim-style
   (differential).
-- depends: P2 word motions.
+- depends: P3.1-P3.2 word motions.
 
-### P3.5 Text objects quotes + brackets
+### P4.5 Text objects quotes + brackets
 - goal: i" a" i' a' i( a( i{ a{ i[ a[ (stand on delimiter or inside), multiline ok.
 - ACCEPT: `da(` across lines; unmatched → error (no edit, count consumed).
 
-### P3.6 > < (shift)
+### P4.6 > < (shift)
 - goal: indent lines by `shiftwidth` (tabs or spaces per `expandtab`), with
   counts and `.` repeat; cursor to first nonblank of first line.
-- ACCEPT: here Normal `3>>`; visual-line `>N` arrives in P5.4.
+- ACCEPT: here Normal `3>>`; visual-line `>N` arrives in P6.2.
 - edges: empty lines unaffected; mixed tabs/spaces.
 
-### P3.7 gu gU g~
+### P4.7 gu gU g~
 - goal: case ops over ranges (`guu`, `gUU`, `g~~` doubled forms too), with motion.
 - ACCEPT: accented UTF-8 via wide-char towupper/towlower; ASCII-only fallback
   documented if the locale is C (edge case test).
 - edges: on nonletters no-op.
 
-### P3.8 = (auto-indent range)
+### P4.8 = (auto-indent range)
 - goal: re-indent lines from context — bracket depth + previous-line indent,
   c-family heuristic (balanced braces) only; keep tab/space style of the buffer
   (`expandtab` decides).
@@ -294,223 +373,170 @@ Differential oracle: `nvim --headless -u NONE` for every op×motion×object case
   approximation; v1 = heuristic, exact nvim indentexpr NOT promised).
 - edges: empty lines; mixed tabs/spaces.
 
-### P3.9 PHASE CHECK
+### P4.9 PHASE CHECK
 - goal: regression matrix op×motion×object×count (generated cases) + one nvim
-  differential script per operator; report.
+  differential script per operator; live demo per PREVIEW §P4.
 
-## P4 — Registers/marks/jumps/dot/macros
+## P5 — Registers/marks/jumps/dot/macros
 
 Files: `core/register.hpp/.cpp`, `core/marks.hpp/.cpp`, `core/macro.hpp/.cpp`,
-tests. depends: P3.
+tests. depends: P4.
 
-### P4.1 Register model
+### P5.1 Register model
 - goal: unnamed `"`; numbered 0-9 (yank/delete history); named a-z (append via
   A-z); small delete `-`; blackhole `_`; `+`/`*` aliases writing through OSC52
-  (P13.2 — model stores content; no subprocess clipboard ever).
+  (P13.2 — model stores content; no subprocess clipboard ever). Upgrades the
+  plain unnamed register P2.7 used for `x`.
 - api: `RegSet::get(char) -> RegView; void set(char, RegView, bool append);`
 - ACCEPT: `dd` rotates `"1`; `cw` fills `"-`; `"ayy` names tmp; `"Ayy` appends.
 - edges: delete of 1 char (non-line) goes to `"-` only, NOT into `"1`.
 
-### P4.2 paste p P
+### P5.2 paste p P
 - goal: char/linewise from RegView (count multiplier = paste N times), cursor
-  placement rules; visual-mode paste replaces selection (wired in P5.4).
+  placement rules; visual-mode paste replaces selection (wired in P6.2).
 - ACCEPT: `3p` linewise pastes 3 copies; p on empty buffer.
 
-### P4.3 Marks a-z (`'x` vs `` `x ``)
+### P5.3 Marks a-z (`'x` vs `` `x ``)
 - goal: set (`mx`), jump-line (`'x`) vs exact (`` `x ``); invalidated on line ops
   (line index shift).
 - ACCEPT: mark survives insert above (moves down); dies if its line deleted.
 
-### P4.4 Jump list + ctrl+o / ctrl+i
+### P5.4 Jump list + ctrl+o / ctrl+i
 - goal: cap 50, dedupe consecutive entries, push only on big jumps (>2 lines, G,
   mark, search-hit).
 - ACCEPT: ctrl+o/ctrl+i chain round-trips; each big move adds exactly one entry.
 
-### P4.5 Dot repeat `.`
+### P5.5 Dot repeat `.`
 - goal: record last Edit (op+motion+count+register) + simple insert sequences;
   `.` replays at current cursor.
-- depends: P3.
+- depends: P4.
 - ACCEPT: `dw.` on 3 words; `ciwfoo<Esc>.` changes second word to foo; insert
   text repeat (differential).
 - edges: `.` after undo replays the edit that predates the undo attempt; visual
   edits replayable.
 
-### P4.6 Macros q a…q / @a
+### P5.6 Macros q a…q / @a
 - goal: record raw key sequence into a register (`q` toggle, aborted recording
   = empty), play `@a` count N, `@@` repeats last, recursion depth 1 max.
 - ACCEPT: record+play edits + moves; error inside macro aborts (error state) —
   no dialogs.
 - edges: `q` inside playback → ignored (depth limit), not recorded.
 
-### P4.7 r x ~ J basics
-- goal: replace-char (count), delete-char (yank), toggle case over motion, `J`
-  joins with single space (with count).
+### P5.7 r ~ J basics
+- goal: replace-char (count), toggle case over motion, `J` joins with single
+  space (with count). (`x` delete-char already lives since P2.7.)
 - ACCEPT: `3rx` past EOL clamps; `J` basic here; `J` polish + `gJ` in P15.3.
 - depends: P1, P2.
 
-### P4.8 R (Replace mode) as an edit engine
+### P5.8 R (Replace mode) as an edit engine
 - goal: overwrite chars in place; Backspace restores original char; Esc closes
   the undo group.
 - ACCEPT: replace past EOL appends; newline in Replace mode switches to
   insert-line semantics (differential).
-- depends: P1.5 (transaction grouping). Binding ships in P5.4.
+- depends: P1.5 (transaction grouping). Binding ships in P6.2.
 
-### P4.9 PHASE CHECK
-- goal: macro + dot + undo interaction matrix test; differential script; report.
+### P5.9 PHASE CHECK
+- goal: macro + dot + undo interaction matrix test; differential script; live
+  demo per PREVIEW §P5.
 
-## P5 — Modes + the reducer (still no ncurses!)
+## P6 — Modes completion + prompt machinery
 
-### P5.1 EditorState + reducer shell
-- goal: `EditorState{tabs, windows, buffers, mode, cmdline, msgs,…}` + single
-  `reducer(EditorState&, Command) -> void`; in-memory key feed for tests.
-- files: `app/reducer.hpp/.cpp`, `core/editor_state.hpp/.cpp`, tests.
-- ACCEPT: a 40-key scripted session ends in asserted state (text/mode/windows).
-- edges: all commands no-op safely when `BufferId` invalid.
+(`EditorState` + reducer shell arrived in P2.2; v0 Normal dispatcher P2.7;
+operator FSM P4.1. This phase completes the mode set and the cmdline prompt.
+Everything below is live on screen immediately.)
 
-### P5.2 Normal mode dispatcher
-- goal: pending FSM (counts, operators, registers, `g`/`z`/ctrl+w prefixes) →
-  Command; binds P2/P3/P4 pieces; status text hook for the renderer later.
-- ACCEPT: PREVIEW §P5 key-script tables replay identically as tests.
-- depends: P2..P4, P5.1.
+### P6.1 Insert mode completing
+- goal: auto-indent on Enter with `++` rules, `o`/`O` open lines, smart
+  Backspace (indent), ctrl+w (delete word back), ctrl+u (line); Esc exits
+  (jk/jj only if configured later).
+- ACCEPT: typing-flow tests; `ctrl+w` edge at col 0; `o` inherits indent.
+- depends: P2.6.
 
-### P5.3 Insert mode
-- goal: insert chars incl. UTF-8 stream, auto-indent on Enter (copy prev indent;
-  `o`/`O` too), smart Backspace (indent), ctrl+w (delete word back), ctrl+u
-  (line); Esc exits (jk/jj only if configured later).
-- ACCEPT: typing-flow tests; `ctrl+w` edge at col 0.
-- depends: P5.2.
-
-### P5.4 Visual + VisualLine (+ R binding)
+### P6.2 Visual + VisualLine (+ R binding)
 - goal: selection anchor on Window; `o`/`O` swap ends; ops: d x c s y > <
-  gu gU g~ = ; `p` replaces selection; R (Replace mode) bound here.
+  gu gU g~ = ; `p` replaces selection; R (Replace mode, engine P5.8) bound here.
   (visual `u`/`U`/`~` arrives in P15.4.)
 - ACCEPT: motion updates selection; `Vd` deletes lines; `V>` indents block; `vp`
   replaces with char/line register content correctly.
-- depends: P5.2, P3.
+- depends: P2.7, P4.
 
-### P5.5 Cmdline / search prompt state
+### P6.3 Cmdline / search prompt state
 - goal: typed string + history ring (per prompt char); Enter emits
-  `ExRun{line}` / `SearchRun{pat, dir}` Commands as typed.
-- depends: P5.1.
+  `ExRun{line}` / `SearchRun{pat, dir}` Commands as typed; visible in the cmdline
+  row (P2.4).
+- depends: P2.4.
 - ACCEPT: history cycles up/down; empty Enter is a no-op.
-- (Actual `:` parsing is P6; `/ ? n N` behavior is P9.)
+- (Actual `:` parsing is P7; `/ ? n N` behavior is P9.)
 
-### P5.6 Event queue + job pool skeleton
+### P6.4 Event queue + job pool skeleton
 - goal: MPSC `EventQueue` + 2-thread job pool; fake job posts 1000 ordered
-  events; App drain helper for reducer tests.
+  events; App drain helper for reducer tests. (GROUNDWORK for P10 scan/grep,
+  P14 terminal/`:!`/OSC52.)
 - files: `app/event_queue.hpp/.cpp`, `app/jobs.hpp/.cpp`, `app/events.hpp`.
 - ACCEPT: multithreaded test (≤2 job threads): drain preserves per-producer order.
 - edges: wake fd absent (pure queue usable without an OS event).
 
-### P5.7 PHASE CHECK — scripted vim session
-- goal: run the PREVIEW §P5 script through the headless feeder; assert final state.
+### P6.5 PHASE CHECK — scripted vim session, live
+- goal: run the PREVIEW §P6 script both as feeder tests AND live; assert final
+  state; sanitizer run.
 
-## P6 — Ex commands (no screen yet)
+## P7 — Ex commands (prompt row already live from P2.4/P6.3)
 
 Files: `core/ex_parse.hpp/.cpp`, `core/ex_engine.hpp/.cpp`, reducer glue in
-`app/*.cpp`. Input entry via P5.5.
+`app/*.cpp`. Input entry via P6.3.
 
-### P6.1 Ex parser
+### P7.1 Ex parser
 - goal: range grammar `%`, `.`, `$`, `N`, `N,M`, `.,+3`; bang; args; command-name
   abbreviation (longest unique prefix).
 - ACCEPT: parser table tests incl. `:'<,'>s/x/y/g`.
 - edges: trailing count after flags (`:s/x/y/g 3` — reserved, error for now);
   stray spaces.
 
-### P6.2 File commands :w :wq :q :q! :qa :e :enew
+### P7.2 File commands :w :wq :q :q! :qa :e :enew
 - goal: file IO via Buffer::save/load; unsaved-confirm flow (message +
   `q!`/`wq` overrides); `:e` reloads from disk keeping the cursor.
 - ACCEPT: tests with temp dirs; `:w other.cpp` retargets the buffer filename
   (vim behavior: save-as under the new name).
-- depends: P1, P5.
+- depends: P1, P2.
 
-### P6.3 Buffer commands :ls :b name/:bN :bn :bp :bd
+### P7.3 Buffer commands :ls :b name/:bN :bn :bp :bd
 - goal: `:ls` listing string (format test); switch by number/partial-name;
   `:bd` unloads the buffer (windows showing it collapse; refuse without bang
   when modified).
 - ACCEPT: list format test; window collapse to nearest remaining window.
 - (Window wiring finalized in P8.)
 
-### P6.4 :<number> + :$ goto
+### P7.4 :<number> + :$ goto
 - goal: pure range command → move cursor (col = first nonblank), clear pending.
 - ACCEPT: `:3` on a 2-line buffer → error message state, no crash.
 
-### P6.5 :set options
+### P7.5 :set options
 - goal: settings table (`tabwidth, number, relativenumber, scrolloff, expandtab,
   shiftwidth, lsp [optional placeholder]`) with `key=value`, `nokey`, boolean
   toggles; invalid → error entry, no crash.
 - ACCEPT: set/get tests; unknown key error; `:set ts?` prints value.
 - files: `core/settings.hpp/.cpp` (single cohesive pair), reducer hook.
 
-### P6.6 :s/// (single line & range)
+### P7.6 :s/// (single line & range)
 - goal: regex replace on `:'<,'>` or current line via P1.7; flags `g i I c E`;
   cursor to last substitution; empty pattern reuses last search text (P9 fills).
 - ACCEPT: tests; `c` flag pauses per match (injected chooser in tests).
-- depends: P1.7, P6.1.
+- depends: P1.7, P7.1.
 
-### P6.7 :noh (and the highlight model)
+### P7.7 :noh (and the highlight model)
 - goal: `Highlight` state (matches, kinds) + `:noh` clears until next search.
 - ACCEPT: model state toggles tested.
 - (The match-filling itself is P9.)
 
-### P6.8 PHASE CHECK
-- goal: ex e2e suite: parse→apply for every table row; message texts asserted.
+### P7.8 Messages ring + :messages (scratch buffers land here)
+- goal: `Messages` ring + statusbar echo (visible since P2.4) + `:messages`
+  opens a scratch buffer (vim-like; scratch = unmodifiable, listed in `:ls`;
+  reused later by `:!out` P14.5).
+- ACCEPT: demo (echo appears; `:messages` shows history in a scratch buffer).
 
-## P7 — Renderer (FIRST SCREEN)
-
-Files: `ui/*`, wires `App::run()` in `main.cpp`. depends: P5, P6.
-
-### P7.1 Screen init/teardown + Key reader
-- goal: ncursesw init (noecho/cbreak/escdelay 25/keypad), colors init, `Key`
-  reader from get_wch (Esc vs CSI resolve; UTF-8; Alt as ESC-prefix).
-- ACCEPT: temporary debug line shows key codes; removed after P7.4.
-- edges: terminal resize (KEY_RESIZE → App::on_resize); Ctrl+J vs Enter;
-  Unicode input.
-- note: bracketed-paste escape sequences are decoded here as data (v1: insert
-  pasted text; strip markers) — small edge fixture test.
-
-### P7.2 View draw (single window)
-- goal: draw buffer lines with horizontal scroll (long-line clip), tabs expanded,
-  nonprinting markers, cursor cell; `screen_row ↔ buffer_line` mapping API.
-- ACCEPT: scripted UI test + manual visual check (PREVIEW §P7).
-- depends: P7.1.
-
-### P7.3 Gutter (numbers + relative)
-- goal: line numbers / current-line highlight / relative numbers (state-driven;
-  `:set relativenumber` works here — P11 only adds the config FILE).
-- ACCEPT: visual check + relative-numbering unit tests (pure part).
-
-### P7.4 Statusline + messages + cmdline
-- goal: per-window statusline (mode flag, filename, `[+]`, %/Ln,Col), bottom
-  cmdline prompt row (`:`, `/`, `?`), messages area (echo, 3 s expiry).
-- ACCEPT: PREVIEW walkthrough; mode flag flips with i/V/:.
-
-### P7.5 Main loop + cursors
-- goal: `App::run` polls stdin + wake fd, drains events, runs the reducer,
-  renders dirty state; logical cursor placed via wmove; scrolloff honored.
-- ACCEPT: typing session via headless feeder + manual demo.
-- depends: P7.2-P7.4, P5.6.
-
-### P7.6 View edge cases
-- goal: empty buffer (`~` lanes), lines longer than screen (horizontal scroll
-  correct with tabs/wide chars), lines ending exactly at the right edge,
-  last-line-half-visible viewport math.
-- ACCEPT: unit tests over TextView↔screen mapping; visual check.
-- depends: P7.2.
-
-### P7.7 Single-window layout fill
-- goal: one window + 1-row statusline + 1-row cmdline; tab bar reserved as a
-  1-row placeholder (rendered in P8).
-- ACCEPT: PREVIEW §P7 visual.
-
-### P7.8 Messages ring + :messages
-- goal: `Messages` ring + statusbar echo + `:messages` opens a scratch buffer
-  (vim-like; scratch buffers are unmodifiable, listed in :ls).
-- ACCEPT: demo (echo appears; `:messages` shows history).
-
-### P7.9 PHASE CHECK — demo run
-- goal: user demo per PREVIEW §P7; sanitizer run of the real app (`noni file.txt`).
-- depends: all P7.
+### P7.9 PHASE CHECK
+- goal: ex e2e suite: parse→apply for every table row; message texts asserted;
+  live demo per PREVIEW §P7.
 
 ## P8 — Windows + tabs
 
@@ -521,7 +547,7 @@ Files: `core/layout.hpp/.cpp` (model), reducer + ui glue.
   sizes; close collapses; `:new` (horizontal split, empty buffer).
 - api: `Layout::split(WindowId, Dir); close(WindowId); equalize();`
 - ACCEPT: model tests (sizes sum to 100%, min clamp, 2-pane collapse).
-- depends: P6.3.
+- depends: P7.3. (:ls/:bd rows)
 
 ### P8.2 ctrl+w prefix keys
 - goal: h/j/k/l/w focus, `c` close, `o` only, `=` equalize, `+`/`-`/`<`/`>`
@@ -541,7 +567,7 @@ Files: `core/layout.hpp/.cpp` (model), reducer + ui glue.
 ### P8.5 :sp :vs :new :only — ex hookup + focus routing
 - goal: ex table rows call Layout; focus follows the newly created window
   (vim rule).
-- depends: P8.1, P6.
+- depends: P8.1, P7.
 - ACCEPT: ex tests.
 
 ### P8.6 :b switching updates the ACTIVE window only
@@ -563,10 +589,10 @@ Files: `core/layout.hpp/.cpp` (model), reducer + ui glue.
 - goal: typed pattern → P1.7 search (regex per Query settings), highlight all
   matches, cursor to first, direction persists for n/N.
 - ACCEPT: PREVIEW script; no-match message; cursor position kept when nothing found.
-- depends: P6.7, P5.5.
+- depends: P7.7 (highlight model), P6.3 (prompt).
 
 ### P9.2 n N + last-search state
-- goal: counts on n/N; `;`/`,` (P2.4) keep their own last-find state; wrap-around
+- goal: counts on n/N; `;`/`,` (P3.3) keep their own last-find state; wrap-around
   message shown once per wrap.
 - ACCEPT: wrap test (differential).
 
@@ -580,7 +606,7 @@ Files: `core/layout.hpp/.cpp` (model), reducer + ui glue.
 - ACCEPT: demo.
 
 ### P9.5 :s/// confirm UI
-- goal: wire P6.6 to the interactive `c` chooser (`y naql` in cmdline); Visual
+- goal: wire P7.6 to the interactive `c` chooser (`y naql` in cmdline); Visual
   mode `:s` pre-fills `'<,'>`.
 - ACCEPT: demo; `a`/`q` abort semantics.
 
@@ -600,7 +626,7 @@ Files: `core/layout.hpp/.cpp` (model), reducer + ui glue.
   re-scan on request.
 - files: `app/jobs.*`.
 - ACCEPT: fake-tree fixture: correct list incl. ignore rules honored.
-- depends: P5.6.
+- depends: P6.4.
 
 ### P10.2 Generic list popup UI
 - goal: centered popup (list, filter-as-you-type, arrows/ctrl+j/k, Enter, Esc);
@@ -720,7 +746,7 @@ owns pipes) per ARCHITECTURE §5 rules; config placeholders parsed in P11.3.
 - goal: spawn from `lsp.servers[].command`; worker loop reads stdout → decode →
   post `LspReply/LspDiag`; mailbox accepts sends (never blocking main).
 - ACCEPT: fake server script (python) request/response test.
-- depends: P13.1, P5.6.
+- depends: P13.1, P6.4.
 
 ### P13.3 Session lifecycle
 - goal: per-BufferId doc state; initialize (roots via config rootMarkers);
@@ -762,7 +788,7 @@ owns pipes) per ARCHITECTURE §5 rules; config placeholders parsed in P11.3.
 - goal: `:Format` (+ optional format-on-save, default OFF); async apply in one
   undo group; conflict check against disk changes.
 - ACCEPT: fake server; rapid saves never freeze (latency test).
-- depends: P13.2 (pipes worker), P5.6 (job pool); all I/O async.
+- depends: P13.2 (pipes worker), P6.4 (job pool); all I/O async.
 
 ### P13.11 PHASE CHECK
 - goal: real clangd demo (PREVIEW §P13) + sanitizer run.
@@ -780,7 +806,7 @@ is never touched from that thread.
   resize propagation (SIGWINCH → TIOCSWINSZ); scrollback cap (5000 lines,
   configurable); child exit → `TermExit`.
 - ACCEPT: echo test with a fake program; cap enforced; exit detected.
-- depends: P5.6 (jobs/events), P7.5 (main loop wake).
+- depends: P6.4 (jobs/events), P2.5 (main loop wake).
 
 ### P14.2 VT grid parser (subset)
 - goal: grid of cells (codepoint + style); parse subset — CSI cursor moves, SGR
@@ -804,7 +830,7 @@ is never touched from that thread.
   paste forwarded); `Esc` opens copy mode over scrollback: `k/j/ctrl+b/ctrl+f`
   navigate, `y` copies selection into `+` (OSC52), `q`/`Esc` leaves.
 - ACCEPT: key routing table tests (DECCKM on/off) + PREVIEW demo.
-- depends: P14.3, P7.1 (Key reader), P14.6.
+- depends: P14.3, P2.1 (Key reader), P14.6.
 
 ### P14.5 :!cmd — async shell jobs
 - goal: `:!cmd` (and `:!cmd %` with `%`→current file expansion) runs as a pooled
@@ -817,7 +843,7 @@ is never touched from that thread.
 - ACCEPT: tests: fast command output complete; `%` expansion; timeout kill
   fixture (`:!sleep 60` killed at 30 s, UI never frozen); nonzero exit → message.
 - edges: huge output → chunked arrival; binary output sanitized.
-- depends: P5.6 (jobs), P7.8 (scratch buffers).
+- depends: P6.4 (jobs), P7.8 (scratch buffers).
 
 ### P14.6 OSC52 clipboard write (async, "+ / * registers)
 - goal: writing the `+` (or `*`, aliased) register schedules an OSC52 escape

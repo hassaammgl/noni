@@ -71,10 +71,10 @@ range only). Background work = file scan + grep (job pool) + terminal PTY worker
 
 ### Differential testing vs Neovim (editing-semantics oracle)
 
-- For EVERY motion / operator / text-object task (P2, P3, P4 and their polish
-  tasks P15 — J/gJ, visual u/U): add differential tests whose expected values are
-  recorded from a real `nvim --headless -u NONE` run (read-only reference). Never
-  copy Neovim source code — observe behavior only.
+- For EVERY motion / operator / text-object task (P2.7 basics; P3/P4/P5; and
+  their polish tasks P15 — J/gJ, visual u/U): add differential tests whose
+  expected values are recorded from a real `nvim --headless -u NONE` run
+  (read-only reference). Never copy Neovim source code — observe behavior only.
 - When observed behavior and our result differ: **Neovim is right**. Match its
   behavior; document any deliberate deviation (rare, e.g. no `:help` docs) in the
   task notes.
@@ -102,7 +102,7 @@ range only). Background work = file scan + grep (job pool) + terminal PTY worker
 
 - `ctest` is the only permitted merge gate; a phase is done when its "phase
   check" task passes and the PREVIEW script was demoed to the user.
-- Commit message: `P<phase>.<task>: <short title>` (e.g. `P2.4: motions f/F/t/T/;/,`).
+- Commit message: `P<phase>.<task>: <short title>` (e.g. `P3.3: motions f/F/t/T/;/,`).
 - If a task turns out bigger than ~100 lines, split it and add task IDs to
   ROADMAP.md (noted in the commit body). Renumbering phases requires scope
   change approval from the user (as done 2026-10-23).

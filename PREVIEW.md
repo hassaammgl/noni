@@ -1,9 +1,9 @@
 # PREVIEW.md — what you will see at the end of every phase
 
 Read your phase's section **before** saying GO for that phase. Pre-render phases
-(P0–P6) have **no screen yet** — honesty first: your "demo" there is ctest output
-and a scripted vim session, not pixels. From P7 onward you get a real editor and
-each section shows its screen.
+(P0–P1) have **no screen yet** — your "demo" there is ctest output, not pixels.
+From **P2 onward you get a real editor**: each phase lands its features LIVE in
+the running app, and each section shows the screen.
 
 Scope note (revised 2026-10-23, v2): git is gone from every mockup (no signs, no
 branch, no `:Gst`). Everything else stays: terminal pane (P14), explorer, LSP
@@ -12,11 +12,11 @@ diagnostics (P13), `:!`, OSC52 clipboard, sessions.
 ## Universal build commands
 
 ```
-cmake -B build -DCMAKE_BUILD_TYPE=Debug     # once; then only on CMake changes
-cmake --build build                         # after each task
-ctest --test-dir build --output-on-failure  # unit tests
-ASAN_OPTIONS=detect_leaks=1 ./build/noni    # sanitizer run (P7 onward)
-./build/noni [file]                         # app binary (P7 onward)
+make test                                   # root wrapper: configure+build+ctest
+make run ARGS=[file]                        # root wrapper: build + run the editor
+./build/tests/noni_tests                    # tests binary directly (ASan build)
+ASAN_OPTIONS=detect_leaks=1 ./new/build/noni   # sanitizer run (P2 onward)
+cmake -S new -B new/build -DCMAKE_BUILD_TYPE=Debug  # if you want raw cmake
 ```
 
 ---
@@ -33,13 +33,13 @@ $ cmake -B build -DCMAKE_BUILD_TYPE=Debug
 $ ctest --test-dir build
 1/1 Test #1: smoke …***Passed
 $ ./build/noni --version
-noni v2 (CMake skeleton) — UI arrives in P7
+noni v0.1.0 (CMake skeleton)
 ```
 
 Try:
 1. `./build/noni --version` → prints version line, exit 0.
-2. `./build/noni` (no args) → info line "editor UI arrives in P7", exit 0
-   (real editor launch waits for P7).
+2. `./build/noni` (no args) → info line "editor UI arrives in P2", exit 0
+   (real editor launch waits for P2).
 3. Deliberate break check: temporarily add `#include <ncurses.h>` into a
    `src/core/` header → build FAILS (layer check works) → revert.
 4. `ctest --test-dir build` → smoke test Passed.
@@ -62,61 +62,9 @@ Try:
 2. `ctest -R undo` → undo/redo suites green (interleaving, cap 200, redo-branch cut).
 3. Look at `new/tests/` — every ACCEPT bullet in ROADMAP P1 is a named test there.
 
-Not working yet: no keys, no screen, motions/operators unimplemented.
+Not working yet: no screen and no keys yet — P2 puts the editor on the glass.
 
-## P2 — Motions
-
-**You will see**: `ctest -R P2` with ≈120 named cases, including the
-`nvim --headless` differential cases (recorded expected positions, see AGENTS.md).
-
-Try:
-1. `ctest -R motion` — green; tests named like `motion.fX.count2`.
-2. Grep the tests: `grep -n '3w' new/tests/motion_test.cpp` → count-based cases.
-3. `ctest -R view` (P2.7) — page/scroll + scrolloff math.
-
-Not working yet: nothing applies motions to a screen; operators not yet wired.
-
-## P3 — Operators + text objects / P4 — Registers, macros
-
-Try:
-1. `ctest -R operator` — op×motion×count matrix tests pass.
-2. `ctest -R textobj` — `iw aw ip ap i" a( i{` objects (nvim differential).
-3. `ctest -R register` — numbered/named/blackhole register semantics.
-4. `ctest -R macro` — record/replay, recursion guard.
-5. `ctest -R dot` — `.` repeat matrix.
-
-Not working yet: still invisible (pure library). P5 makes it alive.
-
-## P5 — Modes + reducer (headless vim)
-
-**You will see**: scripted-session tests:
-```
-$ ctest --test-dir build -R P5 --output-on-failure
-[doctest] sessions/insert_test: "iHello world<Esc>dd.u" → text+cursor restored ✓
-[doctest] sessions/visual_test: V >> 3 lines → indent shifted once ✓
-```
-
-Try:
-1. `ctest -R reducer` — single reducer tests.
-2. `ctest -R keys` — the PREVIEW key scripts (below) replayed as state assertions.
-3. Inspect `new/tests/sessions/` — each script = exact key strings like
-   `"iHello world<Esc>dd.u"`.
-
-Not working yet: no screen; `/`, `?` behaviors wait for P9.
-
-## P6 — Ex commands
-
-Try:
-1. `ctest -R ex` — parser table + command tests.
-2. `ctest -R ex_s` — `:s///` substitutions incl. the `c` flag chooser.
-3. `ctest -R session` — scripted sessions now include `:w` into a tmpdir fixture,
-   `:q` flows, unsaved-confirm path.
-
-Not working yet: no ncurses. After P6 the whole *brain* exists; P7 gives it eyes.
-
----
-
-## P7 — Renderer — FIRST SCREEN
+## P2 — FIRST SCREEN — minimal editor
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -132,21 +80,106 @@ Not working yet: no ncurses. After P6 the whole *brain* exists; P7 gives it eyes
 └──────────────────────────────────────────────────────────────┘
 ```
 
-Build/run: `cmake --build build && ./build/noni main.cpp`
+Run: `./new/build/noni main.cpp` (or root `make run ARGS=main.cpp`)
 
-Try (the P7 script):
-1. `./build/noni main.cpp` → file shown, cursor at line 1 col 1.
-2. `5G` → cursor to line 5; gutter highlights the current line.
-3. `j` `k` `0` `$` `w` `b` → move; `5j` drops five lines.
-4. `i` → statusline shows `-- INSERT --`; type `hello`; `<Esc>`.
-5. `u` → text gone; `ctrl+r` → back again.
-6. `:q!` → exits without saving.
-7. `ctrl+d` / `ctrl+u` / `ctrl+f` / `ctrl+b` → page scrolling; `zz` centers.
-8. `:set relativenumber` → gutter flips to relative numbers (working HERE; P11
-   only adds the config FILE).
+Try (the P2 script):
+1. `./new/build/noni main.cpp` → file shown, cursor at line 1 col 1.
+2. `h/j/k/l` → cursor moves; `3k` jumps three lines.
+3. `0` / `$` → line start/end.
+4. `i` → statusline `-- INSERT --`; type text; `<Enter>` copies the previous
+   indent; Backspace; `<Esc>` exits.
+5. `x` → delete char; `A` → append at end of line.
+6. `u` → undo; `ctrl+r` → redo.
+7. Resize the terminal → editor reflows (resize edge case).
+8. Open a long file: scrolling past the bottom keeps the cursor visible
+   (minimal follow; the full page keys land in P3).
 
-Not working yet: windows/splits/tabs, search UI, explorer, syntax colors (plain
-text), config file, `:!`, clipboard, sessions. (P2–P6 semantics ARE wired.)
+Not working yet: `w/b/e/f/t/%/G` wait for P3; operators P4; registers P5; save
+(`:w`) and prompts P6/P7. The build is sanitized (ASan on in Debug).
+
+## P3 — Motions (live on screen)
+
+Every motion in this phase is instantly usable in the editor; the same key
+sequences run as differential test cases against the `nvim --headless -u NONE`
+oracle (see AGENTS.md).
+
+Try (the P3 script):
+1. `w` `w` `w` → word hopping; `W` → WORD hopping; `b` back; `e` word end.
+2. `f(` → next `(`; `t)` → just before the next `)`; `;` / `,` repeat.
+3. `gg` / `G` / `123G` → file start / file end / line 123.
+4. `{` / `}` → paragraph hops.
+5. `ctrl+d`/`ctrl+u`/`ctrl+f`/`ctrl+b` → page scrolling; `zz` recenter;
+   `H M L` → top/middle/low of the view.
+6. `%` on a bracket → jump to the matching bracket.
+7. Move `j/k` from a long line through short ones → the column is preserved
+   (preferred_col).
+
+Not working yet: operators (`d/c/y`) P4; registers P5; visual modes P6.
+
+## P4 — Operators + text objects
+
+1. `dw` → delete a word (to register); cursor to range start; `u` reverses it.
+2. `d3w`, `2d3w` → counts compose on the live screen.
+3. `cc` → clear line keeping indent; `cw` → correct word-boundary behavior.
+4. `daw` / `ciw` / `ci(` → text objects; `da(` works across lines.
+5. `3>>` / `<k` → shift lines; `gUiw` / `guw` / `g~~` → case ops live.
+6. `=i{` inside a function → indent normalized (heuristic).
+7. `yiw` + `p` → yank/paste basics (full register model P5).
+
+Not working yet: registers/named regs are minimal (`"` unnamed) until P5;
+visual-selection ops wait for P6.
+
+## P5 — Registers, marks, dot, macros
+
+1. `dd` then `p` → unnamed register; `"1p`/`"0p` → numbered history.
+2. `"ayiw` then `"ap` → named register; `A`-append variant.
+3. `mx`, `'x`, `` `x `` → set and jump to marks.
+4. `ctrl+o` / `ctrl+i` → jump list round-trips.
+5. `dw…dw…dw….` → dot repeat replays the last edit.
+6. `qa…edits…q` then `3@a` → macro replay; `@@` last macro.
+7. `git` the buffers: registers survive across operations as vim-model tests assert.
+
+Not working yet: `+`/`*` register write-through OSC52 lands in P13/P14; visual
+modes P6.
+
+## P6 — Modes completion + prompt machinery
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│ main.cpp [+] -- VISUAL LINE --                    9,1   Top  │
+│ > 9   selected line (whole lines highlighted)                │
+│ > 10  second selected line                                   │
+└──────────────────────────────────────────────────────────────┘
+```
+
+Try (the P6 script):
+1. `V` j j `>` → visual-line selection follows motion keys; indent block once.
+2. `o` swaps selection ends; `d` deletes the selection; `y` yanks it.
+3. `o`/`O` in Insert mode → open below/above with indent.
+4. `ctrl+w` / `ctrl+u` in Insert mode → word/line erase back.
+5. `:` on the cmdline row → prompt appears; type a line, `<Esc>` (parse comes P7);
+   history arrows cycle after first use.
+6. `/pat` → `SearchRun` emitted; actual match highlighting lands in P9.
+
+Not working yet: `:` doesn't parse execute anything until P7; search
+highlighting P9.
+
+## P7 — Ex commands
+
+Try:
+1. `ctest -R ex` — parser table + command tests.
+2. `:w` → FILE SAVED (statusline `[+]` disappears); `:e!` reloads from disk.
+3. `:w other.cpp` → save-as retargets the buffer filename.
+4. `:ls` → buffer list printed in the message area; `:2b` switches buffers.
+5. `:3` / `:$` → goto line/EOF.
+6. `:set relativenumber` → gutter flips LIVE (config FILE is still P11).
+7. `:s/old/new/g` → substitute with counts in the message row.
+8. `:messages` → history in a scratch buffer (dropdown for `:!out` in P14.5).
+9. `:q` on modified text → confirm prompt; `:q!` bypasses.
+
+Not working yet: windows/splits (P8), search UI (P9), picker/explorer (P10).
+
+---
 
 ## P8 — Windows + tabs
 
