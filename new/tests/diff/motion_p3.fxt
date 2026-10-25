@@ -1,0 +1,35 @@
+fixture: name keys startLine,startCol endLine,endCol | init @ final
+w_mid_word_class_switch w 1,2 1,4 | foo.bar baz @ foo.bar baz
+w_from_punct_to_next w 1,4 1,5 | foo.bar baz @ foo.bar baz
+w_from_blank_midline w 1,5 1,9 | foo.bar baz @ foo.bar baz
+w_from_word_start w 1,1 1,4 | foo.bar baz @ foo.bar baz
+w_last_word_of_line_to_next_line w 1,5 1,7 | foo.bar @ foo.bar
+W_skips_over_punct_run W 1,1 1,9 | foo.bar baz @ foo.bar baz
+W_from_blank W 1,5 1,9 | foo.bar baz @ foo.bar baz
+w_underscore_digit_keyword w 1,1 1,5 | x_1 foo @ x_1 foo
+w_to_punct_after_keyword w 1,3 1,4 | abc)def @ abc)def
+W_no_split_inside_word W 1,1 1,5 | a...b @ a...b
+w_indent_then_next_line w 1,3 2,1 |  indented|next @  indented|next
+w_end_of_line_skip w 1,5 2,1 | abc def|xyz @ abc def|xyz
+w_stops_on_empty_line w 1,1 2,1 | ab||cd @ ab||cd
+w_double_through_empties ww 1,1 3,1 | ab|||cd @ ab|||cd
+w_trailing_blank_stops ww 1,1 2,1 | foo| @ foo|
+w_from_empty_line w 2,1 3,1 | ab||cd @ ab||cd
+W_also_stops_on_empty w 1,2 2,1 | ab||cd @ ab||cd
+w_count3 3w 1,1 1,7 | a b c d e f @ a b c d e f
+W_count2 2W 1,1 1,9 | aaa bbb ccc ddd @ aaa bbb ccc ddd
+w_on_last_word_of_file w 1,5 1,7 | abc def @ abc def
+w_overflow_count 5w 1,1 1,3 | a b @ a b
+w_on_last_char_of_file w 1,1 1,1 | x @ x
+W_last_word_of_file W 1,4 1,5 | aa bb @ aa bb
+w_from_blank_end ww 1,1 2,1 | x|  @ x| 
+w_across_leading_indent w 1,2 2,4 | ab|   x @ ab|   x
+w_blank_line_transit w 1,2 3,1 | ab|   |cd @ ab|   |cd
+w_blank_line_transit_2 ww 1,2 3,2 | ab|   |cd @ ab|   |cd
+W_across_leading_indent W 1,2 2,4 | ab|   x @ ab|   x
+W_stops_on_empty W 1,2 2,1 | ab||cd @ ab||cd
+w_from_blankonly_line w 2,1 3,1 | x|  |y @ x|  |y
+w_lastline_tail_blank ww 1,1 2,2 | x|   @ x|  
+w_trailing_empty_only w 2,1 2,1 | x| @ x|
+w_single_to_blank_last w 1,1 2,2 | x|   @ x|  
+w_count_over_blank_transit 2w 1,1 3,2 | ab|  |cd @ ab|  |cd

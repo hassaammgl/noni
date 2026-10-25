@@ -20,6 +20,8 @@ enum class MotionId : std::uint8_t {
     Dollar, // line end (last char); with count N: end of line (N-1) below,
             // clamped to the last line — but it REJECTS when the start is
             // already the last line (oracle probes n2..n8)
+    Word,   // 'w'  start of next word (word/WORD class runs, P3.1)
+    WordUpper, // 'W' start of next WORD (blank-vs-nonblank runs, P3.1)
 };
 
 // What a motion sees: the line vector + tab expansion width (w/b/e etc in

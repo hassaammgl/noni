@@ -141,6 +141,8 @@ Command command_for_key(const EditorState& st, const Key& k) {
             case U'j': c.kind = Kind::Motion; c.motion = MotionId::J; break;
             case U'k': c.kind = Kind::Motion; c.motion = MotionId::K; break;
             case U'$': c.kind = Kind::Motion; c.motion = MotionId::Dollar; break;
+            case U'w': c.kind = Kind::Motion; c.motion = MotionId::Word; break;
+            case U'W': c.kind = Kind::Motion; c.motion = MotionId::WordUpper; break;
             default: break;
             }
             break;

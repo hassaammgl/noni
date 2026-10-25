@@ -99,11 +99,11 @@ std::vector<Key> decode_keys(const std::string& s) {
     return keys;
 }
 
-std::optional<std::string> find_fixture() {
-    // ctest runs from the build dir; the fixture lives in the source tree.
-    const std::string candidates[] = {"../tests/diff/motion_p2.fxt",
-                                      "tests/diff/motion_p2.fxt",
-                                      "../../tests/diff/motion_p2.fxt"};
+std::optional<std::string> find_fixture(const std::string& name) {
+    // ctest runs from the build dir; fixtures live in the source tree.
+    const std::string candidates[] = {"../tests/diff/" + name,
+                                      "tests/diff/" + name,
+                                      "../../tests/diff/" + name};
     for (const std::string& cand : candidates) {
         std::ifstream probe(cand);
         if (probe.good()) {
@@ -120,8 +120,8 @@ void key(EditorState& st, const Key& k) {
 
 } // namespace
 
-TEST_CASE("motion: differential replay of the nvim oracle fixture") {
-    const auto path = find_fixture();
+TEST_CASE("motion: differential replay of the P2 nvim oracle fixture") {
+    const auto path = find_fixture("motion_p2.fxt");
     REQUIRE_MESSAGE(path.has_value(),
                     "tests/diff/motion_p2.fxt not found (build dir relative)");
     std::ifstream in(*path);
@@ -143,6 +143,39 @@ TEST_CASE("motion: differential replay of the nvim oracle fixture") {
         st.win().cursor = c.start;
         // Vim starts every player-visible cursor position with
         // curswant == col; our fixture replay honours that invariant.
+        st.win().desired_col = c.start.col;
+        st.mode = Mode::Normal;
+
+        for (const Key& k : decode_keys(c.keys)) {
+            key(st, k);
+        }
+
+        CHECK(st.win().cursor == c.want);
+        CHECK(st.buffers[0].lines() == c.final_lines);
+    }
+}
+
+TEST_CASE("motion: differential replay of the P3 word-motion fixture") {
+    const auto path = find_fixture("motion_p3.fxt");
+    REQUIRE_MESSAGE(path.has_value(),
+                    "tests/diff/motion_p3.fxt not found (build dir relative)");
+    std::ifstream in(*path);
+    REQUIRE(in.good());
+
+    std::vector<OracleCase> cases;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (auto c = parse_line(line)) {
+            cases.push_back(*c);
+        }
+    }
+    REQUIRE_MESSAGE(cases.size() >= 30, "fixture parsed too few oracle cases");
+
+    for (const OracleCase& c : cases) {
+        INFO("oracle case: ", c.name, "  keys: ", c.keys);
+        EditorState st;
+        st.buffers[0].set_lines(c.lines);
+        st.win().cursor = c.start;
         st.win().desired_col = c.start.col;
         st.mode = Mode::Normal;
 
