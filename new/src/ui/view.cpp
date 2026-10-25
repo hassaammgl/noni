@@ -166,7 +166,7 @@ void add_wstr_at(WINDOW* win, int row, int col, const std::wstring& text) {
 
 } // namespace
 
-void draw_buffer_view(Screen& screen, EditorState& st, const ViewArea& area) {
+void draw_buffer_view(Screen& screen, const EditorState& st, const ViewArea& area) {
     WINDOW* win = screen.win();
     const WindowState& w = st.win();
     const Buffer* b = st.buffer(w.buffer);

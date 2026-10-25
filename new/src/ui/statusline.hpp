@@ -12,6 +12,6 @@
 namespace noni::ui {
 
 // Full-frame render of the single-window layout (clears first).
-void draw_layout(Screen& screen, EditorState& st);
+void draw_layout(Screen& screen, const EditorState& st);
 
 } // namespace noni::ui

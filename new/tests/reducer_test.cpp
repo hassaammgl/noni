@@ -209,3 +209,65 @@ TEST_CASE("reducer: insert run merges into one undo unit") {
     key(st, Key{KeyKind::CtrlChar, U'r'});
     CHECK(st.buffers[0].lines() == std::vector<std::string>{"abc"});
 }
+
+TEST_CASE("reducer: follow_cursor keeps the cursor line visible") {
+    SUBCASE("cursor below the viewport scrolls down") {
+        EditorState st;
+        std::vector<std::string> many;
+        for (int i = 0; i < 30; ++i) {
+            many.push_back(std::to_string(i));
+        }
+        st.buffers[0].set_lines(std::move(many));
+        st.win().cursor = Pos{9, 0};
+        app::follow_cursor(st, 4); // visible rows 0..3
+        CHECK(st.win().top_line == 6);
+    }
+    SUBCASE("cursor above the top scrolls up") {
+        EditorState st;
+        st.win().top_line = 5;
+        st.win().cursor = Pos{2, 0};
+        app::follow_cursor(st, 10);
+        CHECK(st.win().top_line == 2);
+    }
+    SUBCASE("cursor at bottom edge scrolls by rows-1") {
+        EditorState st;
+        st.win().top_line = 0;
+        st.win().cursor = Pos{7, 0};
+        app::follow_cursor(st, 4); // visible rows 0..3; 7 outside
+        CHECK(st.win().top_line == 4); // 7 - (4-1)
+    }
+    SUBCASE("cursor on the last visible row does not scroll") {
+        EditorState st;
+        st.win().top_line = 2;
+        st.win().cursor = Pos{5, 0};
+        app::follow_cursor(st, 4); // last row = 2+4-1 = 5
+        CHECK(st.win().top_line == 2);
+    }
+    SUBCASE("cursor inside stays untouched") {
+        EditorState st;
+        st.win().top_line = 3;
+        st.win().cursor = Pos{4, 0};
+        app::follow_cursor(st, 4);
+        CHECK(st.win().top_line == 3);
+    }
+    SUBCASE("zero/negative view height no-ops") {
+        EditorState st;
+        st.win().top_line = 0;
+        st.win().cursor = Pos{9, 0};
+        app::follow_cursor(st, 0);
+        CHECK(st.win().top_line == 0);
+    }
+    SUBCASE("resize_clamp re-enters the buffer grid") {
+        std::vector<std::string> many;
+        for (int i = 0; i < 30; ++i) {
+            many.push_back(std::to_string(i));
+        }
+        EditorState st;
+        st.buffers[0].set_lines(std::move(many));
+        st.win().top_line = 20;
+        st.win().cursor = Pos{100, 99}; // out of the buffer
+        app::resize_clamp(st, 5);
+        CHECK(st.win().cursor == Pos{29, 2}); // "29" -> len 2; col clamp
+        CHECK(st.win().top_line == 25);       // 29 - (5-1)
+    }
+}

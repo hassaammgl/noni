@@ -67,6 +67,6 @@ struct ViewArea {
 // Draws the ACTIVE window's buffer into `area`: gutter numbers, content
 // with horizontal scroll (w.left_col), '~' past EOF, and the cursor line
 // highlighted. Terminal cursor is NOT positioned here (P2.5 follows it).
-void draw_buffer_view(Screen& screen, EditorState& st, const ViewArea& area);
+void draw_buffer_view(Screen& screen, const EditorState& st, const ViewArea& area);
 
 } // namespace noni::ui

@@ -9,9 +9,8 @@
 
 namespace noni::app {
 
-namespace {
-
-// Clamps the active window cursor onto the buffer's grid.
+// Clamps the active window cursor onto the buffer's grid (exported in the
+// header: App and the resize path reuse it).
 void clamp_cursor(EditorState& st) {
     WindowState& w = st.win();
     Buffer* b = st.buffer(w.buffer);
@@ -24,6 +23,8 @@ void clamp_cursor(EditorState& st) {
     const std::uint32_t len = line_len_cp(lines[w.cursor.line]);
     w.cursor.col = std::min(w.cursor.col, len);
 }
+
+namespace {
 
 // Runs one grouped edit (the ONLY grouping entry: Buffer::with_edit) and
 // moves the cursor to the position the primitive returned.
@@ -207,6 +208,31 @@ void reducer(EditorState& st, const Command& cmd) {
         });
         return;
     }
+}
+
+void follow_cursor(EditorState& st, int view_rows) {
+    if (view_rows <= 0) {
+        return;
+    }
+    WindowState& w = st.win();
+    // Minimal follow (P3.6 = full scroll set: scrolloff/zz/keep-hscroll).
+    // v0 scrolloff is 0 (vim default).
+    const std::uint32_t top_before = w.top_line;
+    if (w.cursor.line < w.top_line) {
+        w.top_line = w.cursor.line;
+    }
+    if (w.cursor.line >= w.top_line + static_cast<std::uint32_t>(view_rows)) {
+        w.top_line = w.cursor.line - (static_cast<std::uint32_t>(view_rows)
+                                          - 1);
+    }
+    if (w.top_line != top_before) {
+        st.mark_dirty();
+    }
+}
+
+void resize_clamp(EditorState& st, int view_rows) {
+    clamp_cursor(st);
+    follow_cursor(st, view_rows);
 }
 
 } // namespace noni::app

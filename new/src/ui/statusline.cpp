@@ -48,7 +48,7 @@ std::wstring file_label(const EditorState& st) {
 
 } // namespace
 
-void draw_layout(Screen& screen, EditorState& st) {
+void draw_layout(Screen& screen, const EditorState& st) {
     WINDOW* win = screen.win();
     const int rows = screen.rows();
     const int cols = screen.cols();
