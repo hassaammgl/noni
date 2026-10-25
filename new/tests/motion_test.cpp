@@ -227,7 +227,73 @@ TEST_CASE("motion: find motions fail through eresult (P3.3)") {
         CHECK(r->line == 0);
         CHECK(r->col == 2);
     }
+    // '^': first non-blank; blank-only line rests on the LAST char;
+    // count is ignored (P3.4).
+    {
+        const std::vector<std::string> ls{"  hello", "   ", ""};
+        Motion m{MotionId::FirstNonblank};
+        const auto r = m.apply({&ls, k_default_tabwidth}, Pos{0, 4}, 1, 0);
+        REQUIRE(r.has_value());
+        CHECK(r->line == 0);
+        CHECK(r->col == 2);
+        const auto rb = m.apply({&ls, k_default_tabwidth}, Pos{1, 1}, 9, 0);
+        REQUIRE(rb.has_value());
+        CHECK(rb->line == 1);
+        CHECK(rb->col == 2);
+        const auto re = m.apply({&ls, k_default_tabwidth}, Pos{2, 0}, 1, 0);
+        REQUIRE(re.has_value());
+        CHECK(re->col == 0);
+    }
+    // gg/G: col carried (vertical semantics); counts clamp (P3.4).
+    {
+        const std::vector<std::string> ls{"one", "two", "  three"};
+        Motion g{MotionId::GotoLast};
+        const auto r1 = g.apply({&ls, k_default_tabwidth}, Pos{0, 1}, 1, 1);
+        REQUIRE(r1.has_value());
+        CHECK(r1->line == 2);
+        CHECK(r1->col == 1);
+        Motion gg{MotionId::GotoFirst};
+        // 12gg on a 3-line file clamps to the LAST line, keeping the col.
+        const auto r2 = gg.apply({&ls, k_default_tabwidth}, Pos{2, 1}, 12, 1);
+        REQUIRE(r2.has_value());
+        CHECK(r2->line == 2);
+        CHECK(r2->col == 1);
+    }
 }
+
+TEST_CASE("motion: differential replay of the P3.4 caret/gg/G fixture") {
+    const auto path = find_fixture("motion_p3d.fxt");
+    REQUIRE_MESSAGE(path.has_value(),
+                    "tests/diff/motion_p3d.fxt not found (build dir relative)");
+    std::ifstream in(*path);
+    REQUIRE(in.good());
+
+    std::vector<OracleCase> cases;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (auto c = parse_line(line)) {
+            cases.push_back(*c);
+        }
+    }
+    REQUIRE_MESSAGE(cases.size() >= 28, "fixture parsed too few oracle cases");
+
+    for (const OracleCase& c : cases) {
+        INFO("oracle case: ", c.name, "  keys: ", c.keys);
+        EditorState st;
+        st.buffers[0].set_lines(c.lines);
+        st.win().cursor = c.start;
+        st.win().desired_col = c.start.col;
+        st.mode = Mode::Normal;
+
+        for (const Key& k : decode_keys(c.keys)) {
+            key(st, k);
+        }
+
+        CHECK(st.win().cursor == c.want);
+        CHECK(st.buffers[0].lines() == c.final_lines);
+    }
+}
+
 TEST_CASE("motion: differential replay of the P3.2 b/B/e/E fixture") {
     const auto path = find_fixture("motion_p3b.fxt");
     REQUIRE_MESSAGE(path.has_value(),

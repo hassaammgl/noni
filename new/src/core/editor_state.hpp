@@ -77,6 +77,7 @@ struct WindowState {
     // failed one (oracle: "; after a failed f repeats the failed target).
     FindState last_find{};
     FindKind find_pending = FindKind::None; // waiting for the {char} second key
+    bool gg_pending = false; // 'g' armed, waiting for the second 'g' (P3.4)
 };
 
 // --- command model (mode-agnostic; app/reducer translates keys) ---------------
@@ -100,6 +101,8 @@ struct Command {
         FindArm,     // 'f/F/t/T seen: record find_kind, keep count pending
         FindTarget,  // the {char} second key; applies the find motion
         FindCancel,  // aborted pending find (Esc/other non-char)
+        GgArm,       // 'g' seen: wait for the second 'g' (keep count)
+        GgCancel,    // aborted gg sequence
     };
     Kind kind = Kind::None;
     MotionId motion = MotionId::H; // Motion payload

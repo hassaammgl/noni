@@ -43,6 +43,16 @@ TEST_CASE("reducer: mode-aware dispatch table") {
     CHECK(app::command_for_key(st, ch(U'B')).motion == MotionId::WordBackUpper);
     CHECK(app::command_for_key(st, ch(U'e')).motion == MotionId::WordEnd);
     CHECK(app::command_for_key(st, ch(U'E')).motion == MotionId::WordEndUpper);
+    CHECK(app::command_for_key(st, ch(U'^')).motion
+          == MotionId::FirstNonblank);
+    CHECK(app::command_for_key(st, ch(U'G')).motion == MotionId::GotoLast);
+    // P3.4: 'g' arms; the second 'g' completes goto-first-line.
+    CHECK(app::command_for_key(st, ch(U'g')).kind == Command::Kind::GgArm);
+    st.win().gg_pending = true;
+    CHECK(app::command_for_key(st, ch(U'g')).motion == MotionId::GotoFirst);
+    st.win().gg_pending = true;
+    CHECK(app::command_for_key(st, ch(U'j')).kind == Command::Kind::GgCancel);
+    st.win().gg_pending = false; // the reducer normally clears it
     // 'A' enters insert at the append position (at_eol flavor).
     CHECK(app::command_for_key(st, ch(U'A')).at_eol);
     CHECK(!app::command_for_key(st, ch(U'i')).at_eol);

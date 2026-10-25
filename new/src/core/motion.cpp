@@ -394,6 +394,37 @@ eresult<Pos> Motion::apply(const MotionContext& ctx, const Pos from,
     case MotionId::ToBack: {
         return find_step(lines, from, id, arg, count);
     }
+    case MotionId::FirstNonblank: {
+        // '^' — first non-blank of the current line. Oracle decode: count
+        // is IGNORED (caret_count_*: 2^ stays on this line); on a blank-only
+        // line the cursor rests on the LAST char; empty line -> col 0.
+        const std::uint32_t len =
+            static_cast<std::uint32_t>(line_len_cp(lines[from.line]));
+        for (std::uint32_t col = 0; col < len; ++col) {
+            if (!is_blank(cp_at_col(lines[from.line], col))) {
+                return Pos{from.line, col};
+            }
+        }
+        return Pos{from.line, len == 0 ? 0 : len - 1};
+    }
+    case MotionId::GotoFirst:
+    case MotionId::GotoLast: {
+        // gg / G — oracle decode (motion_p3d): the col is CARRIED like a
+        // vertical move (desired: the Gk probe lands "bottom" col 2 and k
+        // recovers it on "  longer") — NOT the first non-blank. gg: line
+        // [count] (default 1); G: line [count], default the LAST line.
+        // Both clamp to the file (never a partial-fail like Dollar).
+        const std::uint64_t last_line = lines.size() - 1;
+        std::uint64_t target = count <= 1 ? 0 : count - 1;
+        if (id == MotionId::GotoLast && count <= 1) {
+            target = last_line;
+        }
+        if (target > last_line) {
+            target = last_line;
+        }
+        return clamp_norm(
+            Pos{static_cast<std::uint32_t>(target), desired});
+    }
     }
     return from;
 }

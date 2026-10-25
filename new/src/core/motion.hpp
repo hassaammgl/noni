@@ -32,6 +32,10 @@ enum class MotionId : std::uint8_t {
     FindBack, // 'F': count-th occurrence LEFT of the col (P3.3)
     ToFwd,    // 't': lands one char BEFORE FindFwd's char (P3.3)
     ToBack,   // 'T': lands one char AFTER FindBack's char (P3.3)
+    FirstNonblank, // '^': first non-blank of the CURRENT line (P3.4).
+                   // Count ignored; blank-only line -> LAST char; empty -> 0.
+    GotoFirst, // 'gg': line [count] from the top, col CARRIED like j/k (P3.4)
+    GotoLast,  // 'G': line [count] or the last one, col carried (P3.4)
 };
 
 // What a motion sees: the line vector + tab expansion width (w/b/e etc in

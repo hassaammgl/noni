@@ -134,6 +134,16 @@ Command command_for_key(const EditorState& st, const Key& k) {
     Command c; // kind None
     switch (st.mode) {
     case Mode::Normal:
+        // P3.4: while gg is armed, only the SECOND 'g' completes it.
+        if (st.win().gg_pending) {
+            if (k.kind == KeyKind::Char && k.cp == U'g') {
+                c.kind = Kind::Motion;
+                c.motion = MotionId::GotoFirst;
+            } else {
+                c.kind = Kind::GgCancel;
+            }
+            break;
+        }
         // P3.3: while a find is pending, the NEXT printable key is the
         // {char} target (digits included — they are not a count here).
         if (st.win().find_pending != FindKind::None) {
@@ -186,6 +196,9 @@ Command command_for_key(const EditorState& st, const Key& k) {
             case U'F': c.kind = Kind::FindArm; c.find_kind = FindKind::Back; break;
             case U't': c.kind = Kind::FindArm; c.find_kind = FindKind::ToFwd; break;
             case U'T': c.kind = Kind::FindArm; c.find_kind = FindKind::ToBack; break;
+            case U'g': c.kind = Kind::GgArm; break;
+            case U'G': c.kind = Kind::Motion; c.motion = MotionId::GotoLast; break;
+            case U'^': c.kind = Kind::Motion; c.motion = MotionId::FirstNonblank; break;
             case U';': case U',': {
                 // Repeat (or reverse-repeat) the remembered find. Empty
                 // last_find: no command at all (oracle: stays put).
@@ -260,12 +273,22 @@ void reducer(EditorState& st, const Command& cmd) {
         return;
     }
     if (cmd.kind != Kind::None && cmd.kind != Kind::FindArm
-        && cmd.kind != Kind::FindCancel) {
+        && cmd.kind != Kind::FindCancel && cmd.kind != Kind::GgArm
+        && cmd.kind != Kind::GgCancel) {
         count = st.count_prefix == 0 ? 1 : st.count_prefix;
         st.count_prefix = 0;
     }
     switch (cmd.kind) {
     case Kind::None:
+        return;
+
+    case Kind::GgArm:
+        st.win().gg_pending = true;
+        return;
+
+    case Kind::GgCancel:
+        st.win().gg_pending = false;
+        st.count_prefix = 0;
         return;
 
     case Kind::FindArm:
@@ -371,11 +394,14 @@ void reducer(EditorState& st, const Command& cmd) {
             st.msg = r.error().msg;
         } else {
             w.cursor = *r;
-            if (cmd.motion != MotionId::J && cmd.motion != MotionId::K) {
+            if (cmd.motion != MotionId::J && cmd.motion != MotionId::K
+                && cmd.motion != MotionId::GotoFirst
+                && cmd.motion != MotionId::GotoLast) {
                 // Vertical moves keep the aim; everything else re-anchors.
                 w.desired_col = w.cursor.col;
             }
         }
+        w.gg_pending = false; // any completed motion closes the armed 'g'
         st.mark_dirty();
         return;
     }

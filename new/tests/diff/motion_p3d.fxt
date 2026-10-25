@@ -1,0 +1,30 @@
+fixture: name keys startLine,startCol endLine,endCol | init @ final
+caret_first_nonblank ^ 1,1 1,3 |   hello @   hello
+caret_on_word_start ^ 1,1 1,1 | hello @ hello
+caret_mid_word ^ 1,4 1,3 |   hello @   hello
+caret_on_blank_mid ^ 1,6 1,4 |    a  b @    a  b
+caret_count_down 2^ 1,3 1,3 |   a|   b|c @   a|   b|c
+caret_on_empty ^ 2,1 2,1 | ab| @ ab|
+caret_blank_only_line ^ 2,1 2,3 | ab|    @ ab|   
+caret_tabs ^ 1,1 1,2 | 	x y @ 	x y
+caret_count_no_down 4^ 1,2 1,1 | ab|cd @ ab|cd
+caret_goes_down_then_back 2^ 1,1 1,3 |   aa| x @   aa| x
+gg_first_line_nonblank gg 1,1 1,1 |   indent|x @   indent|x
+gg_from_mid_somewhere gg 2,1 1,1 |   indent|x @   indent|x
+gg_count3 3gg 1,1 3,1 | a|b|  cc @ a|b|  cc
+gg_count_clamps 9gg 1,1 3,1 | a|b|  cc @ a|b|  cc
+gg_on_empty_first gg 1,1 1,1 | |x @ |x
+gg_to_empty_line 2gg 1,1 2,1 | a||  cc @ a||  cc
+gg_tabs_first gg 1,1 1,1 | 	ind|x @ 	ind|x
+G_last_line_nonblank G 1,1 2,1 | a|b  c @ a|b  c
+G_count3 3G 1,1 3,1 | one|two|  three|four @ one|two|  three|four
+G_count_clamps 12G 1,1 4,1 | one|two|  three|four @ one|two|  three|four
+G_on_empty_last G 1,1 2,1 | a| @ a|
+G_count_empty_line 3G 1,1 3,1 | a|b| @ a|b|
+G_from_mid G 1,2 3,2 | one|two|three @ one|two|three
+G_to_blank_only G 1,1 2,1 | a|    @ a|   
+ggj_col_carry ggj 1,1 2,1 |   aa|  bbb|x @   aa|  bbb|x
+Gj_col_carry Gj 1,1 3,1 | ab|  longer|    third @ ab|  longer|    third
+Gk_col_carry Gk 1,3 2,3 |       top|  longer|bottom @       top|  longer|bottom
+dollar_on_tab_line $ 1,1 1,4 | 	abc|x @ 	abc|x
+dollar_count_on_tab_line 2$ 1,5 2,1 | 	abc|x @ 	abc|x
