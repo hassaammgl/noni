@@ -5,6 +5,8 @@
 #include <print>
 #include <string_view>
 
+#include "app/reducer.hpp"
+#include "core/editor_state.hpp"
 #include "core/version.hpp"
 #include "ui/ui.hpp"
 
@@ -15,24 +17,28 @@ int main(int argc, char** argv) {
             std::println("{}", noni::version());
             return 0;
         }
-        if (arg == "--keys") { // TEMP P2.1 demo harness (ACCEPT: debug key line)
+        if (arg == "--keys") { // TEMP P2.1..P2.4 demo harness (removed at P2.5)
             auto screen = noni::ui::Screen::open();
             if (!screen) {
                 std::println(stderr, "noni: {}", screen.error().msg);
                 return 1;
             }
+            noni::EditorState st;
             noni::ui::KeyReader reader{screen->win()};
             for (;;) {
+                noni::ui::draw_layout(*screen, st);
                 const auto k = reader.next();
                 if (!k) {
                     std::println(stderr, "noni: {}", k.error().msg);
                     return 1;
                 }
-                screen->debug_key(*k);
-                if (*k == noni::Key{noni::KeyKind::CtrlChar, U'c'}
-                    || *k == noni::Key{noni::KeyKind::Char, U'q'}) {
+                screen->debug_key(*k); // TEMP: bottom-row key codes until P2.5
+                if (*k == noni::Key{noni::KeyKind::Char, U'q'}
+                    && st.mode == noni::Mode::Normal) {
                     break; // temporary exits; real :q arrives with P6
                 }
+                noni::app::reducer(st,
+                                   noni::app::command_for_key(st, *k));
             }
             return 0;
         }

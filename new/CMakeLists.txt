@@ -64,7 +64,7 @@ add_library(noni_app STATIC src/app/app.cpp src/app/reducer.cpp)
 target_link_libraries(noni_app PUBLIC noni_core noni_ext noni_terminal noni_syntax noni_lsp)
 
 add_library(noni_ui STATIC src/ui/ui.cpp src/ui/screen.cpp src/ui/input.cpp
-                            src/ui/view.cpp)
+                           src/ui/view.cpp src/ui/statusline.cpp)
 target_link_libraries(noni_ui PUBLIC noni_app)
 if(TARGET PkgConfig::ncursesw)
     # ncurses headers/flags propagate only ui-ward: app/ and below never see them.
