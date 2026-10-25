@@ -10,8 +10,11 @@ namespace noni {
 using BufferId = std::uint32_t;
 using WindowId = std::uint32_t;
 
-inline constexpr BufferId k_no_buffer = 0; // 0 is always invalid
-inline constexpr WindowId k_no_window = 0;
+// Sentinels (P2.2): buffer/window ids are storage indexes starting at 0, so
+// "none" is max-value, not 0. (P0 stub said 0 is invalid; EditorState's first
+// buffer is id 0 — the sentinel moved with the indexes.)
+inline constexpr BufferId k_no_buffer = 0xFFFFFFFF;
+inline constexpr WindowId k_no_window = 0xFFFFFFFF;
 
 // A codepoint position in a buffer: `(line, col)` where `col` is the
 // CODEPOINT index inside that line (0 = first cp). Never a byte offset.

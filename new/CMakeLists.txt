@@ -41,7 +41,8 @@ add_compile_options(${NONI_COMMON})
 
 add_library(noni_core STATIC src/core/version.cpp src/core/text.cpp
                              src/core/buffer.cpp src/core/undo.cpp
-                             src/core/buffer_search.cpp)
+                             src/core/buffer_search.cpp
+                             src/core/editor_state.cpp)
 target_include_directories(noni_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 add_library(noni_ext STATIC src/ext/ext.cpp)
@@ -59,7 +60,7 @@ endif()
 add_library(noni_lsp STATIC src/lsp/lsp.cpp)
 target_link_libraries(noni_lsp PUBLIC noni_core)
 
-add_library(noni_app STATIC src/app/app.cpp)
+add_library(noni_app STATIC src/app/app.cpp src/app/reducer.cpp)
 target_link_libraries(noni_app PUBLIC noni_core noni_ext noni_terminal noni_syntax noni_lsp)
 
 add_library(noni_ui STATIC src/ui/ui.cpp src/ui/screen.cpp src/ui/input.cpp)

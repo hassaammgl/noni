@@ -13,7 +13,8 @@ add_executable(noni_tests
     buffer_test.cpp
     undo_test.cpp
     buffer_search_test.cpp
-    input_test.cpp)
+    input_test.cpp
+    reducer_test.cpp)
 
 target_link_libraries(noni_tests PRIVATE noni_core noni_ext noni_terminal
                                          noni_syntax noni_lsp noni_app noni_ui
@@ -28,3 +29,4 @@ add_test(NAME P1.buffer COMMAND noni_tests -tc=buffer:*)
 add_test(NAME P1.undo COMMAND noni_tests -tc=undo:*)
 add_test(NAME P1.search COMMAND noni_tests -tc=search:*)
 add_test(NAME P2.input COMMAND noni_tests -tc=input:*)
+add_test(NAME P2.reducer COMMAND noni_tests -tc=reducer:*)

@@ -6,6 +6,7 @@
 
 #include "ui/input.hpp"
 
+using namespace noni;
 using namespace noni::ui;
 
 namespace {

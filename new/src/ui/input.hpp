@@ -1,8 +1,9 @@
 #pragma once
-// P2.1 — key model + decoder. The DECODER is pure (no ncurses calls): the live
-// KeyReader feeds it one `get_wch` result at a time, tests feed a recorded
-// stream. This keeps Esc/CSI/bracketed-paste resolution unit-testable without
-// a real terminal (ARCHITECTURE: ui/ owns input, no editing logic here).
+// P2.1/P2.2 — key DECODER + reader. The key model itself lives in
+// core/editor_state.hpp (the app layer dispatches on it); ui decodes terminal
+// bytes into those plain Keys. The DECODER is pure (no ncurses calls): the
+// live KeyReader feeds it one `get_wch` result at a time, tests feed a
+// recorded stream. No editing logic here (ARCHITECTURE).
 //
 // TTY facts encoded below (documented edges):
 // - Ctrl+J is 0x0A, indistinguishable from Enter in a terminal byte stream —
@@ -10,46 +11,19 @@
 // - Ctrl+H (0x08) decodes to CtrlChar 'h' (127/KEY_BACKSPACE are Backspace).
 // - Alt is an ESC PREFIX: Alt+a arrives as Esc then 'a' (two keys) until P6
 //   gives mods meaning.
-// - Bracketed paste: ESC [ 200 ~ ... ESC [ 201 ~ — markers decode to
-//   PasteBegin/PasteEnd, everything between passes through as Char DATA.
+// - Bracketed paste: registered via define_key() so ncurses hands us
+//   dedicated key codes; between the markers everything is Char DATA.
 #include <cstdint>
+#include <functional>
 #include <ncurses.h>
 #include <string>
 #include <utility>
 #include <vector>
 
+#include "core/editor_state.hpp"
 #include "core/pos.hpp"
 
 namespace noni::ui {
-
-enum class KeyKind : std::uint8_t {
-    None, // decoder internal step, nothing to dispatch
-    Char, // any codepoint input (cp); bracketed-paste content arrives as data
-    Esc,
-    Enter,
-    Backspace,
-    Tab,
-    CtrlChar, // cp holds the letter ('a'..'z'); Ctrl+J is Enter, see above
-    ArrowUp,
-    ArrowDown,
-    ArrowLeft,
-    ArrowRight,
-    Home,
-    End,
-    PageUp,
-    PageDown,
-    Delete,
-    Resize,
-    PasteBegin,
-    PasteEnd,
-    Unknown,
-};
-
-struct Key {
-    KeyKind kind = KeyKind::None;
-    char32_t cp = 0; // valid for Char (the codepoint) / CtrlChar (the letter)
-    friend bool operator==(const Key&, const Key&) = default;
-};
 
 // One result of ncurses get_wch: `is_key_code` true = ncurses KEY_* value
 // (KEY_CODE_YES return), false = a decoded wide codepoint (OK return).

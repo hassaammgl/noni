@@ -29,9 +29,9 @@ int main(int argc, char** argv) {
                     return 1;
                 }
                 screen->debug_key(*k);
-                if (*k == noni::ui::Key{noni::ui::KeyKind::CtrlChar, U'c'}
-                    || *k == noni::ui::Key{noni::ui::KeyKind::Char, U'q'}) {
-                    break; // temporary exits; real :q arrives with P7 ex
+                if (*k == noni::Key{noni::KeyKind::CtrlChar, U'c'}
+                    || *k == noni::Key{noni::KeyKind::Char, U'q'}) {
+                    break; // temporary exits; real :q arrives with P6
                 }
             }
             return 0;
