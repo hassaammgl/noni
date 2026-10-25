@@ -12,8 +12,9 @@
 
 namespace noni::ui {
 
-// Tab expansion width until the config module lands (P18).
-inline constexpr int k_tabwidth = 4;
+// Tab expansion width until the config module lands (P18) — core constant,
+// shared with motion context so app and ui always agree.
+inline constexpr int k_tabwidth = noni::k_default_tabwidth;
 
 // Per-codepoint display model of ONE buffer line: what each cp occupies on
 // screen (tabs -> blank spans, control/0x7F -> 2-col ^-markers, wide cps ->

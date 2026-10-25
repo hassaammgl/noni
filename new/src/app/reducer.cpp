@@ -27,6 +27,13 @@ void clamp_cursor(EditorState& st) {
 
 namespace {
 
+// vim curswant: every cursor-setting edit re-anchors the aim column; only
+// vertical motions (J/K) consume it without resetting it (see core/motion).
+void sync_desired(EditorState& st) {
+    st.win().desired_col = st.win().cursor.col;
+    st.mark_dirty();
+}
+
 // Runs one grouped edit (the ONLY grouping entry: Buffer::with_edit) and
 // moves the cursor to the position the primitive returned.
 void apply_edit(EditorState& st, EditKind kind,
@@ -39,7 +46,7 @@ void apply_edit(EditorState& st, EditKind kind,
     Pos after = w.cursor;
     b->with_edit(kind, [&] { after = edit(*b, w.cursor); });
     w.cursor = after;
-    st.mark_dirty();
+    sync_desired(st);
 }
 
 // Applies one caller-built line-span change (the P0-reserved
@@ -55,7 +62,7 @@ void record_change(EditorState& st, EditKind tag, const TextChange& ch,
     }
     b->with_edit(tag, [&] { b->record_text_change(ch); });
     st.win().cursor = after;
-    st.mark_dirty();
+    sync_desired(st);
 }
 
 // Erases the single cp LEFT of (l, col) as one TextChange. Hints follow the
@@ -107,17 +114,33 @@ Command command_for_key(const EditorState& st, const Key& k) {
     case Mode::Normal:
         switch (k.kind) {
         case KeyKind::Char:
+            if (k.cp >= U'1' && k.cp <= U'9') {
+                // Nonzero digits always extend the count prefix; a pending
+                // count makes even '0' a digit (oracle: '20' stays pending).
+                c.kind = Kind::CountDigit;
+                c.cp = k.cp;
+                break;
+            }
+            if (k.cp == U'0') {
+                if (st.count_prefix != 0) {
+                    c.kind = Kind::CountDigit;
+                    c.cp = U'0';
+                    break;
+                }
+                c.kind = Kind::Motion; // leading '0' = the col-0 motion
+                c.motion = MotionId::Zero;
+                break;
+            }
             switch (k.cp) {
             case U'x': c.kind = Kind::DeleteChar; break;
             case U'u': c.kind = Kind::Undo; break;
-            case U'i':
-            case U'A': c.kind = Kind::EnterInsert; break; // A at EOL: P2.7
-            case U'h': c.kind = Kind::Motion; c.dx = -1; break;
-            case U'l': c.kind = Kind::Motion; c.dx = 1; break;
-            case U'j': c.kind = Kind::Motion; c.dy = 1; break;
-            case U'k': c.kind = Kind::Motion; c.dy = -1; break;
-            case U'0': c.kind = Kind::Motion; c.dx = -0x40000000; break;
-            case U'$': c.kind = Kind::Motion; c.dx = 0x3FFFFFFF; break;
+            case U'i': c.kind = Kind::EnterInsert; break;
+            case U'A': c.kind = Kind::EnterInsert; c.at_eol = true; break;
+            case U'h': c.kind = Kind::Motion; c.motion = MotionId::H; break;
+            case U'l': c.kind = Kind::Motion; c.motion = MotionId::L; break;
+            case U'j': c.kind = Kind::Motion; c.motion = MotionId::J; break;
+            case U'k': c.kind = Kind::Motion; c.motion = MotionId::K; break;
+            case U'$': c.kind = Kind::Motion; c.motion = MotionId::Dollar; break;
             default: break;
             }
             break;
@@ -126,10 +149,10 @@ Command command_for_key(const EditorState& st, const Key& k) {
                 c.kind = Kind::Redo;
             }
             break;
-        case KeyKind::ArrowUp: c.kind = Kind::Motion; c.dy = -1; break;
-        case KeyKind::ArrowDown: c.kind = Kind::Motion; c.dy = 1; break;
-        case KeyKind::ArrowLeft: c.kind = Kind::Motion; c.dx = -1; break;
-        case KeyKind::ArrowRight: c.kind = Kind::Motion; c.dx = 1; break;
+        case KeyKind::ArrowUp: c.kind = Kind::Motion; c.motion = MotionId::K; break;
+        case KeyKind::ArrowDown: c.kind = Kind::Motion; c.motion = MotionId::J; break;
+        case KeyKind::ArrowLeft: c.kind = Kind::Motion; c.motion = MotionId::H; break;
+        case KeyKind::ArrowRight: c.kind = Kind::Motion; c.motion = MotionId::L; break;
         case KeyKind::Delete: c.kind = Kind::DeleteChar; break;
         default: break;
         }
@@ -156,10 +179,10 @@ Command command_for_key(const EditorState& st, const Key& k) {
         case KeyKind::PasteEnd: c.kind = Kind::PasteEnd; break;
         case KeyKind::Esc: c.kind = Kind::LeaveInsert; break;
         case KeyKind::Backspace: c.kind = Kind::EraseChar; break;
-        case KeyKind::ArrowUp: c.kind = Kind::Motion; c.dy = -1; break;
-        case KeyKind::ArrowDown: c.kind = Kind::Motion; c.dy = 1; break;
-        case KeyKind::ArrowLeft: c.kind = Kind::Motion; c.dx = -1; break;
-        case KeyKind::ArrowRight: c.kind = Kind::Motion; c.dx = 1; break;
+        case KeyKind::ArrowUp: c.kind = Kind::Motion; c.motion = MotionId::K; break;
+        case KeyKind::ArrowDown: c.kind = Kind::Motion; c.motion = MotionId::J; break;
+        case KeyKind::ArrowLeft: c.kind = Kind::Motion; c.motion = MotionId::H; break;
+        case KeyKind::ArrowRight: c.kind = Kind::Motion; c.motion = MotionId::L; break;
         default: break;
         }
         break;
@@ -169,13 +192,37 @@ Command command_for_key(const EditorState& st, const Key& k) {
 
 void reducer(EditorState& st, const Command& cmd) {
     using Kind = Command::Kind;
+    // Count prefix lifecycle: digits extend it; any other command consumes
+    // it (None also aborts it, vim aborts on unmapped keys).
+    std::uint32_t count = 1;
+    if (cmd.kind == Kind::CountDigit) {
+        st.count_prefix = st.count_prefix * 10
+                        + static_cast<std::uint32_t>(cmd.cp - U'0');
+        return;
+    }
+    if (cmd.kind != Kind::None) {
+        count = st.count_prefix == 0 ? 1 : st.count_prefix;
+        st.count_prefix = 0;
+    }
     switch (cmd.kind) {
     case Kind::None:
         return;
 
     case Kind::EnterInsert:
         st.mode = Mode::Insert;
-        st.mark_dirty();
+        if (cmd.at_eol) {
+            // 'A': append position = one past the last char (len; empty
+            // line -> 0). Oracle: A on "ab" then typing appends "abX".
+            WindowState& w = st.win();
+            if (Buffer* b = st.buffer(w.buffer); b != nullptr) {
+                w.cursor.col = static_cast<std::uint32_t>(
+                    line_len_cp(b->lines()
+                                    [std::min(w.cursor.line,
+                                              static_cast<std::uint32_t>(
+                                                  b->lines().size() - 1))]));
+            }
+        }
+        sync_desired(st);
         return;
 
     case Kind::LeaveInsert:
@@ -186,7 +233,7 @@ void reducer(EditorState& st, const Command& cmd) {
             st.win().cursor.col -= 1;
         }
         clamp_cursor(st);
-        st.mark_dirty();
+        sync_desired(st);
         return;
 
     case Kind::Undo:
@@ -216,30 +263,57 @@ void reducer(EditorState& st, const Command& cmd) {
             || (st.mode != Mode::Normal && st.mode != Mode::Insert)) {
             return;
         }
-        for (std::uint32_t i = 0; i < cmd.count; ++i) {
-            const auto& lines = b->lines();
-            const std::int64_t nl =
-                static_cast<std::int64_t>(w.cursor.line) + cmd.dy;
-            if (nl < 0 || nl >= static_cast<std::int64_t>(lines.size())) {
-                break; // vertical boundary: stay (v0 clamp)
-            }
-            w.cursor.line = static_cast<std::uint32_t>(nl);
-            const std::int64_t nc =
-                static_cast<std::int64_t>(w.cursor.col) + cmd.dx;
-            const std::uint32_t len = line_len_cp(lines[w.cursor.line]);
-            if (nc < 0) {
-                if (w.cursor.col == 0) {
-                    break; // h at col 0 stays (v0 semantic, P2.7 exactness)
-                }
-                w.cursor.col = 0; // '0' jumps to col 0
-                break;
-            }
-            w.cursor.col = nc > static_cast<std::int64_t>(len)
-                               ? len
-                               : static_cast<std::uint32_t>(nc);
+        // P2.7: the command carries a MotionId; core/motion applies the
+        // vim-exact clamps against the oracle fixture.
+        const Motion motion{cmd.motion};
+        const MotionContext ctx{&b->lines(), k_default_tabwidth};
+        w.cursor = motion.apply(ctx, w.cursor, count, w.desired_col);
+        if (cmd.motion != MotionId::J && cmd.motion != MotionId::K) {
+            // Vertical moves keep the aim; everything else re-anchors it.
+            w.desired_col = w.cursor.col;
         }
-        clamp_cursor(st);
         st.mark_dirty();
+        return;
+    }
+
+    case Kind::DeleteChar: {
+        if (st.mode != Mode::Normal) {
+            return;
+        }
+        WindowState& w = st.win();
+        Buffer* b = st.buffer(w.buffer);
+        if (b == nullptr) {
+            return;
+        }
+        const std::uint32_t l = std::min(
+            w.cursor.line, static_cast<std::uint32_t>(b->lines().size() - 1));
+        const std::string line = b->lines()[l];
+        const std::uint32_t len =
+            static_cast<std::uint32_t>(line_len_cp(line));
+        if (len == 0) {
+            return; // nothing to delete on an empty line
+        }
+        // Oracle: x at the line end deletes the LAST char — clamp col into
+        // [0, len-1] first, then span-erase up to `count` chars as ONE
+        // change (one undo unit). The cursor normalizes INTO the shrunken
+        // line (x at EOL: col collapses to the new last char, vim-exact).
+        const std::uint32_t col = std::min(w.cursor.col, len - 1);
+        const std::uint32_t span = std::min(count, len - col);
+        if (span == 0) {
+            return;
+        }
+        const std::string out = line.substr(0, cp_to_byte(line, col))
+                              + line.substr(cp_to_byte(line, col + span));
+        const std::uint32_t new_len =
+            static_cast<std::uint32_t>(line_len_cp(out));
+        TextChange ch;
+        ch.kind = EditKind::EraseChar;
+        ch.first_line = l;
+        ch.old_lines = {line};
+        ch.new_lines = {out};
+        ch.cur_before = Pos{l, col};
+        ch.cur_after = Pos{l, new_len == 0 ? 0 : std::min(col, new_len - 1)};
+        record_change(st, EditKind::EraseChar, ch, ch.cur_after);
         return;
     }
 
@@ -349,16 +423,8 @@ void reducer(EditorState& st, const Command& cmd) {
         return;
     }
 
-    case Kind::DeleteChar:
-        if (st.mode != Mode::Normal) {
-            return;
-        }
-        apply_edit(st, EditKind::EraseChar, [](Buffer& b, const Pos p) {
-            // 'x': erase the cp AT the cursor (no wrap at EOL: primitive
-            // returns `p` unchanged when nothing was erased).
-            return b.erase_char(p);
-        });
-        return;
+    case Kind::CountDigit:
+        return; // handled before the switch (unreachable case for -Wswitch)
     }
 }
 

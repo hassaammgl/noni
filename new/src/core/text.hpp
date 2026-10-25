@@ -63,4 +63,8 @@ decode_utf8(std::string_view line, std::size_t byte);
 // columns; everything else takes 1.
 [[nodiscard]] int cp_display_width(char32_t cp, int tabwidth, int disp_col);
 
+// Default tab expansion until the config module lands (P18). Owned by core
+// so app (motions) and ui (rendering) always agree.
+inline constexpr int k_default_tabwidth = 4;
+
 } // namespace noni

@@ -32,16 +32,28 @@ TEST_CASE("reducer: mode-aware dispatch table") {
     CHECK(app::command_for_key(st, ch(U'A')).kind
           == Command::Kind::EnterInsert);
     CHECK(app::command_for_key(st, ch(U'h')).kind == Command::Kind::Motion);
-    const Command j = app::command_for_key(st, ch(U'j'));
-    CHECK(j.dy == 1);
-    const Command dollar = app::command_for_key(st, ch(U'$'));
-    CHECK(dollar.dx > 0x10000000);
-    const Command zero = app::command_for_key(st, ch(U'0'));
-    CHECK(zero.dx < -0x10000000);
-    CHECK(app::command_for_key(st, Key{KeyKind::CtrlChar, U'r'}).kind
-          == Command::Kind::Redo);
+    CHECK(app::command_for_key(st, ch(U'h')).motion == MotionId::H);
+    CHECK(app::command_for_key(st, ch(U'j')).motion == MotionId::J);
+    CHECK(app::command_for_key(st, ch(U'k')).motion == MotionId::K);
+    CHECK(app::command_for_key(st, ch(U'l')).motion == MotionId::L);
+    CHECK(app::command_for_key(st, ch(U'$')).motion == MotionId::Dollar);
+    // 'A' enters insert at the append position (at_eol flavor).
+    CHECK(app::command_for_key(st, ch(U'A')).at_eol);
+    CHECK(!app::command_for_key(st, ch(U'i')).at_eol);
     CHECK(app::command_for_key(st, Key{KeyKind::ArrowLeft, 0}).kind
           == Command::Kind::Motion);
+    CHECK(app::command_for_key(st, Key{KeyKind::ArrowLeft, 0}).motion
+          == MotionId::H);
+    CHECK(app::command_for_key(st, Key{KeyKind::CtrlChar, U'r'}).kind
+          == Command::Kind::Redo);
+    // Count digits dispatch; '0' after pending digits extends the count.
+    CHECK(app::command_for_key(st, ch(U'5')).kind == Command::Kind::CountDigit);
+    st.count_prefix = 3;
+    CHECK(app::command_for_key(st, ch(U'0')).kind
+          == Command::Kind::CountDigit);
+    st.count_prefix = 0;
+    CHECK(app::command_for_key(st, ch(U'0')).kind == Command::Kind::Motion);
+    CHECK(app::command_for_key(st, ch(U'0')).motion == MotionId::Zero);
     // Plain Esc in normal mode is a no-op.
     CHECK(app::command_for_key(st, Key{KeyKind::Esc, 0}).kind
           == Command::Kind::None);
@@ -116,8 +128,8 @@ TEST_CASE("reducer: 40-key scripted session ends in asserted state") {
     key(st, Key{KeyKind::CtrlChar, U'r'});
     CHECK(st.buffers[0].lines() == std::vector<std::string>{"ame"});
 
-    key(st, Key{KeyKind::Char, U'$'});
-    CHECK(st.win().cursor == Pos{0, 3});
+    key(st, Key{KeyKind::Char, U'$'}); // Dollar = ON the last char now
+    CHECK(st.win().cursor == Pos{0, 2});
     key(st, Key{KeyKind::Char, U'i'});
     key(st, Key{KeyKind::Char, U' '});
     key(st, Key{KeyKind::Char, U'='});
@@ -125,51 +137,52 @@ TEST_CASE("reducer: 40-key scripted session ends in asserted state") {
     key(st, Key{KeyKind::Char, U' '});
     key(st, Key{KeyKind::Char, U'2'});
     key(st, Key{KeyKind::Char, U'9'});
+    // Insert ran at col 2, pushing the 'e' right (vim mid-line insert).
     CHECK(st.buffers[0].lines()
-          == std::vector<std::string>{"ame == 29"});
+          == std::vector<std::string>{"am == 29e"});
     key(st, Key{KeyKind::Esc, 0});
-    CHECK(st.win().cursor == Pos{0, 8});
+    CHECK(st.win().cursor == Pos{0, 7});
     CHECK(st.mode == Mode::Normal);
 
-    key(st, Key{KeyKind::Char, U'j'}); // single line: stays
+    key(st, Key{KeyKind::Char, U'j'}); // single line: stays, col clamps len-1
     key(st, Key{KeyKind::Char, U'k'});
     key(st, Key{KeyKind::Char, U'h'});
     key(st, Key{KeyKind::Char, U'h'});
     key(st, Key{KeyKind::Char, U'h'});
-    CHECK(st.win().cursor == Pos{0, 5});
+    CHECK(st.win().cursor == Pos{0, 4});
     key(st, Key{KeyKind::ArrowRight, 0});
     key(st, Key{KeyKind::ArrowLeft, 0});
     key(st, Key{KeyKind::ArrowUp, 0});
     key(st, Key{KeyKind::ArrowDown, 0});
-    CHECK(st.win().cursor == Pos{0, 5});
+    CHECK(st.win().cursor == Pos{0, 4});
 
     key(st, Key{KeyKind::Char, U'i'});
     key(st, Key{KeyKind::Char, 0xE9}); // é
     key(st, Key{KeyKind::Char, U'!'});
     key(st, Key{KeyKind::Esc, 0});
     CHECK(st.buffers[0].lines()
-          == std::vector<std::string>{"ame =é!= 29"});
-    CHECK(st.win().cursor == Pos{0, 6});
+          == std::vector<std::string>{"am =é!= 29e"});
+    CHECK(st.win().cursor == Pos{0, 5});
 
     key(st, Key{KeyKind::Char, U'0'});
     key(st, Key{KeyKind::ArrowDown, 0}); // single line again
     key(st, Key{KeyKind::Delete, 0});
     CHECK(st.buffers[0].lines()
-          == std::vector<std::string>{"me =é!= 29"});
+          == std::vector<std::string>{"m =é!= 29e"});
     key(st, Key{KeyKind::Char, U'u'});
     CHECK(st.buffers[0].lines()
-          == std::vector<std::string>{"ame =é!= 29"});
+          == std::vector<std::string>{"am =é!= 29e"});
     CHECK(st.win().cursor == Pos{0, 0});
 
     key(st, Key{KeyKind::Char, U'0'});
     key(st, Key{KeyKind::Char, U'x'});
     CHECK(st.buffers[0].lines()
-          == std::vector<std::string>{"me =é!= 29"});
+          == std::vector<std::string>{"m =é!= 29e"});
     key(st, Key{KeyKind::Char, U'l'});
     key(st, Key{KeyKind::Char, U'u'}); // key 40
     CHECK(st.win().cursor == Pos{0, 0});
     CHECK(st.buffers[0].lines()
-          == std::vector<std::string>{"ame =é!= 29"});
+          == std::vector<std::string>{"am =é!= 29e"});
     CHECK(st.mode == Mode::Normal);
     CHECK(st.msg.empty());
     REQUIRE(st.buffers[0].undo_depth() > 0);

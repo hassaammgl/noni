@@ -1,0 +1,30 @@
+fixture: name keys startLine,startCol endLine,endCol | lines = "|"-joined
+h_at_col0 h 1,1 1,1 | twochars @ twochars
+h2_at_col1 2h 1,2 1,1 | twochars @ twochars
+l_to_last_char l 1,1 1,2 | twochars @ twochars
+l_at_last_char l 1,9 1,8 | twochars @ twochars
+dollar_beyond_eol_clamps 5$ 1,1 1,1 | twochars @ twochars
+dollar_on_empty_line $ 2,1 2,1 | a||b @ a||b
+j_to_shorter_line_clamps_col j 1,5 2,2 | longish|ab @ longish|ab
+k_to_shorter_line_clamps_col k 2,5 1,2 | ab|longish @ ab|longish
+fivej_stops_at_last_line 5j 1,1 3,1 | a|b|c @ a|b|c
+threej_count_prefix 3j 1,1 4,1 | l1|l2|l3|l4 @ l1|l2|l3|l4
+ninej_crosses_eof_clamps 9j 1,1 3,1 | a|b|c @ a|b|c
+zero_goes_col0 0 1,5 1,1 | one two @ one two
+zero_after_count_is_col0 20 1,5 1,5 | one two @ one two
+dollar_midline $ 1,2 1,7 | one two @ one two
+h_on_empty_line h 1,1 1,1 |  @ 
+l_on_empty_line l 1,1 1,1 |  @ 
+j_on_single_line j 1,1 1,1 | solo @ solo
+x_at_eol_noop x 1,3 1,1 | ab @ a
+count3x_deletes_three 3x 1,2 1,2 | abcdef @ aef
+A_appends_at_eol AX<Esc> 1,2 1,3 | ab @ abX
+A_on_empty_line AX<Esc> 1,1 1,1 |  @ X
+i_types_at_cursor iX<Esc> 1,2 1,2 | ab @ aXb
+j_col_clamp_persists_via_k_back jk 1,5 1,5 | longish|ab @ longish|ab
+j_streak_then_k_recovers_want jjk 1,5 1,5 | longish|ab @ longish|ab
+h_resets_desired_col jhj 1,5 2,1 | longish|ab @ longish|ab
+count2_dollar 2$ 1,1 2,2 | ab|cd @ ab|cd
+dollar_overflow_clamps_last_line 4$ 1,1 3,2 | ab|cd|ef @ ab|cd|ef
+dollar_overflow_at_last_line_rejects 5$ 2,1 2,1 | ab|cd @ ab|cd
+dollar_count1_on_empty_line 1$ 2,1 2,1 | a||b @ a||b

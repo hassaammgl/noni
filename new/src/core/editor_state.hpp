@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "core/buffer.hpp"
+#include "core/motion.hpp"
 #include "core/pos.hpp"
 
 namespace noni {
@@ -55,6 +56,9 @@ struct WindowState {
     Pos cursor{};      // (line, cp col) — ALWAYS clamped to the buffer
     std::uint32_t top_line = 0;    // viewport scroll (P2.3)
     std::uint32_t left_col = 0;    // horizontal scroll (P2.3)
+    std::uint32_t desired_col = 0; // vim curswant: the col j/k aim at across
+                                   // shorter lines; any non-vertical cursor
+                                   // move resets it to the new cursor col
 };
 
 // --- command model (mode-agnostic; app/reducer translates keys) ---------------
@@ -62,24 +66,25 @@ struct WindowState {
 struct Command {
     enum class Kind : std::uint8_t {
         None,          // key produced no command in the current mode
-        Motion,        // v0: relative (dy,dx) count times; framework lands P2.7
+        Motion,        // `motion` payload; count applied by the reducer
+        CountDigit,    // normal-mode digit extension of `count_prefix`
         InsertChar,    // insert mode only
         InsertNewline, // Enter in insert: split + copy previous line's indent
         SplitLine,     // '\n' inside a bracketed paste: split, NO indent copy
         PasteBegin,    // st.pasting = true (bracketed-paste session)
         PasteEnd,      // st.pasting = false
         EraseChar,     // insert-mode backspace (left of the cursor; joins)
-        DeleteChar,    // normal-mode deletion at the cursor ('x')
-        EnterInsert,
+        DeleteChar,    // normal-mode deletion at the cursor ('x', count>1 ok)
+        EnterInsert,   // `at_eol` selects 'i' vs 'A' (append at line end)
         LeaveInsert,
         Undo,
         Redo,
     };
     Kind kind = Kind::None;
-    char32_t cp = 0;         // InsertChar / CtrlChar payloads
-    std::int32_t dy = 0;     // Motion payload (v0 relative deltas)
-    std::int32_t dx = 0;
-    std::uint32_t count = 1; // '5j'count multiplier (P2.7 dispatcher owns it)
+    MotionId motion = MotionId::H; // Motion payload
+    char32_t cp = 0;               // InsertChar / CountDigit payload
+    std::uint32_t count = 1;       // reserved for P3 command syntax
+    bool at_eol = false;           // EnterInsert flavor ('A' appends EOL)
 };
 
 class EditorState {
@@ -116,6 +121,10 @@ public:
     std::vector<WindowState> windows;
     Mode mode = Mode::Normal;
     bool pasting = false; // inside a bracketed paste ('\n' inserts as data)
+    // Pending count prefix ('5j': count_prefix 5 until the next command).
+    // 0 = none pending; a command consumes+resets it. '0' only STARTS count
+    // after a nonzero digit (else it is the col-0 motion — oracle-pinned).
+    std::uint32_t count_prefix = 0;
     std::string msg;      // statusline message (P2.4 renders)
     std::string cmdline;  // prompt row reservation (P6 fills it)
 
