@@ -113,6 +113,61 @@ TEST_CASE("view: viewport mapping both ways") {
     CHECK(buffer_line_of_screen_row(-1, 5) == 5); // row<0 clamps to top
 }
 
+TEST_CASE("view: P2.8 past-eof rows and the exactly-filling viewport") {
+    // Empty buffer: ONE content row (the empty line), all else '~'.
+    CHECK(!is_past_eof_row(0, 0, 1));
+    CHECK(is_past_eof_row(1, 0, 1));
+    CHECK(is_past_eof_row(4, 0, 1));
+
+    // Viewport exactly filled: 30 lines, top 25, 5 rows -> no '~' lane,
+    // the last screen row shows the LAST line (half-visible-bottom edge).
+    for (int row = 0; row < 5; ++row) {
+        CHECK(!is_past_eof_row(row, 25, 30));
+    }
+    CHECK(buffer_line_of_screen_row(4, 25) == 29);
+
+    // Half-visible bottom: top 26 -> row 4 lands past EOF ('~' lane).
+    CHECK(!is_past_eof_row(3, 26, 30));
+    CHECK(is_past_eof_row(4, 26, 30));
+    // Top 24 on a SIX-row viewport still shows the last line on row 5 —
+    // a viewport taller than the remaining lines shows '~' from row 6 up.
+    CHECK(buffer_line_of_screen_row(5, 24) == 29);
+    CHECK(!is_past_eof_row(5, 24, 30));
+    CHECK(is_past_eof_row(6, 24, 30));
+}
+
+TEST_CASE("view: P2.8 slice edge cases (wide chars, exact right edge)") {
+    SUBCASE("line ending exactly at the right edge") {
+        const std::wstring s = content_slice(build("hello"), 0, 5);
+        CHECK(s == L"hello");
+        CHECK(s.size() == 5); // no clipping spill, no fill needed
+    }
+    SUBCASE("wide char straddling the RIGHT edge blanks out") {
+        // y(0) 一(1..2) z(3): cols requested 0..1 -> the wide glyph is
+        // half visible; must render blanks, NOT the glyph (alignment).
+        const std::wstring s = content_slice(build("y一z"), 0, 2);
+        CHECK(s.size() == 2);
+        CHECK(s[0] == L'y');
+        CHECK(s[1] == L' ');
+        // Fully visible wide glyph renders normally.
+        const std::wstring w3 = content_slice(build("y一z"), 0, 4);
+        CHECK(w3[0] == L'y');
+        CHECK(w3[1] == L'一');
+        CHECK(w3[2] == L'z');
+    }
+    SUBCASE("wide char straddling the LEFT edge blanks its tail") {
+        const std::wstring s = content_slice(build("一x"), 1, 4);
+        CHECK(s.size() == 4);
+        CHECK(s[0] == L' '); // second half of the wide cell: blank
+        CHECK(s[1] == L'x');
+    }
+    SUBCASE("empty line content slice is all blanks of the window width") {
+        const std::wstring s = content_slice(build(""), 0, 4);
+        CHECK(s.size() == 4);
+        CHECK(s == L"    ");
+    }
+}
+
 TEST_CASE("view: gutter width is digits + one pad") {
     CHECK(gutter_width(1) == 2);
     CHECK(gutter_width(9) == 2);

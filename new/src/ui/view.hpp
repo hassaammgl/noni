@@ -54,6 +54,10 @@ private:
                                                std::uint32_t top_line);
 [[nodiscard]] std::uint32_t buffer_line_of_screen_row(int row,
                                                       std::uint32_t top_line);
+// True when the terminal row renders a '~' lane (line past EOF: empty
+// buffers keep row 0 on the (single) empty line, every other row tilde).
+[[nodiscard]] bool is_past_eof_row(int row, std::uint32_t top_line,
+                                   std::size_t line_count);
 
 // Gutter column width: digits of the line count + one padding column (>= 2).
 [[nodiscard]] int gutter_width(std::size_t line_count);

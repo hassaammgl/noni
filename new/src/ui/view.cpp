@@ -83,7 +83,8 @@ std::wstring content_slice(const LineCells& lc, int left_col, int cols) {
     if (cols <= 0) {
         return out;
     }
-    int pos = 0; // display col of the current cell start
+    int pos = 0;   // display col of the current cell start
+    int out_width = 0; // display width of the emitted glyphs
     for (const auto& s : lc.spans()) {
         const int end = pos + s.width;
         if (end <= left_col) { // fully scrolled off the left
@@ -94,11 +95,17 @@ std::wstring content_slice(const LineCells& lc, int left_col, int cols) {
             break;
         }
         // Rendering: control markers expand to '^X'/'^?'; tabs blank out.
+        // Wide glyphs need BOTH their columns on screen (P2.8): a wide span
+        // straddling either scroll edge renders blank cells, otherwise the
+        // terminal consumes 2 cells and shifts the row alignment. Markers
+        // and tabs are per-column self-sufficient and keep their clipping.
         std::string glyphs;
         if (s.marker) {
             glyphs += '^';
             glyphs += static_cast<char>(s.cp == 0x7F ? '?' : s.cp + '@');
         }
+        const bool wide_partial = s.width == 2 && !s.marker && s.cp != U'\t'
+                                  && (pos < left_col || end > left_col + cols);
         const std::wstring cell = [&] {
             std::wstring w;
             if (s.marker) {
@@ -113,28 +120,45 @@ std::wstring content_slice(const LineCells& lc, int left_col, int cols) {
                          static_cast<wchar_t>(U' '));
                 return w;
             }
+            if (wide_partial) {
+                return std::wstring();
+            }
             w.assign(static_cast<std::size_t>(1),
                      static_cast<wchar_t>(s.cp));
             return w;
         }();
-        // Clip the cell at both edges: partial left (scrolled) and right.
+        // Clip the span at both edges. Rendering units:
+        //  - markers/tabs/blanks: one glyph per DISPLAY column;
+        //  - wide glyphs: one element, the terminal consumes 2 cells (no
+        //    filler after it); partial-wide spans render blank columns.
         for (int i = 0; i < s.width; ++i) {
             const int col = pos + i;
             if (col < left_col || col >= left_col + cols) {
                 continue;
             }
+            const bool wide_glyph = s.width == 2 && !s.marker
+                                    && s.cp != U'\t' && !wide_partial;
+            if (wide_glyph) {
+                if (i == 0) {
+                    out.push_back(cell[0]);
+                    out_width += s.width;
+                }
+                continue;
+            }
             if (i < static_cast<int>(cell.size())) {
                 out.push_back(cell[static_cast<std::size_t>(i)]);
             } else {
-                out.push_back(L' '); // tail of a partially clipped span
+                out.push_back(L' '); // tail of a partially spanned cell
             }
+            ++out_width;
         }
         pos = end;
     }
-    // Row-fill: blanks up to the requested window width (highlight fills the
-    // whole row without a second pass in draw_buffer_view).
-    while (static_cast<int>(out.size()) < cols) {
+    // Row-fill: blanks until the slice covers `cols` DISPLAY columns so the
+    // highlight fills the whole row (wide glyphs made some cells 2-wide).
+    while (out_width < cols) {
         out.push_back(L' ');
+        ++out_width;
     }
     return out;
 }
@@ -145,6 +169,12 @@ std::uint32_t screen_row_of_line(std::uint32_t line, std::uint32_t top_line) {
 
 std::uint32_t buffer_line_of_screen_row(int row, std::uint32_t top_line) {
     return row <= 0 ? top_line : top_line + static_cast<std::uint32_t>(row);
+}
+
+bool is_past_eof_row(const int row, const std::uint32_t top_line,
+                     const std::size_t line_count) {
+    const std::uint32_t line = buffer_line_of_screen_row(row, top_line);
+    return line >= line_count;
 }
 
 int gutter_width(std::size_t line_count) {
@@ -181,12 +211,12 @@ void draw_buffer_view(Screen& screen, const EditorState& st, const ViewArea& are
                                           : 0;
 
     for (int row = 0; row < area.rows; ++row) {
-        const std::uint32_t line = buffer_line_of_screen_row(row, w.top_line);
-        if (line >= lines.size()) {
+        if (is_past_eof_row(row, w.top_line, lines.size())) {
             mvwaddnwstr(win, area.top_row + row, 0, L"~", 1);
             wclrtoeol(win);
             continue;
         }
+        const std::uint32_t line = buffer_line_of_screen_row(row, w.top_line);
         const bool highlighted = (line == cursor_line);
         if (highlighted) {
             wattron(win, A_REVERSE);
