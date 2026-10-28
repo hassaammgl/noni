@@ -253,8 +253,7 @@ namespace {
     return Pos{0, 0};
 }
 
-// P3.3 — one find attempt (f/F/t/T). Current line only; the search NEVER
-// includes the cursor's own col; with count N the N-th occurrence must
+// P3.3 — one find attempt (f/F/t/T). Current line only; the search NEVER// includes the cursor's own col; with count N the N-th occurrence must
 // exist or the whole motion FAILS (no partial move, oracle-pinned), so the
 // count is consumed in one scan instead of a step loop.
 //   f/F: land ON the occurrence; t/T: one char before it (t, right side) or
@@ -296,6 +295,120 @@ namespace {
         }
     }
     return std::unexpected(Error{"find target not found"});
+}
+
+// P3.7 — the six default vim 'matchpairs' characters (no '<>' and no config).
+[[nodiscard]] bool is_bracket(const char32_t cp) {
+    return cp == U'(' || cp == U')' || cp == U'[' || cp == U']'
+        || cp == U'{' || cp == U'}';
+}
+
+[[nodiscard]] bool is_opener(const char32_t cp) {
+    return cp == U'(' || cp == U'[' || cp == U'{';
+}
+
+// The counterpart of an opening/closing bracket (0 for a non-bracket).
+[[nodiscard]] char32_t bracket_partner(const char32_t cp) {
+    switch (cp) {
+    case U'(':
+        return U')';
+    case U')':
+        return U'(';
+    case U'[':
+        return U']';
+    case U']':
+        return U'[';
+    case U'{':
+        return U'}';
+    case U'}':
+        return U'{';
+    default:
+        return 0;
+    }
+}
+
+// '%' — one bracket match step. Decode (oracle: motion_p3g.fxt; the algorithm
+// mirrors nvim's findmatchlimit for the default 'matchpairs'):
+//   1. A bracket UNDER the cursor is matched.
+//   2. Otherwise the FIRST bracket to its right ON THE SAME LINE is matched
+//      (the scan never crosses the line end — "abc" / "(x)" does not move).
+//   3. No bracket at all -> error (no move).
+//   4. Matching counts ONLY the same bracket type, forward for an opener and
+//      backward for a closer; every other bracket is neutral, so "([)]"
+//      matches '(' with ')'. Running off the buffer -> error (no move).
+// Deliberate limitations (ROADMAP P3.7): comments/strings are NOT skipped and
+// there is no '#if'/'#endif' matching.
+[[nodiscard]] eresult<Pos> match_bracket_step(
+    const std::vector<std::string>& lines, const Pos from) {
+    const auto len_of = [&](const std::uint32_t l) {
+        return static_cast<std::uint32_t>(line_len_cp(lines[l]));
+    };
+    const auto cp_at = [&](const std::uint32_t l, const std::uint32_t c) {
+        return cp_at_col(lines[l], c);
+    };
+
+    std::uint32_t col = from.col;
+    char32_t bracket = col < len_of(from.line) ? cp_at(from.line, col) : 0;
+    if (!is_bracket(bracket)) {
+        const std::uint32_t len = len_of(from.line);
+        for (std::uint32_t c = col + 1; c < len; ++c) {
+            if (is_bracket(cp_at(from.line, c))) {
+                bracket = cp_at(from.line, c);
+                col = c;
+                break;
+            }
+        }
+    }
+    if (!is_bracket(bracket)) {
+        return std::unexpected(Error{"no bracket in this line"});
+    }
+
+    const char32_t partner = bracket_partner(bracket);
+    std::uint32_t depth = 1;
+    if (is_opener(bracket)) {
+        std::uint32_t l = from.line;
+        std::uint32_t c = col;
+        for (;;) {
+            if (c + 1 < len_of(l)) {
+                ++c;
+            } else if (l + 1 < lines.size()) {
+                ++l;
+                c = 0;
+            } else {
+                break; // end of buffer
+            }
+            const char32_t cur = cp_at(l, c);
+            if (cur == bracket) {
+                ++depth;
+            } else if (cur == partner && --depth == 0) {
+                return Pos{l, c};
+            }
+        }
+    } else {
+        std::uint32_t l = from.line;
+        std::uint32_t c = col;
+        for (;;) {
+            if (c > 0) {
+                --c;
+            } else if (l > 0) {
+                --l;
+                const std::uint32_t plen = len_of(l);
+                if (plen == 0) {
+                    continue; // empty line: keep walking backwards
+                }
+                c = plen - 1;
+            } else {
+                break; // start of buffer
+            }
+            const char32_t cur = cp_at(l, c);
+            if (cur == bracket) {
+                ++depth;
+            } else if (cur == partner && --depth == 0) {
+                return Pos{l, c};
+            }
+        }
+    }
+    return std::unexpected(Error{"no matching bracket"});
 }
 
 } // namespace
@@ -467,6 +580,29 @@ eresult<Pos> Motion::apply(const MotionContext& ctx, const Pos from,
             p = next;
         }
         return p;
+    }
+    case MotionId::MatchBracket:
+        // '%' without a count: bracket match (the count form is PercentLine,
+        // chosen by the reducer while the count prefix is still pending).
+        return match_bracket_step(lines, from);
+    case MotionId::PercentLine: {
+        // [count]'%' — nvim: lnum = (line_count * count + 99) / 100 (rounded
+        // up so 100% always lands on the last line), count > 100 is rejected
+        // (beep: no move). A jump to the SAME line leaves the cursor alone;
+        // otherwise the column is kept and clamped into the target line.
+        if (count > 100) {
+            return std::unexpected(Error{"percent out of range"});
+        }
+        const std::uint64_t n = lines.size();
+        std::uint64_t lnum = (n * count + 99) / 100;
+        lnum = std::clamp<std::uint64_t>(lnum, 1, n);
+        const auto target = static_cast<std::uint32_t>(lnum - 1);
+        if (target == from.line) {
+            return from;
+        }
+        const std::uint32_t len =
+            static_cast<std::uint32_t>(line_len_cp(lines[target]));
+        return Pos{target, len == 0 ? 0 : std::min(from.col, len - 1)};
     }
     }
     return from;

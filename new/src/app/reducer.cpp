@@ -218,6 +218,14 @@ Command command_for_key(const EditorState& st, const Key& k) {
             case U'^': c.kind = Kind::Motion; c.motion = MotionId::FirstNonblank; break;
             case U'{': c.kind = Kind::Motion; c.motion = MotionId::ParaBack; break;
             case U'}': c.kind = Kind::Motion; c.motion = MotionId::ParaFwd; break;
+            // P3.7: '%' is a bracket match, or a file-percentage jump when a
+            // count is pending ('50%' = line 20 of 40). The count prefix is
+            // still pending here, so it decides the flavor.
+            case U'%':
+                c.kind = Kind::Motion;
+                c.motion = st.count_prefix != 0 ? MotionId::PercentLine
+                                                : MotionId::MatchBracket;
+                break;
             // P3.6 — screen-relative motions + the 'z' prefix.
             case U'H': c.kind = Kind::Scroll; c.scroll = ScrollId::LineTop; break;
             case U'M': c.kind = Kind::Scroll; c.scroll = ScrollId::LineMiddle; break;
@@ -466,8 +474,11 @@ void reducer(EditorState& st, const Command& cmd) {
             w.cursor = *r;
             if (cmd.motion != MotionId::J && cmd.motion != MotionId::K
                 && cmd.motion != MotionId::GotoFirst
-                && cmd.motion != MotionId::GotoLast) {
+                && cmd.motion != MotionId::GotoLast
+                && cmd.motion != MotionId::PercentLine) {
                 // Vertical moves keep the aim; everything else re-anchors.
+                // PercentLine is vertical too (nvim keeps the column and
+                // clamps it into the target line).
                 w.desired_col = w.cursor.col;
             }
         }

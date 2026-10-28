@@ -1,0 +1,43 @@
+fixture: name keys startLine,startCol endLine,endCol | init @ final
+paren_open % 1,4 1,14 | if (a[b] == c) {|    call(x(1), [2, 3]);|} @ if (a[b] == c) {|    call(x(1), [2, 3]);|}
+brace_open % 1,16 3,1 | if (a[b] == c) {|    call(x(1), [2, 3]);|} @ if (a[b] == c) {|    call(x(1), [2, 3]);|}
+paren_close % 1,14 1,4 | if (a[b] == c) {|    call(x(1), [2, 3]);|} @ if (a[b] == c) {|    call(x(1), [2, 3]);|}
+brace_close % 3,1 1,16 | if (a[b] == c) {|    call(x(1), [2, 3]);|} @ if (a[b] == c) {|    call(x(1), [2, 3]);|}
+inner_square % 1,6 1,8 | if (a[b] == c) {|    call(x(1), [2, 3]);|} @ if (a[b] == c) {|    call(x(1), [2, 3]);|}
+nested_same % 1,2 1,5 | ((())) @ ((()))
+nested_same_close % 1,4 1,3 | ((())) @ ((()))
+deep_square % 1,3 1,8 | [[[[[]]]]] @ [[[[[]]]]]
+deep_square_close % 1,8 1,3 | [[[[[]]]]] @ [[[[[]]]]]
+adjacent % 1,1 1,2 | () @ ()
+adjacent_close % 1,2 1,1 | () @ ()
+across_lines % 1,5 3,7 | call(|  arg1,|  arg2) @ call(|  arg1,|  arg2)
+brace_across_lines % 1,3 3,1 | a {|  b|} @ a {|  b|}
+scan_fwd % 1,1 1,8 | foo(bar) @ foo(bar)
+scan_fwd2 % 1,1 1,4 | a(b)c[d] @ a(b)c[d]
+scan_on_square % 1,6 1,8 | a(b)c[d] @ a(b)c[d]
+scan_from_mid % 1,3 1,2 | a(b)c @ a(b)c
+string_plain % 1,6 2,6 | x = "(a"|y = b) @ x = "(a"|y = b)
+unmatched_open % 1,1 1,1 | (abc @ (abc
+unmatched_close % 1,4 1,4 | abc) @ abc)
+mismatch % 1,1 1,1 | (] @ (]
+no_bracket % 1,3 1,3 | plain text @ plain text
+mixed_nest % 1,1 1,3 | ([)] @ ([)]
+mixed_nest2 % 1,1 1,5 | (a]b) @ (a]b)
+empty_line % 1,1 1,1 |  @ 
+pct_50 50% 1,1 20,1 | L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40 @ L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40
+pct_25 25% 1,1 10,1 | L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40 @ L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40
+pct_33 33% 1,1 14,1 | L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40 @ L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40
+pct_1 1% 20,1 1,1 | L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40 @ L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40
+pct_99 99% 1,1 40,1 | L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40 @ L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40
+pct_100 100% 1,1 40,1 | L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40 @ L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40
+pct_101_noop 101% 20,3 20,3 | L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40 @ L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40
+pct_999_noop 999% 20,3 20,3 | L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40 @ L01|L02|L03|L04|L05|L06|L07|L08|L09|L10|L11|L12|L13|L14|L15|L16|L17|L18|L19|L20|L21|L22|L23|L24|L25|L26|L27|L28|L29|L30|L31|L32|L33|L34|L35|L36|L37|L38|L39|L40
+pct7_30 30% 1,1 3,1 | a|b|c|d|e|f|g @ a|b|c|d|e|f|g
+pct7_50 50% 1,1 4,1 | a|b|c|d|e|f|g @ a|b|c|d|e|f|g
+pct7_1 1% 5,1 1,1 | a|b|c|d|e|f|g @ a|b|c|d|e|f|g
+pct7_66 66% 1,1 5,1 | a|b|c|d|e|f|g @ a|b|c|d|e|f|g
+pct7_100 100% 1,1 7,1 | a|b|c|d|e|f|g @ a|b|c|d|e|f|g
+pct_same_line 50% 2,4 2,4 | aaa|bbbbb|cc @ aaa|bbbbb|cc
+pct_col_kept 50% 1,7 2,2 | aaaaaaaa|bb|cccccccc @ aaaaaaaa|bb|cccccccc
+pct_indent 50% 1,2 2,2 |   alpha|    beta|  gamma @   alpha|    beta|  gamma
+pct_after_bracket 50% 1,2 2,2 | (a)|L2|L3 @ (a)|L2|L3

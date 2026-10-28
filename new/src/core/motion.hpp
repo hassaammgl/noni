@@ -38,6 +38,8 @@ enum class MotionId : std::uint8_t {
     GotoLast,  // 'G': line [count] or the last one, col carried (P3.4)
     ParaFwd,   // '}'  next paragraph boundary: first EMPTY line below (P3.5)
     ParaBack,  // '{'  same upward (P3.5)
+    MatchBracket, // '%': match the ()[]{} bracket under/after the cursor (P3.7)
+    PercentLine,  // [count]'%': line (line_count*count+99)/100, col kept (P3.7)
 };
 
 // What a motion sees: the line vector + tab expansion width (w/b/e etc in

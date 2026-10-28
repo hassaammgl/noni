@@ -733,3 +733,178 @@ TEST_CASE("view: Ctrl-f/d/u reach the reducer and move the viewport (P3.6)") {
     key(st, Key{KeyKind::PageDown, 0});
     CHECK(st.win().top_line == 20);
 }
+
+// --- P3.7: '%' bracket match + [count]% ------------------------------------
+
+TEST_CASE("motion: differential replay of the P3.7 percent/bracket fixture") {
+    const auto path = find_fixture("motion_p3g.fxt");
+    REQUIRE_MESSAGE(path.has_value(),
+                    "tests/diff/motion_p3g.fxt not found (build dir relative)");
+    std::ifstream in(*path);
+    REQUIRE(in.good());
+
+    std::vector<OracleCase> cases;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (auto c = parse_line(line)) {
+            cases.push_back(*c);
+        }
+    }
+    REQUIRE_MESSAGE(cases.size() >= 40, "fixture parsed too few oracle cases");
+
+    constexpr std::uint32_t kRows = 22;
+    for (const OracleCase& c : cases) {
+        INFO("oracle case: ", c.name, "  keys: ", c.keys);
+        EditorState st;
+        st.buffers[0].set_lines(c.lines);
+        st.win().cursor = c.start;
+        st.win().desired_col = c.start.col;
+        st.win().view_rows = static_cast<int>(kRows);
+        st.win().top_line =
+            c.start.line > kRows - 1 ? c.start.line - (kRows - 1) : 0;
+        st.mode = Mode::Normal;
+
+        for (const Key& k : decode_keys(c.keys)) {
+            key(st, k);
+            app::follow_cursor(st, static_cast<int>(kRows));
+        }
+
+        CHECK(st.win().cursor == c.want);
+        CHECK(st.buffers[0].lines() == c.final_lines);
+    }
+}
+
+TEST_CASE("motion: bracket matching errors keep the cursor (P3.7)") {
+    SUBCASE("no bracket at or after the cursor on the line") {
+        const std::vector<std::string> ls{"plain text", "(x)"};
+        const Motion m{MotionId::MatchBracket};
+        const auto r = m.apply({&ls, k_default_tabwidth}, Pos{0, 3}, 1, 3);
+        REQUIRE(!r.has_value());
+        CHECK(r.error().msg.size() > 0);
+    }
+    SUBCASE("unmatched opener / closer") {
+        const std::vector<std::string> o{"(abc"};
+        const Motion m{MotionId::MatchBracket};
+        const auto r = m.apply({&o, k_default_tabwidth}, Pos{0, 0}, 1, 0);
+        REQUIRE(!r.has_value());
+        const std::vector<std::string> c{"abc)"};
+        const auto rc = m.apply({&c, k_default_tabwidth}, Pos{0, 3}, 1, 3);
+        REQUIRE(!rc.has_value());
+    }
+    SUBCASE("a mismatched pair is not a match") {
+        const std::vector<std::string> ls{"(]"};
+        const Motion m{MotionId::MatchBracket};
+        const auto r = m.apply({&ls, k_default_tabwidth}, Pos{0, 0}, 1, 0);
+        REQUIRE(!r.has_value());
+    }
+    SUBCASE("percent over 100 is rejected") {
+        const std::vector<std::string> ls{"a", "b", "c"};
+        const Motion m{MotionId::PercentLine};
+        const auto r = m.apply({&ls, k_default_tabwidth}, Pos{0, 0}, 101, 0);
+        REQUIRE(!r.has_value());
+    }
+}
+
+TEST_CASE("motion: bracket matching across lines and mixed types (P3.7)") {
+    const Motion m{MotionId::MatchBracket};
+    SUBCASE("forward match counts only the same type") {
+        const std::vector<std::string> ls{"([)]"};
+        const auto r = m.apply({&ls, k_default_tabwidth}, Pos{0, 0}, 1, 0);
+        REQUIRE(r.has_value());
+        CHECK(*r == Pos{0, 2}); // '(' pairs with ')' at index 2
+    }
+    SUBCASE("multi-line braces") {
+        const std::vector<std::string> ls{"if {", "  (a)", "}"};
+        const auto r = m.apply({&ls, k_default_tabwidth}, Pos{0, 3}, 1, 3);
+        REQUIRE(r.has_value());
+        CHECK(*r == Pos{2, 0});
+        const auto back = m.apply({&ls, k_default_tabwidth}, Pos{2, 0}, 1, 0);
+        REQUIRE(back.has_value());
+        CHECK(*back == Pos{0, 3});
+    }
+    SUBCASE("empty lines inside the span are scanned through") {
+        const std::vector<std::string> ls{"(", "", ")"};
+        const auto r = m.apply({&ls, k_default_tabwidth}, Pos{0, 0}, 1, 0);
+        REQUIRE(r.has_value());
+        CHECK(*r == Pos{2, 0});
+    }
+    SUBCASE("strings are NOT skipped (documented limitation)") {
+        const std::vector<std::string> ls{"x = \"(a\"", "y = b)"};
+        const auto r = m.apply({&ls, k_default_tabwidth}, Pos{0, 5}, 1, 5);
+        REQUIRE(r.has_value());
+        CHECK(*r == Pos{1, 5});
+    }
+}
+
+TEST_CASE("motion: [count]% percentage jump geometry (P3.7)") {
+    std::vector<std::string> p40;
+    for (int i = 0; i < 40; ++i) {
+        p40.push_back("L" + std::to_string(i));
+    }
+    const Motion m{MotionId::PercentLine};
+
+    SUBCASE("rounded up: (lines*count+99)/100") {
+        CHECK(*m.apply({&p40, k_default_tabwidth}, Pos{0, 0}, 50, 0)
+              == Pos{19, 0});
+        CHECK(*m.apply({&p40, k_default_tabwidth}, Pos{0, 0}, 33, 0)
+              == Pos{13, 0});
+        CHECK(*m.apply({&p40, k_default_tabwidth}, Pos{0, 0}, 99, 0)
+              == Pos{39, 0});
+        CHECK(*m.apply({&p40, k_default_tabwidth}, Pos{0, 0}, 100, 0)
+              == Pos{39, 0});
+    }
+    SUBCASE("the column is kept and clamped into the target line") {
+        const std::vector<std::string> ls{"aaaaaaaa", "bb", "cccccccc"};
+        const auto r = m.apply({&ls, k_default_tabwidth}, Pos{0, 7}, 50, 7);
+        REQUIRE(r.has_value());
+        CHECK(*r == Pos{1, 1}); // "bb" -> last char
+    }
+    SUBCASE("landing on the same line leaves the cursor untouched") {
+        const std::vector<std::string> ls{"aaa", "bbbbb", "cc"};
+        const auto r = m.apply({&ls, k_default_tabwidth}, Pos{1, 4}, 50, 4);
+        REQUIRE(r.has_value());
+        CHECK(*r == Pos{1, 4});
+    }
+    SUBCASE("small files: 30% of 7 lines rounds to line 3") {
+        const std::vector<std::string> seven{"a", "b", "c", "d", "e", "f", "g"};
+        const auto r = m.apply({&seven, k_default_tabwidth}, Pos{0, 0}, 30, 0);
+        REQUIRE(r.has_value());
+        CHECK(r->line == 2);
+    }
+}
+
+TEST_CASE("motion: '%' through the reducer picks match vs percentage (P3.7)") {
+    EditorState st;
+    std::vector<std::string> many;
+    for (int i = 0; i < 40; ++i) {
+        many.push_back(i == 4 ? "if (a) {" : "L" + std::to_string(i));
+    }
+    st.buffers[0].set_lines(std::move(many));
+    st.win().view_rows = 22;
+    st.win().cursor = Pos{4, 3};
+    st.win().desired_col = 3;
+    st.mode = Mode::Normal;
+
+    // Plain '%' matches the '(' under the cursor (col 3 -> its ')' at col 5).
+    key(st, Key{KeyKind::Char, U'%'});
+    CHECK(st.win().cursor == Pos{4, 5});
+
+    // With a count it is a percentage jump (keeps the aim column).
+    st.win().cursor = Pos{0, 2};
+    st.win().desired_col = 2;
+    key(st, Key{KeyKind::Char, U'5'});
+    key(st, Key{KeyKind::Char, U'0'});
+    key(st, Key{KeyKind::Char, U'%'});
+    CHECK(st.win().cursor == Pos{19, 2});
+    CHECK(st.win().desired_col == 2);
+
+    // An out-of-range percentage reports and does not move.
+    st.win().cursor = Pos{19, 2};
+    st.msg.clear();
+    key(st, Key{KeyKind::Char, U'1'});
+    key(st, Key{KeyKind::Char, U'0'});
+    key(st, Key{KeyKind::Char, U'1'});
+    key(st, Key{KeyKind::Char, U'%'});
+    CHECK(st.win().cursor == Pos{19, 2});
+    CHECK(!st.msg.empty());
+}
