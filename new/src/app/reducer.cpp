@@ -144,6 +144,23 @@ Command command_for_key(const EditorState& st, const Key& k) {
             }
             break;
         }
+        // P3.6: while 'z' is armed, only z/t/b complete it (other z-sequences
+        // such as z<CR>/z. are P15 polish and cancel for now).
+        if (st.win().z_pending) {
+            if (k.kind == KeyKind::Char && k.cp == U'z') {
+                c.kind = Kind::Scroll;
+                c.scroll = ScrollId::Center;
+            } else if (k.kind == KeyKind::Char && k.cp == U't') {
+                c.kind = Kind::Scroll;
+                c.scroll = ScrollId::Top;
+            } else if (k.kind == KeyKind::Char && k.cp == U'b') {
+                c.kind = Kind::Scroll;
+                c.scroll = ScrollId::Bottom;
+            } else {
+                c.kind = Kind::ZCancel;
+            }
+            break;
+        }
         // P3.3: while a find is pending, the NEXT printable key is the
         // {char} target (digits included — they are not a count here).
         if (st.win().find_pending != FindKind::None) {
@@ -201,6 +218,11 @@ Command command_for_key(const EditorState& st, const Key& k) {
             case U'^': c.kind = Kind::Motion; c.motion = MotionId::FirstNonblank; break;
             case U'{': c.kind = Kind::Motion; c.motion = MotionId::ParaBack; break;
             case U'}': c.kind = Kind::Motion; c.motion = MotionId::ParaFwd; break;
+            // P3.6 — screen-relative motions + the 'z' prefix.
+            case U'H': c.kind = Kind::Scroll; c.scroll = ScrollId::LineTop; break;
+            case U'M': c.kind = Kind::Scroll; c.scroll = ScrollId::LineMiddle; break;
+            case U'L': c.kind = Kind::Scroll; c.scroll = ScrollId::LineBottom; break;
+            case U'z': c.kind = Kind::ZArm; break;
             case U';': case U',': {
                 // Repeat (or reverse-repeat) the remembered find. Empty
                 // last_find: no command at all (oracle: stays put).
@@ -217,10 +239,19 @@ Command command_for_key(const EditorState& st, const Key& k) {
             }
             break;
         case KeyKind::CtrlChar:
-            if (k.cp == U'r') {
-                c.kind = Kind::Redo;
+            switch (k.cp) {
+            case U'r': c.kind = Kind::Redo; break;
+            // P3.6 — page/half-page scrolls.
+            case U'f': c.kind = Kind::Scroll; c.scroll = ScrollId::PageDown; break;
+            case U'b': c.kind = Kind::Scroll; c.scroll = ScrollId::PageUp; break;
+            case U'd': c.kind = Kind::Scroll; c.scroll = ScrollId::HalfDown; break;
+            case U'u': c.kind = Kind::Scroll; c.scroll = ScrollId::HalfUp; break;
+            default: break;
             }
             break;
+        // The terminal's PageUp/PageDown keys mirror C-b/C-f.
+        case KeyKind::PageUp: c.kind = Kind::Scroll; c.scroll = ScrollId::PageUp; break;
+        case KeyKind::PageDown: c.kind = Kind::Scroll; c.scroll = ScrollId::PageDown; break;
         case KeyKind::ArrowUp: c.kind = Kind::Motion; c.motion = MotionId::K; break;
         case KeyKind::ArrowDown: c.kind = Kind::Motion; c.motion = MotionId::J; break;
         case KeyKind::ArrowLeft: c.kind = Kind::Motion; c.motion = MotionId::H; break;
@@ -267,16 +298,19 @@ void reducer(EditorState& st, const Command& cmd) {
     // Count prefix lifecycle: digits extend it; any other command consumes
     // it (None also aborts it, vim aborts on unmapped keys). FindArm/find
     // cancel stages must NOT consume it — the count belongs to the COMPLETE
-    // f{char} (oracle: 2fa moves to the 2nd occurrence).
+    // f{char} (oracle: 2fa moves to the 2nd occurrence). Same for the gg/z
+    // prefixes: their second key carries the count.
     std::uint32_t count = 1;
     if (cmd.kind == Kind::CountDigit) {
         st.count_prefix = st.count_prefix * 10
                         + static_cast<std::uint32_t>(cmd.cp - U'0');
         return;
     }
+    const bool has_count = st.count_prefix != 0;
     if (cmd.kind != Kind::None && cmd.kind != Kind::FindArm
         && cmd.kind != Kind::FindCancel && cmd.kind != Kind::GgArm
-        && cmd.kind != Kind::GgCancel) {
+        && cmd.kind != Kind::GgCancel && cmd.kind != Kind::ZArm
+        && cmd.kind != Kind::ZCancel) {
         count = st.count_prefix == 0 ? 1 : st.count_prefix;
         st.count_prefix = 0;
     }
@@ -292,6 +326,40 @@ void reducer(EditorState& st, const Command& cmd) {
         st.win().gg_pending = false;
         st.count_prefix = 0;
         return;
+
+    case Kind::ZArm:
+        st.win().z_pending = true;
+        return;
+
+    case Kind::ZCancel:
+        st.win().z_pending = false;
+        st.count_prefix = 0;
+        return;
+
+    case Kind::Scroll: {
+        // P3.6 — screen-relative scrolls (C-f/C-b/C-d/C-u, H/M/L, zz/zt/zb).
+        // core/view owns the vim-exact geometry against the p3f oracle; the
+        // reducer only carries the column (vertical semantics: desired_col
+        // survives, like j/k) and clamps it into the target line.
+        WindowState& w = st.win();
+        Buffer* b = st.buffer(w.buffer);
+        if (b == nullptr || st.mode != Mode::Normal) {
+            return;
+        }
+        const auto& lines = b->lines();
+        const ViewGeometry g{static_cast<std::uint32_t>(lines.size()),
+                             std::max(1, w.view_rows), w.scrolloff};
+        const ScrollRequest req{cmd.scroll, w.cursor.line, w.top_line,
+                                count, has_count};
+        const ScrollResult r = apply_scroll(g, req);
+        w.top_line = r.top;
+        w.cursor.line = r.cursor_line;
+        const std::uint32_t len = line_len_cp(lines[w.cursor.line]);
+        w.cursor.col = len == 0 ? 0 : std::min(w.desired_col, len - 1);
+        w.z_pending = false; // the second key of 'z' completed the command
+        st.mark_dirty();
+        return;
+    }
 
     case Kind::FindArm:
         st.win().find_pending = cmd.find_kind;
@@ -565,17 +633,14 @@ void follow_cursor(EditorState& st, int view_rows) {
         return;
     }
     WindowState& w = st.win();
-    // Minimal follow (P3.6 = full scroll set: scrolloff/zz/keep-hscroll).
-    // v0 scrolloff is 0 (vim default).
-    const std::uint32_t top_before = w.top_line;
-    if (w.cursor.line < w.top_line) {
-        w.top_line = w.cursor.line;
-    }
-    if (w.cursor.line >= w.top_line + static_cast<std::uint32_t>(view_rows)) {
-        w.top_line = w.cursor.line - (static_cast<std::uint32_t>(view_rows)
-                                          - 1);
-    }
-    if (w.top_line != top_before) {
+    w.view_rows = view_rows; // the scroll commands read the same number
+    Buffer* b = st.buffer(w.buffer);
+    const ViewGeometry g{
+        b == nullptr ? 1U : static_cast<std::uint32_t>(b->lines().size()),
+        view_rows, w.scrolloff};
+    const std::uint32_t top = follow_top(g, w.cursor.line, w.top_line);
+    if (top != w.top_line) {
+        w.top_line = top;
         st.mark_dirty();
     }
 }

@@ -19,6 +19,7 @@
 #include "app/reducer.hpp"
 #include "core/editor_state.hpp"
 #include "core/pos.hpp"
+#include "core/view.hpp"
 
 using namespace noni;
 
@@ -31,6 +32,9 @@ struct OracleCase {
     Pos want{};
     std::vector<std::string> lines;       // starting content (init picture)
     std::vector<std::string> final_lines; // expected end content
+    // P3.6 only: the expected end topline (1-based, as nvim records it; 0 =
+    // the fixture has no view expectation).
+    std::uint32_t want_top = 0;
 };
 
 // Splits a '|'-joined line vector ("" -> one empty line).
@@ -72,6 +76,14 @@ std::optional<OracleCase> parse_line(const std::string& line) {
     is >> slc >> elc;
     c.start = parse_lc(slc);
     c.want = parse_lc(elc);
+    // P3.6 fixtures append `top=<end topline>` (1-based); older fixtures do
+    // not, so every other token is ignored.
+    for (std::string extra; is >> extra;) {
+        if (extra.rfind("top=", 0) == 0) {
+            c.want_top = static_cast<std::uint32_t>(
+                std::stoul(extra.substr(4)));
+        }
+    }
 
     // Pictures: "| <init> @ <final>", both '|'-joined line vectors.
     std::string both = line.substr(sep + 3);
@@ -86,7 +98,7 @@ std::optional<OracleCase> parse_line(const std::string& line) {
 
 // Keys replay: '<Esc>' becomes KeyKind::Esc, '<SPC>' a space Char (the
 // fixture records are space-delimited, so a space target needs a token);
-// any other byte is a Char.
+// '<C-x>' the control key (P3.6 scrolls); any other byte is a Char.
 std::vector<Key> decode_keys(const std::string& s) {
     std::vector<Key> keys;
     for (std::size_t i = 0; i < s.size();) {
@@ -95,6 +107,18 @@ std::vector<Key> decode_keys(const std::string& s) {
             i += 5;
         } else if (s.compare(i, 5, "<SPC>") == 0) {
             keys.push_back(Key{KeyKind::Char, U' '});
+            i += 5;
+        } else if (s.compare(i, 5, "<C-f>") == 0) {
+            keys.push_back(Key{KeyKind::CtrlChar, U'f'});
+            i += 5;
+        } else if (s.compare(i, 5, "<C-b>") == 0) {
+            keys.push_back(Key{KeyKind::CtrlChar, U'b'});
+            i += 5;
+        } else if (s.compare(i, 5, "<C-d>") == 0) {
+            keys.push_back(Key{KeyKind::CtrlChar, U'd'});
+            i += 5;
+        } else if (s.compare(i, 5, "<C-u>") == 0) {
+            keys.push_back(Key{KeyKind::CtrlChar, U'u'});
             i += 5;
         } else {
             keys.push_back(Key{KeyKind::Char, static_cast<char32_t>(s[i])});
@@ -390,4 +414,322 @@ TEST_CASE("motion: differential replay of the P3 word-motion fixture") {
         CHECK(st.win().cursor == c.want);
         CHECK(st.buffers[0].lines() == c.final_lines);
     }
+}
+
+// --- P3.6: viewport scrolls ------------------------------------------------
+
+TEST_CASE("motion: differential replay of the P3.6 scroll fixture") {
+    const auto path = find_fixture("motion_p3f.fxt");
+    REQUIRE_MESSAGE(path.has_value(),
+                    "tests/diff/motion_p3f.fxt not found (build dir relative)");
+    std::ifstream in(*path);
+    REQUIRE(in.good());
+
+    std::vector<OracleCase> cases;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (auto c = parse_line(line)) {
+            cases.push_back(*c);
+        }
+    }
+    REQUIRE_MESSAGE(cases.size() >= 40, "fixture parsed too few oracle cases");
+
+    // The oracle window was 22 rows tall (nvim &lines=24 minus chrome).
+    constexpr std::uint32_t kRows = 22;
+    for (const OracleCase& c : cases) {
+        INFO("oracle case: ", c.name, "  keys: ", c.keys);
+        EditorState st;
+        st.buffers[0].set_lines(c.lines);
+        st.win().cursor = c.start;
+        st.win().desired_col = c.start.col;
+        st.win().view_rows = static_cast<int>(kRows);
+        // The generator starts every case with the cursor on the last visible
+        // row: vim's own state after jumping there with scrolloff 0.
+        st.win().top_line =
+            c.start.line > kRows - 1 ? c.start.line - (kRows - 1) : 0;
+        st.mode = Mode::Normal;
+
+        for (const Key& k : decode_keys(c.keys)) {
+            key(st, k);
+            // The real App renders (and follows the cursor) after every key,
+            // which is also what nvim does; replay must do the same or the
+            // follow-up scroll keys would see a stale viewport.
+            app::follow_cursor(st, static_cast<int>(kRows));
+        }
+
+        CHECK(st.win().cursor == c.want);
+        if (c.want_top > 0) {
+            CHECK(st.win().top_line == c.want_top - 1);
+        }
+        CHECK(st.buffers[0].lines() == c.final_lines);
+    }
+}
+
+TEST_CASE("view: H/M/L pick visible rows and clamp (P3.6)") {
+    const ViewGeometry g{40, 22, 0};
+
+    const auto apply = [&](ScrollId id, std::uint32_t cur, std::uint32_t top,
+                           std::uint32_t count, bool counted) {
+        return apply_scroll(g, ScrollRequest{id, cur, top, count, counted});
+    };
+
+    SUBCASE("H counts from the top, L from the bottom") {
+        CHECK(apply(ScrollId::LineTop, 9, 0, 1, false).cursor_line == 0);
+        CHECK(apply(ScrollId::LineTop, 9, 0, 3, true).cursor_line == 2);
+        CHECK(apply(ScrollId::LineBottom, 9, 0, 1, false).cursor_line == 21);
+        CHECK(apply(ScrollId::LineBottom, 9, 0, 2, true).cursor_line == 20);
+    }
+    SUBCASE("M ignores the count and centres the VISIBLE lines") {
+        CHECK(apply(ScrollId::LineMiddle, 9, 0, 1, false).cursor_line == 10);
+        CHECK(apply(ScrollId::LineMiddle, 9, 0, 5, true).cursor_line == 10);
+        // A 10-line buffer in a 22-row view: middle is line 4, not row 10.
+        const ViewGeometry short_buf{10, 22, 0};
+        const auto r = apply_scroll(short_buf,
+                                    ScrollRequest{ScrollId::LineMiddle, 2, 0,
+                                                  1, false});
+        CHECK(r.cursor_line == 4);
+    }
+    SUBCASE("counts past the visible area clamp to the view edges") {
+        CHECK(apply(ScrollId::LineTop, 9, 0, 30, true).cursor_line == 21);
+        CHECK(apply(ScrollId::LineBottom, 9, 0, 30, true).cursor_line == 0);
+    }
+    SUBCASE("H/M/L never move the viewport") {
+        CHECK(apply(ScrollId::LineTop, 20, 5, 1, false).top == 5);
+        CHECK(apply(ScrollId::LineMiddle, 20, 5, 1, false).top == 5);
+        CHECK(apply(ScrollId::LineBottom, 20, 5, 1, false).top == 5);
+    }
+}
+
+TEST_CASE("view: zz/zt/zb geometry (P3.6)") {
+    const ViewGeometry g{40, 22, 0};
+
+    SUBCASE("zz centres the cursor line, cursor stays") {
+        const auto r = apply_scroll(g, ScrollRequest{ScrollId::Center, 19, 0,
+                                                     1, false});
+        CHECK(r.top == 9); // 19 - (22-1)/2
+        CHECK(r.cursor_line == 19);
+    }
+    SUBCASE("zt/zb pin the edge, cursor still stays") {
+        const auto t = apply_scroll(g, ScrollRequest{ScrollId::Top, 19, 0,
+                                                     1, false});
+        CHECK(t.top == 19);
+        CHECK(t.cursor_line == 19);
+        const auto b = apply_scroll(g, ScrollRequest{ScrollId::Bottom, 9, 0,
+                                                     1, false});
+        CHECK(b.top == 0); // 9 - 21 clamps to the first line
+        CHECK(b.cursor_line == 9);
+    }
+    SUBCASE("counted z commands target a 1-based line and move the cursor") {
+        const auto t = apply_scroll(g, ScrollRequest{ScrollId::Top, 9, 0,
+                                                     25, true});
+        CHECK(t.top == 24);
+        CHECK(t.cursor_line == 24); // vim cannot leave the cursor off-screen
+        const auto z = apply_scroll(g, ScrollRequest{ScrollId::Center, 19, 0,
+                                                     3, true});
+        CHECK(z.top == 0); // 2 - 10 clamps
+        CHECK(z.cursor_line == 2);
+        const auto b = apply_scroll(g, ScrollRequest{ScrollId::Bottom, 4, 0,
+                                                     20, true});
+        CHECK(b.top == 0);
+        CHECK(b.cursor_line == 19);
+    }
+    SUBCASE("counts past EOF clamp to the last line") {
+        const auto r = apply_scroll(g, ScrollRequest{ScrollId::Top, 0, 0, 999,
+                                                     true});
+        CHECK(r.top == 39);
+        CHECK(r.cursor_line == 39);
+    }
+    SUBCASE("near-EOF views centre against the window, not the text") {
+        const auto r = apply_scroll(g, ScrollRequest{ScrollId::Center, 39, 18,
+                                                     1, false});
+        CHECK(r.top == 29); // nvim allows '~' lanes below (oracle)
+    }
+}
+
+TEST_CASE("view: page scrolls clamp at the file edges (P3.6)") {
+    const ViewGeometry g{40, 22, 0}; // page = 20, half = 11
+
+    SUBCASE("C-f scrolls a page and puts the cursor on the new top") {
+        const auto r = apply_scroll(g, ScrollRequest{ScrollId::PageDown, 0, 0,
+                                                     1, false});
+        CHECK(r.top == 20);
+        CHECK(r.cursor_line == 20);
+    }
+    SUBCASE("C-f with the last line already visible jumps to EOF") {
+        const auto r = apply_scroll(g, ScrollRequest{ScrollId::PageDown, 39, 18,
+                                                     1, false});
+        CHECK(r.top == 39);
+        CHECK(r.cursor_line == 39);
+    }
+    SUBCASE("C-f count pages, clamped to the last line") {
+        const auto r = apply_scroll(g, ScrollRequest{ScrollId::PageDown, 0, 0,
+                                                     9, true});
+        CHECK(r.top == 39);
+        CHECK(r.cursor_line == 39);
+    }
+    SUBCASE("C-b puts the cursor on the new bottom line") {
+        const auto r = apply_scroll(g, ScrollRequest{ScrollId::PageUp, 39, 18,
+                                                     1, false});
+        CHECK(r.top == 0);
+        CHECK(r.cursor_line == 21);
+    }
+    SUBCASE("C-b at the top is a no-op (cursor untouched)") {
+        const auto r = apply_scroll(g, ScrollRequest{ScrollId::PageUp, 4, 0,
+                                                     1, false});
+        CHECK(r.top == 0);
+        CHECK(r.cursor_line == 4);
+    }
+}
+
+TEST_CASE("view: half-page scrolls never scroll past the last full page") {
+    const ViewGeometry g{40, 22, 0}; // half = 11, max top = 40-22 = 18
+
+    SUBCASE("C-d moves cursor and view together") {
+        const auto r = apply_scroll(g, ScrollRequest{ScrollId::HalfDown, 4, 0,
+                                                     1, false});
+        CHECK(r.top == 11);
+        CHECK(r.cursor_line == 15);
+    }
+    SUBCASE("C-d near EOF clamps the cursor to the last line") {
+        const auto r = apply_scroll(g, ScrollRequest{ScrollId::HalfDown, 34, 13,
+                                                     1, false});
+        CHECK(r.top == 18); // no '~' lanes for C-d
+        CHECK(r.cursor_line == 39);
+    }
+    SUBCASE("C-d with a count scrolls that many lines") {
+        const auto r = apply_scroll(g, ScrollRequest{ScrollId::HalfDown, 0, 0,
+                                                     3, true});
+        CHECK(r.top == 3);
+        CHECK(r.cursor_line == 3);
+    }
+    SUBCASE("C-u clamps at the top") {
+        const auto r = apply_scroll(g, ScrollRequest{ScrollId::HalfUp, 24, 3,
+                                                     1, false});
+        CHECK(r.top == 0);
+        CHECK(r.cursor_line == 13);
+    }
+    SUBCASE("short buffer: no scrolling, cursor clamps to the last line") {
+        const ViewGeometry short_buf{10, 22, 0};
+        const auto r = apply_scroll(short_buf,
+                                    ScrollRequest{ScrollId::HalfDown, 5, 0, 1,
+                                                  false});
+        CHECK(r.top == 0);
+        CHECK(r.cursor_line == 9);
+    }
+}
+
+TEST_CASE("view: follow_top honours scrolloff (P3.6)") {
+    SUBCASE("scrolloff keeps rows above the cursor") {
+        const ViewGeometry g{100, 10, 2};
+        // Cursor one row below the top: the view must scroll back.
+        CHECK(follow_top(g, 1, 0) == 0);
+        CHECK(follow_top(g, 5, 0) == 0);
+        // Cursor near the bottom edge pushes the top.
+        CHECK(follow_top(g, 9, 0) == 2);
+        CHECK(follow_top(g, 50, 45) == 45); // still inside the so margins
+        CHECK(follow_top(g, 56, 45) == 49); // pushed past the bottom margin
+    }
+    SUBCASE("scrolloff is clamped to half the view") {
+        const ViewGeometry g{100, 4, 99};
+        CHECK(follow_top(g, 5, 0) == 3); // so == 1: 5+1-4+1
+    }
+    SUBCASE("top is clamped to the last line") {
+        const ViewGeometry g{5, 10, 0};
+        CHECK(follow_top(g, 4, 100) == 4);
+    }
+    SUBCASE("a one-row view still follows (no divide/loop)") {
+        const ViewGeometry g{5, 1, 0};
+        CHECK(follow_top(g, 3, 0) == 3);
+        CHECK(visible_rows(g, 3) == 1);
+    }
+}
+
+TEST_CASE("view: reducer keeps the aim column through scrolls (P3.6)") {
+    EditorState st;
+    st.buffers[0].set_lines({"abcdef", "ab", "abcdef"});
+    st.win().view_rows = 10;
+    st.win().cursor = Pos{0, 4};
+    st.win().desired_col = 4;
+    st.mode = Mode::Normal;
+
+    // L -> the last visible line, column carried (clamped to the shorter
+    // line: "ab" has 2 cps -> col 1).
+    key(st, Key{KeyKind::Char, U'L'});
+    CHECK(st.win().cursor.line == 2);
+    CHECK(st.win().cursor.col == 4);
+
+    st.win().cursor = Pos{0, 4};
+    st.win().desired_col = 4;
+    key(st, Key{KeyKind::Char, U'M'});
+    CHECK(st.win().cursor.line == 1);
+    CHECK(st.win().cursor.col == 1); // clamped into "ab"
+    CHECK(st.win().desired_col == 4); // the aim survives, like j/k
+
+    // A later vertical move recovers the wanted column.
+    key(st, Key{KeyKind::Char, U'j'});
+    CHECK(st.win().cursor.col == 4);
+}
+
+TEST_CASE("view: z-prefix sequences arm and cancel (P3.6)") {
+    EditorState st;
+    std::vector<std::string> many;
+    for (int i = 0; i < 40; ++i) {
+        many.push_back("L" + std::to_string(i));
+    }
+    st.buffers[0].set_lines(std::move(many));
+    st.win().view_rows = 22;
+    st.win().cursor = Pos{19, 1};
+    st.win().desired_col = 1;
+    st.mode = Mode::Normal;
+
+    key(st, Key{KeyKind::Char, U'z'});
+    CHECK(st.win().z_pending);
+    key(st, Key{KeyKind::Char, U't'});
+    CHECK_FALSE(st.win().z_pending);
+    CHECK(st.win().top_line == 19);
+
+    // An unknown z-command cancels and keeps the count in limbo (like gg).
+    st.count_prefix = 3;
+    key(st, Key{KeyKind::Char, U'z'});
+    key(st, Key{KeyKind::Char, U'x'});
+    CHECK_FALSE(st.win().z_pending);
+    CHECK(st.count_prefix == 0);
+
+    // 5zz: explicit count = the target LINE, not a repeat.
+    key(st, Key{KeyKind::Char, U'5'});
+    key(st, Key{KeyKind::Char, U'z'});
+    key(st, Key{KeyKind::Char, U'z'});
+    CHECK(st.win().cursor.line == 4);
+    CHECK(st.win().top_line == 0); // 4 - 10 clamps
+}
+
+TEST_CASE("view: Ctrl-f/d/u reach the reducer and move the viewport (P3.6)") {
+    EditorState st;
+    std::vector<std::string> many;
+    for (int i = 0; i < 40; ++i) {
+        many.push_back("L" + std::to_string(i));
+    }
+    st.buffers[0].set_lines(std::move(many));
+    st.win().view_rows = 22;
+    st.mode = Mode::Normal;
+
+    key(st, Key{KeyKind::CtrlChar, U'd'});
+    CHECK(st.win().cursor.line == 11);
+    CHECK(st.win().top_line == 11);
+
+    key(st, Key{KeyKind::CtrlChar, U'u'});
+    CHECK(st.win().cursor.line == 0);
+    CHECK(st.win().top_line == 0);
+
+    key(st, Key{KeyKind::CtrlChar, U'f'});
+    CHECK(st.win().cursor.line == 20);
+    CHECK(st.win().top_line == 20);
+
+    key(st, Key{KeyKind::CtrlChar, U'b'});
+    CHECK(st.win().cursor.line == 21);
+    CHECK(st.win().top_line == 0);
+
+    // The terminal PageDown key mirrors C-f.
+    key(st, Key{KeyKind::PageDown, 0});
+    CHECK(st.win().top_line == 20);
 }

@@ -63,6 +63,9 @@ int App::run() {
             quit_ = true; // TEMP quit until :q (P6)
             return 0;
         }
+        // P3.6: scroll commands (C-f/C-b/C-d/C-u, H/M/L, zz/zt/zb) read the
+        // view height from the window state; keep it current before dispatch.
+        st_.win().view_rows = renderer_.view_rows();
         reducer(st_, command_for_key(st_, *k));
     }
 }

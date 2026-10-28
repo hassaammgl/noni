@@ -292,6 +292,11 @@ TEST_CASE("reducer: follow_cursor keeps the cursor line visible") {
     }
     SUBCASE("cursor above the top scrolls up") {
         EditorState st;
+        std::vector<std::string> many;
+        for (int i = 0; i < 30; ++i) {
+            many.push_back(std::to_string(i));
+        }
+        st.buffers[0].set_lines(std::move(many));
         st.win().top_line = 5;
         st.win().cursor = Pos{2, 0};
         app::follow_cursor(st, 10);
@@ -299,6 +304,11 @@ TEST_CASE("reducer: follow_cursor keeps the cursor line visible") {
     }
     SUBCASE("cursor at bottom edge scrolls by rows-1") {
         EditorState st;
+        std::vector<std::string> many;
+        for (int i = 0; i < 30; ++i) {
+            many.push_back(std::to_string(i));
+        }
+        st.buffers[0].set_lines(std::move(many));
         st.win().top_line = 0;
         st.win().cursor = Pos{7, 0};
         app::follow_cursor(st, 4); // visible rows 0..3; 7 outside
@@ -306,6 +316,11 @@ TEST_CASE("reducer: follow_cursor keeps the cursor line visible") {
     }
     SUBCASE("cursor on the last visible row does not scroll") {
         EditorState st;
+        std::vector<std::string> many;
+        for (int i = 0; i < 30; ++i) {
+            many.push_back(std::to_string(i));
+        }
+        st.buffers[0].set_lines(std::move(many));
         st.win().top_line = 2;
         st.win().cursor = Pos{5, 0};
         app::follow_cursor(st, 4); // last row = 2+4-1 = 5
@@ -313,6 +328,11 @@ TEST_CASE("reducer: follow_cursor keeps the cursor line visible") {
     }
     SUBCASE("cursor inside stays untouched") {
         EditorState st;
+        std::vector<std::string> many;
+        for (int i = 0; i < 30; ++i) {
+            many.push_back(std::to_string(i));
+        }
+        st.buffers[0].set_lines(std::move(many));
         st.win().top_line = 3;
         st.win().cursor = Pos{4, 0};
         app::follow_cursor(st, 4);

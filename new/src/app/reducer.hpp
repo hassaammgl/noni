@@ -15,8 +15,9 @@ namespace noni::app {
 // motion rules are P2.7 via core/motion.hpp).
 void reducer(EditorState& st, const Command& cmd);
 
-// Viewport follow (minimal, P3.6 owns the full scroll set): keeps the cursor
-// line visible in a `view_rows`-tall view. Pure.
+// Viewport follow (P3.6: full scroll set via core/view, scrolloff honoured):
+// keeps the cursor line visible in a `view_rows`-tall view and records the
+// height in WindowState::view_rows for the scroll commands. Pure.
 void follow_cursor(EditorState& st, int view_rows);
 
 // Same as follow_cursor plus cursor/grid re-clamp after a resize.

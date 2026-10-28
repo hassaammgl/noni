@@ -10,6 +10,7 @@
 #include "core/buffer.hpp"
 #include "core/motion.hpp"
 #include "core/pos.hpp"
+#include "core/view.hpp"
 
 namespace noni {
 
@@ -78,6 +79,12 @@ struct WindowState {
     FindState last_find{};
     FindKind find_pending = FindKind::None; // waiting for the {char} second key
     bool gg_pending = false; // 'g' armed, waiting for the second 'g' (P3.4)
+    bool z_pending = false;  // 'z' armed, waiting for z/t/b (P3.6)
+    // P3.6: view geometry used by the scroll commands (C-f/C-b/C-d/C-u,
+    // H/M/L, zz/zt/zb). `view_rows` is the buffer-text height of the window,
+    // refreshed by App::run before every key (and by follow_cursor).
+    int view_rows = 1;
+    int scrolloff = 0; // vim 'scrolloff' (config arrives in P11)
 };
 
 // --- command model (mode-agnostic; app/reducer translates keys) ---------------
@@ -103,9 +110,13 @@ struct Command {
         FindCancel,  // aborted pending find (Esc/other non-char)
         GgArm,       // 'g' seen: wait for the second 'g' (keep count)
         GgCancel,    // aborted gg sequence
+        Scroll,      // viewport scroll command (P3.6); see Command::scroll
+        ZArm,        // 'z' seen: wait for z/t/b (keep count)
+        ZCancel,     // aborted z sequence
     };
     Kind kind = Kind::None;
     MotionId motion = MotionId::H; // Motion payload
+    ScrollId scroll = ScrollId::HalfDown; // Scroll payload (P3.6)
     char32_t cp = 0;               // InsertChar / CountDigit / find target
     std::uint32_t count = 1;       // reserved for P3 command syntax
     bool at_eol = false;           // EnterInsert flavor ('A' appends EOL)
