@@ -472,10 +472,16 @@ void reducer(EditorState& st, const Command& cmd) {
             st.msg = r.error().msg;
         } else {
             w.cursor = *r;
-            if (cmd.motion != MotionId::J && cmd.motion != MotionId::K
-                && cmd.motion != MotionId::GotoFirst
-                && cmd.motion != MotionId::GotoLast
-                && cmd.motion != MotionId::PercentLine) {
+            if (cmd.motion == MotionId::Dollar) {
+                // P3.8: '$' aims at vim's MAXCOL, not at this line's last-char
+                // column, so a following j/k lands on the END of the target
+                // line (oracle: long->short->long "$jj"). Scrolls, gg/G and
+                // 'z' scrolls carry that aim too (all clamp it into the line).
+                w.desired_col = k_max_col;
+            } else if (cmd.motion != MotionId::J && cmd.motion != MotionId::K
+                       && cmd.motion != MotionId::GotoFirst
+                       && cmd.motion != MotionId::GotoLast
+                       && cmd.motion != MotionId::PercentLine) {
                 // Vertical moves keep the aim; everything else re-anchors.
                 // PercentLine is vertical too (nvim keeps the column and
                 // clamps it into the target line).

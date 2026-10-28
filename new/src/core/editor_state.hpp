@@ -71,9 +71,12 @@ struct WindowState {
     Pos cursor{};      // (line, cp col) — ALWAYS clamped to the buffer
     std::uint32_t top_line = 0;    // viewport scroll (P2.3)
     std::uint32_t left_col = 0;    // horizontal scroll (P2.3)
-    std::uint32_t desired_col = 0; // vim curswant: the col j/k aim at across
-                                   // shorter lines; any non-vertical cursor
-                                   // move resets it to the new cursor col
+    std::uint32_t desired_col = 0; // vim curswant (P3.8): the col j/k aim at
+                                   // across shorter lines. '$' stores
+                                   // core/pos.hpp k_max_col ("infinite", so
+                                   // the aim is the target line's last char);
+                                   // every non-vertical cursor move resets it
+                                   // to the new cursor col.
     // P3.3: last f/F/t/T of this window. Set by EVERY find attempt, even a
     // failed one (oracle: "; after a failed f repeats the failed target).
     FindState last_find{};

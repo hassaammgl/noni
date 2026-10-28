@@ -908,3 +908,124 @@ TEST_CASE("motion: '%' through the reducer picks match vs percentage (P3.7)") {
     CHECK(st.win().cursor == Pos{19, 2});
     CHECK(!st.msg.empty());
 }
+
+// --- P3.8: curswant (preferred column) -------------------------------------
+
+TEST_CASE("motion: differential replay of the P3.8 curswant fixture") {
+    const auto path = find_fixture("motion_p3h.fxt");
+    REQUIRE_MESSAGE(path.has_value(),
+                    "tests/diff/motion_p3h.fxt not found (build dir relative)");
+    std::ifstream in(*path);
+    REQUIRE(in.good());
+
+    std::vector<OracleCase> cases;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (auto c = parse_line(line)) {
+            cases.push_back(*c);
+        }
+    }
+    REQUIRE_MESSAGE(cases.size() >= 40, "fixture parsed too few oracle cases");
+
+    constexpr std::uint32_t kRows = 22;
+    for (const OracleCase& c : cases) {
+        INFO("oracle case: ", c.name, "  keys: ", c.keys);
+        EditorState st;
+        st.buffers[0].set_lines(c.lines);
+        st.win().cursor = c.start;
+        st.win().desired_col = c.start.col;
+        st.win().view_rows = static_cast<int>(kRows);
+        st.win().top_line =
+            c.start.line > kRows - 1 ? c.start.line - (kRows - 1) : 0;
+        st.mode = Mode::Normal;
+
+        for (const Key& k : decode_keys(c.keys)) {
+            key(st, k);
+            app::follow_cursor(st, static_cast<int>(kRows));
+        }
+
+        CHECK(st.win().cursor == c.want);
+        if (c.want_top > 0) {
+            CHECK(st.win().top_line == c.want_top - 1);
+        }
+        CHECK(st.buffers[0].lines() == c.final_lines);
+    }
+}
+
+TEST_CASE("motion: '$' aims at MAXCOL, not at the last-char column (P3.8)") {
+    EditorState st;
+    st.buffers[0].set_lines({"abcdefghij", "ab", "abcdefghij"});
+    st.win().view_rows = 22;
+    st.win().cursor = Pos{0, 0};
+    st.win().desired_col = 0;
+    st.mode = Mode::Normal;
+
+    key(st, Key{KeyKind::Char, U'$'});
+    CHECK(st.win().cursor == Pos{0, 9});
+    CHECK(st.win().desired_col == k_max_col);
+
+    // Onto the short line: the column clamps, the aim survives.
+    key(st, Key{KeyKind::Char, U'j'});
+    CHECK(st.win().cursor == Pos{1, 1});
+    CHECK(st.win().desired_col == k_max_col);
+
+    // Back onto a long line: the aim recovers as "as far right as possible"
+    // (a plain column would have given col 1 here).
+    key(st, Key{KeyKind::Char, U'j'});
+    CHECK(st.win().cursor == Pos{2, 9});
+    CHECK(st.win().desired_col == k_max_col);
+
+    // A horizontal move re-anchors the aim to a real column.
+    key(st, Key{KeyKind::Char, U'0'});
+    CHECK(st.win().desired_col == 0);
+    key(st, Key{KeyKind::Char, U'k'});
+    CHECK(st.win().cursor == Pos{1, 0}); // aim 0, not MAXCOL
+}
+
+TEST_CASE("motion: column memory long -> short -> long (P3.8 ACCEPT)") {
+    EditorState st;
+    st.buffers[0].set_lines({"abcdefghij", "ab", "abcdefghij"});
+    st.win().view_rows = 22;
+    st.win().cursor = Pos{0, 7};
+    st.win().desired_col = 7;
+    st.mode = Mode::Normal;
+
+    key(st, Key{KeyKind::Char, U'j'});
+    CHECK(st.win().cursor == Pos{1, 1}); // clamped into "ab"
+    CHECK(st.win().desired_col == 7);    // ...but the aim is remembered
+
+    key(st, Key{KeyKind::Char, U'j'});
+    CHECK(st.win().cursor == Pos{2, 7}); // recovered
+    CHECK(st.win().desired_col == 7);
+}
+
+TEST_CASE("motion: MAXCOL survives half-page scrolls and gg/G (P3.8)") {
+    EditorState st;
+    std::vector<std::string> ls;
+    for (int i = 0; i < 30; ++i) {
+        ls.push_back("abcdefghij");
+    }
+    st.buffers[0].set_lines(std::move(ls));
+    st.win().view_rows = 22;
+    st.win().top_line = 0;
+    st.win().cursor = Pos{0, 0};
+    st.win().desired_col = 0;
+    st.mode = Mode::Normal;
+
+    key(st, Key{KeyKind::Char, U'$'});
+    CHECK(st.win().desired_col == k_max_col);
+
+    key(st, Key{KeyKind::CtrlChar, U'd'});
+    CHECK(st.win().cursor == Pos{11, 9}); // end of the 12th line
+    CHECK(st.win().desired_col == k_max_col);
+
+    key(st, Key{KeyKind::Char, U'G'});
+    CHECK(st.win().cursor == Pos{29, 9}); // still "as far right as possible"
+    CHECK(st.win().desired_col == k_max_col);
+
+    // 'gg' carries it too (oracle: "$ggj" lands on the end of the line).
+    key(st, Key{KeyKind::Char, U'g'});
+    key(st, Key{KeyKind::Char, U'g'});
+    CHECK(st.win().cursor == Pos{0, 9});
+    CHECK(st.win().desired_col == k_max_col);
+}

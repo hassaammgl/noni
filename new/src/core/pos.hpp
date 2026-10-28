@@ -16,6 +16,12 @@ using WindowId = std::uint32_t;
 inline constexpr BufferId k_no_buffer = 0xFFFFFFFF;
 inline constexpr WindowId k_no_window = 0xFFFFFFFF;
 
+// vim's MAXCOL: the "as far right as possible" curswant that '$' sets (P3.8).
+// Vertical moves clamp it into whatever line they land on, so '$' followed by
+// 'j' goes to the END of the next line, not to the previous line's last
+// column. Everything else that moves the cursor stores a real column.
+inline constexpr std::uint32_t k_max_col = 0x7FFFFFFFu;
+
 // A codepoint position in a buffer: `(line, col)` where `col` is the
 // CODEPOINT index inside that line (0 = first cp). Never a byte offset.
 struct Pos {
