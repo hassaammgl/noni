@@ -225,23 +225,44 @@ namespace {
     }
 }
 
-// P3.5 — one `{`/`}` paragraph-boundary step. Fixture: motion_p3e.fxt.
+// P3.5 — one `{`/`}` paragraph-boundary step. Fixture: motion_p3e.fxt +
+// motion_p3i.fxt (P3.9 sweep).
 // Decode summary:
 //   The ONLY separators are EMPTY lines (len 0) — a blank-only ('   ') line
-//   is NOT a boundary (the oracle steps keep walking through it); the step
-//   scans the lines below/above the cursor until the first empty one and
-//   lands on its char 0 (a separator is its own paragraph start).
-//   All-boundary-less travel fails at the buffer end exactly like the word
-//   motions: EOF -> last char of the last line (col 0 on an empty last
-//   line); BOF -> (line 0, col 0). Empty single-line buffer: no-op.
+//   is NOT a boundary (the oracle steps keep walking through it).
+//   Forward: skip the run of empty lines the cursor is ON, then land on the
+//   first empty line below it. Backward: mirror image (skip the run the
+//   cursor is on, then the first empty line above it). The "skip the run"
+//   part is what makes ['','',''] + '}' land on line 3: nvim walks to the
+//   END of the blank block (and to the buffer end, where the landing is the
+//   last line / first line with the usual col clamp).
+//   All-boundary-less travel lands at the buffer end: EOF -> last char of the
+//   last line (col 0 on an empty last line); BOF -> (line 0, col 0). Empty
+//   single-line buffer: no-op.
 [[nodiscard]] Pos para_step(const std::vector<std::string>& lines,
                             const Pos from, const bool forward) {
     const std::int64_t n = static_cast<std::int64_t>(lines.size());
+    const auto empty_at = [&](const std::int64_t l) {
+        return line_len_cp(lines[static_cast<std::size_t>(l)]) == 0;
+    };
+    std::int64_t l = static_cast<std::int64_t>(from.line);
+    if (empty_at(l)) {
+        // Skip the blank run the cursor sits in (nvim: "if on an empty line,
+        // skip up to a non-empty line" — in the paragraph sense: the block).
+        if (forward) {
+            while (l + 1 < n && empty_at(l + 1)) {
+                ++l;
+            }
+        } else {
+            while (l > 0 && empty_at(l - 1)) {
+                --l;
+            }
+        }
+    }
     const std::int64_t dir = forward ? 1 : -1;
-    for (std::int64_t l = static_cast<std::int64_t>(from.line) + dir;
-         l >= 0 && l < n; l += dir) {
-        if (line_len_cp(lines[static_cast<std::size_t>(l)]) == 0) {
-            return Pos{static_cast<std::uint32_t>(l), 0};
+    for (std::int64_t m = l + dir; m >= 0 && m < n; m += dir) {
+        if (empty_at(m)) {
+            return Pos{static_cast<std::uint32_t>(m), 0};
         }
     }
     if (forward) {
@@ -569,13 +590,16 @@ eresult<Pos> Motion::apply(const MotionContext& ctx, const Pos from,
     case MotionId::ParaFwd:
     case MotionId::ParaBack: {
         // '}'/'{' — one paragraph-boundary step; repeat per count (2{ ==
-        // two single steps, oracle-pinned).
+        // two single steps, oracle-pinned). vim is ALL-OR-NOTHING here: when
+        // any step fails (the buffer edge is already reached) the whole
+        // [count] motion is rejected and the cursor does not move at all
+        // (oracle: "4}" on a 3-boundary file is a no-op, "999}" likewise).
         const bool forward = id == MotionId::ParaFwd;
         Pos p = from;
         for (std::uint32_t i = 0; i < count; ++i) {
             const Pos next = para_step(lines, p, forward);
             if (next == p) {
-                break;
+                return std::unexpected(Error{"no paragraph boundary"});
             }
             p = next;
         }

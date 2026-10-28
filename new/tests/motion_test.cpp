@@ -1029,3 +1029,125 @@ TEST_CASE("motion: MAXCOL survives half-page scrolls and gg/G (P3.8)") {
     CHECK(st.win().cursor == Pos{0, 9});
     CHECK(st.win().desired_col == k_max_col);
 }
+
+// --- P3.9: phase-check sweep (idempotency + count overflow) ----------------
+
+TEST_CASE("motion: differential replay of the P3.9 sweep fixture") {
+    const auto path = find_fixture("motion_p3i.fxt");
+    REQUIRE_MESSAGE(path.has_value(),
+                    "tests/diff/motion_p3i.fxt not found (build dir relative)");
+    std::ifstream in(*path);
+    REQUIRE(in.good());
+
+    std::vector<OracleCase> cases;
+    std::string line;
+    while (std::getline(in, line)) {
+        if (auto c = parse_line(line)) {
+            cases.push_back(*c);
+        }
+    }
+    REQUIRE_MESSAGE(cases.size() >= 40, "fixture parsed too few oracle cases");
+
+    constexpr std::uint32_t kRows = 22;
+    for (const OracleCase& c : cases) {
+        INFO("oracle case: ", c.name, "  keys: ", c.keys);
+        EditorState st;
+        st.buffers[0].set_lines(c.lines);
+        st.win().cursor = c.start;
+        st.win().desired_col = c.start.col;
+        st.win().view_rows = static_cast<int>(kRows);
+        st.win().top_line =
+            c.start.line > kRows - 1 ? c.start.line - (kRows - 1) : 0;
+        st.mode = Mode::Normal;
+
+        for (const Key& k : decode_keys(c.keys)) {
+            key(st, k);
+            app::follow_cursor(st, static_cast<int>(kRows));
+        }
+
+        CHECK(st.win().cursor == c.want);
+        if (c.want_top > 0) {
+            CHECK(st.win().top_line == c.want_top - 1);
+        }
+        CHECK(st.buffers[0].lines() == c.final_lines);
+    }
+}
+
+TEST_CASE("motion: sweep - every motion stays in bounds for any count (P3.9)") {
+    const std::vector<std::vector<std::string>> buffers = {
+        {""},
+        {"x"},
+        {"ab", "", "cde", "", "", "f"},
+        {"  a", "    b", "c"},
+        {"if (a[b]) {", "  x(1);", "}"},
+    };
+    const std::uint32_t counts[] = {1, 2, 7, 999};
+    const std::uint32_t wants[] = {0, 3, k_max_col};
+    // No holes in the enum: PercentLine is the last enumerator.
+    const auto last_id =
+        static_cast<std::uint8_t>(std::to_underlying(MotionId::PercentLine));
+
+    for (const auto& lines : buffers) {
+        const MotionContext ctx{&lines, k_default_tabwidth};
+        for (std::uint8_t raw = 0; raw <= last_id; ++raw) {
+            const auto id = static_cast<MotionId>(raw);
+            // A find target present in most pictures; failing finds are fine.
+            for (const char32_t arg : {U'a', U'(', U'x'}) {
+                const Motion m{id, arg};
+                for (const std::uint32_t count : counts) {
+                    for (const std::uint32_t want : wants) {
+                        for (std::uint32_t l = 0; l < lines.size(); ++l) {
+                            const auto len = static_cast<std::uint32_t>(
+                                line_len_cp(lines[l]));
+                            for (std::uint32_t c :
+                                 {0u, len == 0 ? 0u : len - 1}) {
+                                const Pos from{l, c};
+                                const auto r = m.apply(ctx, from, count, want);
+                                INFO("motion ", static_cast<int>(raw),
+                                     " count ", count, " from ", l, ",", c);
+                                if (!r) {
+                                    continue; // a failing motion keeps the cursor
+                                }
+                                CHECK(r->line < lines.size());
+                                const auto tlen = static_cast<std::uint32_t>(
+                                    line_len_cp(lines[r->line]));
+                                CHECK(r->col <= (tlen == 0 ? 0 : tlen - 1));
+                                // Idempotency sweep: re-running a one-step
+                                // motion from its own result may fail (edge)
+                                // but must never leave the buffer.
+                                const auto again =
+                                    m.apply(ctx, *r, 1, r->col);
+                                if (again) {
+                                    CHECK(again->line < lines.size());
+                                    const auto alen =
+                                        static_cast<std::uint32_t>(
+                                            line_len_cp(lines[again->line]));
+                                    CHECK(again->col
+                                          <= (alen == 0 ? 0 : alen - 1));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("motion: count-overflow paragraph motions are all-or-nothing (P3.9)") {
+    // nvim: "a\\n\\nb\\n\\nc" has three forward boundaries (lines 2, 4, 5) and
+    // "3}" reaches the last one, but "4}" / "999}" are rejected outright.
+    const std::vector<std::string> ls{"a", "", "b", "", "c"};
+    const MotionContext ctx{&ls, k_default_tabwidth};
+    const Motion fwd{MotionId::ParaFwd};
+    const Motion back{MotionId::ParaBack};
+
+    REQUIRE(fwd.apply(ctx, Pos{0, 0}, 3, 0).has_value());
+    CHECK(*fwd.apply(ctx, Pos{0, 0}, 3, 0) == Pos{4, 0});
+    CHECK(!fwd.apply(ctx, Pos{0, 0}, 4, 0).has_value());
+    CHECK(!fwd.apply(ctx, Pos{0, 0}, 999, 0).has_value());
+
+    REQUIRE(back.apply(ctx, Pos{4, 0}, 3, 0).has_value());
+    CHECK(*back.apply(ctx, Pos{4, 0}, 3, 0) == Pos{0, 0});
+    CHECK(!back.apply(ctx, Pos{4, 0}, 4, 0).has_value());
+}
