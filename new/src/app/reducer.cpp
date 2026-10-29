@@ -174,6 +174,23 @@ Command command_for_key(const EditorState& st, const Key& k) {
             }
             break;
         }
+        // P4.1: an armed operator (or a '"' register prefix) owns every
+        // following key. Digits that follow the operator extend ITS count —
+        // the same rule as the global prefix: a leading '0' would be the
+        // col-0 motion, so it only counts once a digit was typed.
+        if (st.pending_op.phase != Pending::Phase::Idle) {
+            if (k.kind == KeyKind::Char
+                && st.pending_op.phase == Pending::Phase::Op
+                && ((k.cp >= U'1' && k.cp <= U'9')
+                    || (k.cp == U'0' && st.pending_op.motion_count != 0))) {
+                c.kind = Kind::OperatorCountDigit;
+                c.cp = k.cp;
+                break;
+            }
+            c.kind = Kind::OperatorKey;
+            c.key = k;
+            break;
+        }
         switch (k.kind) {
         case KeyKind::Char:
             if (k.cp >= U'1' && k.cp <= U'9') {
@@ -231,6 +248,13 @@ Command command_for_key(const EditorState& st, const Key& k) {
             case U'M': c.kind = Kind::Scroll; c.scroll = ScrollId::LineMiddle; break;
             case U'L': c.kind = Kind::Scroll; c.scroll = ScrollId::LineBottom; break;
             case U'z': c.kind = Kind::ZArm; break;
+            // P4.1 — operator keys (and the '"x' register prefix) arm the
+            // operator composition FSM; the reducer parses the rest.
+            case U'd': case U'y': case U'c':
+            case U'>': case U'<': case U'=': case U'"':
+                c.kind = Kind::OperatorKey;
+                c.key = k;
+                break;
             case U';': case U',': {
                 // Repeat (or reverse-repeat) the remembered find. Empty
                 // last_find: no command at all (oracle: stays put).
@@ -318,7 +342,8 @@ void reducer(EditorState& st, const Command& cmd) {
     if (cmd.kind != Kind::None && cmd.kind != Kind::FindArm
         && cmd.kind != Kind::FindCancel && cmd.kind != Kind::GgArm
         && cmd.kind != Kind::GgCancel && cmd.kind != Kind::ZArm
-        && cmd.kind != Kind::ZCancel) {
+        && cmd.kind != Kind::ZCancel && cmd.kind != Kind::OperatorKey
+        && cmd.kind != Kind::OperatorCountDigit) {
         count = st.count_prefix == 0 ? 1 : st.count_prefix;
         st.count_prefix = 0;
     }
@@ -642,6 +667,48 @@ void reducer(EditorState& st, const Command& cmd) {
 
     case Kind::CountDigit:
         return; // handled before the switch (unreachable case for -Wswitch)
+
+    // P4.1 — operator composition. Digits after the operator extend its own
+    // count (motion_count); every other key goes through the Pending FSM,
+    // which returns a completed Edit or cancels the sequence.
+    case Kind::OperatorCountDigit: {
+        Pending& p = st.pending_op;
+        if (p.phase != Pending::Phase::Op || p.motion_count > 100'000) {
+            st.pending_op = Pending{};
+            st.count_prefix = 0;
+            return;
+        }
+        p.motion_count =
+            p.motion_count * 10 + static_cast<std::uint32_t>(cmd.cp - U'0');
+        st.mark_dirty();
+        return;
+    }
+
+    case Kind::OperatorKey: {
+        Buffer* b = st.buffer(st.win().buffer);
+        if (b == nullptr) {
+            st.pending_op = Pending{};
+            st.count_prefix = 0;
+            return;
+        }
+        const bool was_idle = st.pending_op.phase == Pending::Phase::Idle;
+        const TextView tv{&b->lines(), st.win().cursor, k_default_tabwidth};
+        const std::optional<Edit> edit = step(st.pending_op, cmd.key, tv);
+        if (was_idle && st.pending_op.phase == Pending::Phase::Op) {
+            // The count typed BEFORE the operator is the operator's own; digits
+            // typed after it accumulate into motion_count (2d3w == 6 words).
+            st.pending_op.op_count = st.count_prefix;
+            st.count_prefix = 0;
+        } else if (edit) {
+            // Delivered, not applied: P4.2 turns it into a buffer change.
+            st.last_edit = *edit;
+            st.count_prefix = 0;
+        } else if (st.pending_op.phase == Pending::Phase::Idle) {
+            st.count_prefix = 0; // cancelled / failed motion: vim drops it too
+        }
+        st.mark_dirty();
+        return;
+    }
     }
 }
 

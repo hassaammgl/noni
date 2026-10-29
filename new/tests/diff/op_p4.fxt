@@ -1,0 +1,34 @@
+2d3w || 1,1 || v || one two three four five six  || one two three four five six seven eight nine ten
+d2w || 1,1 || v || one two  || one two three four five six seven eight nine ten
+dw || 1,1 || v || one  || one two three
+dd || 2,1 || V || bbb || aaa|bbb|ccc
+2dd || 2,1 || V || bbb\nccc || aaa|bbb|ccc|ddd
+d2d || 2,1 || V || bbb\nccc || aaa|bbb|ccc|ddd
+2d2d || 1,1 || V || aaa\nbbb\nccc\nddd || aaa|bbb|ccc|ddd|eee|fff
+yy || 2,2 || V || def || abc|def
+2yy || 1,1 || V || abc\ndef || abc|def|ghi
+cc || 1,7 || V ||     foo ||     foo
+cw || 1,1 || v || one || one two
+cb || 1,9 || v || two  || one two three
+db || 1,9 || v || two  || one two three
+de || 1,1 || v || one || one two
+d$ || 1,2 || v || bcd || abcd
+d0 || 1,4 || v || abc || abcd
+dj || 2,1 || V || bbb\nccc || aaa|bbb|ccc
+dk || 2,1 || V || aaa\nbbb || aaa|bbb|ccc
+dG || 2,1 || V || bbb\nccc\nddd || aaa|bbb|ccc|ddd
+dgg || 3,2 || V || aaa\nbbb\nccc || aaa|bbb|ccc|ddd
+cw || 1,4 || v ||    || one  two
+cW || 1,1 || v || one.two || one.two three
+yw || 1,1 || v || one  || one two
+y$ || 1,2 || v || bcd || abcd
+dfz || 1,1 || - ||  || abc def
+dfd || 1,1 || v || abc d || abc def
+dtd || 1,1 || v || abc  || abc def
+dF. || 1,9 || v || .bbb || aaaa.bbbb
+dT. || 1,9 || v || bbb || aaaa.bbbb
+d% || 1,4 || v || (a) || if (a) { b; }
+d} || 1,1 || V || one || one||two|three
+d{ || 4,1 || V || \ntwo || one||two|three
+d0 || 1,1 || - ||  || abc
+dq || 1,1 || - ||  || abc

@@ -4,46 +4,18 @@
 // the app layer reduces Commands against this state (ARCHITECTURE §4: one
 // reducer is the single edit path).
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "core/buffer.hpp"
+#include "core/key.hpp" // typed keys (P4.1: moved out for core/operator.hpp)
 #include "core/motion.hpp"
+#include "core/operator.hpp"
 #include "core/pos.hpp"
 #include "core/view.hpp"
 
 namespace noni {
-
-// --- typed keys (P2.1 model, moved to core in P2.2) ---------------------------
-
-enum class KeyKind : std::uint8_t {
-    None,   // decoder-internal step
-    Char,   // any codepoint input (cp); bracketed-paste data ships as Char
-    Esc,
-    Enter,
-    Backspace,
-    Tab,
-    CtrlChar, // cp holds the letter ('a'..'z'); Ctrl+J == Enter (documented)
-    ArrowUp,
-    ArrowDown,
-    ArrowLeft,
-    ArrowRight,
-    Home,
-    End,
-    PageUp,
-    PageDown,
-    Delete,
-    Resize,
-    PasteBegin,
-    PasteEnd,
-    Unknown,
-};
-
-struct Key {
-    KeyKind kind = KeyKind::None;
-    char32_t cp = 0; // Char: the codepoint; CtrlChar: the letter
-    friend bool operator==(const Key&, const Key&) = default;
-};
 
 // --- modes/window/buffers ------------------------------------------------------
 
@@ -116,6 +88,8 @@ struct Command {
         Scroll,      // viewport scroll command (P3.6); see Command::scroll
         ZArm,        // 'z' seen: wait for z/t/b (keep count)
         ZCancel,     // aborted z sequence
+        OperatorKey, // a key routed to the operator FSM (P4.1)
+        OperatorCountDigit, // digit typed while an operator is armed (P4.1)
     };
     Kind kind = Kind::None;
     MotionId motion = MotionId::H; // Motion payload
@@ -124,6 +98,7 @@ struct Command {
     std::uint32_t count = 1;       // reserved for P3 command syntax
     bool at_eol = false;           // EnterInsert flavor ('A' appends EOL)
     FindKind find_kind = FindKind::None; // FindArm payload
+    Key key{};                     // OperatorKey payload (P4.1)
 };
 
 class EditorState {
@@ -164,6 +139,12 @@ public:
     // 0 = none pending; a command consumes+resets it. '0' only STARTS count
     // after a nonzero digit (else it is the col-0 motion — oracle-pinned).
     std::uint32_t count_prefix = 0;
+    // P4.1: operator composition ([count]op[count]motion / doubled op) and
+    // the last COMPLETED operator edit (the reducer applies it from P4.2;
+    // dot-repeat in P5.5 reads it). Input state, like count_prefix: there is
+    // exactly one key stream, so it lives beside the mode.
+    Pending pending_op;
+    std::optional<Edit> last_edit;
     std::string msg;      // statusline message (P2.4 renders)
     std::string cmdline;  // prompt row reservation (P6 fills it)
 
