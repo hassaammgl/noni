@@ -191,16 +191,16 @@
   },
   "active": "67eaa626f65e6674",
   "lastOpenFiles": [
-    "new/build/CMakeFiles/noni.dir/compiler_depend.internal",
-    "new/build/tests/CMakeFiles/noni_tests.dir/compiler_depend.internal",
-    "new/build/CMakeFiles/noni.dir/compiler_depend.make.tmp53153",
-    "new/build/CMakeFiles/Progress/20",
-    "new/build/CMakeFiles/Progress/19",
-    "new/build/CMakeFiles/noni_ui.dir/compiler_depend.internal",
-    "new/build/CMakeFiles/Progress/6",
-    "new/build/CMakeFiles/Progress/5",
-    "new/build/CMakeFiles/noni_app.dir/compiler_depend.internal",
-    "new/build/CMakeFiles/Progress/16",
-    "new/build/CMakeFiles/Progress/15"
+    "new/tests/diff/motion_p3f.fxt",
+    "new/tests/diff/gen_motion_p3f.vim",
+    "new/build/Testing/Temporary/CTestCheckpoint.txt",
+    "new/build/Testing/Temporary/LastTest.log.tmpdbe54",
+    "new/build/CMakeFiles/Progress/28",
+    "new/build/CMakeFiles/Progress/27",
+    "new/build/CMakeFiles/Progress/26",
+    "new/build/CMakeFiles/Progress/25",
+    "new/build/CMakeFiles/Progress/33",
+    "new/build/CMakeFiles/Progress/32",
+    "new/build/CMakeFiles/Progress/24"
   ]
 }
