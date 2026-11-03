@@ -103,6 +103,7 @@ TEST_CASE("operator: [count]op[count]motion composes (ACCEPT 2d3w == 6 words)") 
     key(st, Key{KeyKind::Esc, 0}); // start over
     REQUIRE(st.pending_op.phase == Pending::Phase::Idle);
 
+    const std::vector<std::string> before = st.buffers[0].lines();
     press(st, "2d3w");
     REQUIRE(st.last_edit.has_value());
     const Edit& e = *st.last_edit;
@@ -110,8 +111,7 @@ TEST_CASE("operator: [count]op[count]motion composes (ACCEPT 2d3w == 6 words)") 
     CHECK(e.scope == EditScope::Charwise);
     CHECK(e.range.start == Pos{0, 0});
     CHECK(e.range.end == Pos{0, 28}); // start of the 7th word
-    const std::string covered =
-        range_text(st.buffers[0].lines(), e.range);
+    const std::string covered = range_text(before, e.range);
     CHECK(covered == "one two three four five six ");
     CHECK(count_words(covered, " ") == 6); // 2 * 3
     CHECK(st.count_prefix == 0);           // both counts consumed
@@ -202,11 +202,11 @@ TEST_CASE("operator: Esc and bad keys cancel without an edit") {
 
 TEST_CASE("operator: register prefix is recorded on the edit") {
     EditorState st = fresh({"one two three four five six seven"});
+    const std::vector<std::string> before = st.buffers[0].lines();
     press(st, "\"a2d3w");
     REQUIRE(st.last_edit.has_value());
     CHECK(st.last_edit->reg == U'a');
-    CHECK(count_words(range_text(st.buffers[0].lines(), st.last_edit->range),
-                      " ") == 6);
+    CHECK(count_words(range_text(before, st.last_edit->range), " ") == 6);
     // The prefix survives as a phase of its own before the operator.
     EditorState st2 = fresh({"abc"});
     press(st2, "\"");
@@ -247,17 +247,19 @@ TEST_CASE("operator: motion ranges (includes, backward, linewise j/k/G)") {
     }
     SUBCASE("de includes the word end") {
         EditorState st = fresh({"one two"}, Pos{0, 0});
+        const std::vector<std::string> before = st.buffers[0].lines();
         press(st, "de");
         REQUIRE(st.last_edit.has_value());
-        CHECK(range_text(st.buffers[0].lines(), st.last_edit->range) == "one");
+        CHECK(range_text(before, st.last_edit->range) == "one");
     }
     SUBCASE("db is backward and excludes the cursor char") {
         EditorState st = fresh({"one two three"}, Pos{0, 8});
+        const std::vector<std::string> before = st.buffers[0].lines();
         press(st, "db");
         REQUIRE(st.last_edit.has_value());
         CHECK(st.last_edit->range.start == Pos{0, 4});
         CHECK(st.last_edit->range.end == Pos{0, 8});
-        CHECK(range_text(st.buffers[0].lines(), st.last_edit->range) == "two ");
+        CHECK(range_text(before, st.last_edit->range) == "two ");
     }
     SUBCASE("dj / dk are linewise (j/k are line motions)") {
         EditorState st = fresh({"aaa", "bbb", "ccc"}, Pos{1, 0});
@@ -299,8 +301,9 @@ TEST_CASE("operator: motion ranges (includes, backward, linewise j/k/G)") {
 //   keys || line,col || regtype || regtext || pict
 // nvim's unnamed register holds what the operator covered and getregtype()
 // tells the shape ('V' linewise / 'v' charwise); '-' = vim cancelled (beep).
-// Our Edit is not applied yet (P4.2), so the test compares the RANGE TEXT the
-// Edit describes against the oracle's recorded register text.
+// From P4.2 on the reducer APPLIES the Edit, so the test snapshots the text
+// first and compares the RANGE TEXT the Edit described against the oracle's
+// recorded register text.
 namespace {
 
 struct OpCase {
@@ -413,6 +416,7 @@ TEST_CASE("operator: differential replay of the P4.1 nvim oracle fixture") {
         CAPTURE(c.start.line);
         CAPTURE(c.start.col);
         EditorState st = fresh(c.lines, c.start);
+        const std::vector<std::string> before = st.buffers[0].lines();
         press(st, c.keys);
         if (c.regtype == '-') {
             CHECK_FALSE(st.last_edit.has_value()); // oracle cancelled
@@ -424,7 +428,7 @@ TEST_CASE("operator: differential replay of the P4.1 nvim oracle fixture") {
         const Edit& e = *st.last_edit;
         CHECK(e.scope == (c.regtype == 'V' ? EditScope::Linewise
                                            : EditScope::Charwise));
-        CHECK(covered_text(e, st.buffers[0].lines()) == c.regtext);
+        CHECK(covered_text(e, before) == c.regtext);
         ++checked;
     }
     CHECK(checked == cases.size());

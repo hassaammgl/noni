@@ -17,6 +17,8 @@
 #include "core/key.hpp"
 #include "core/motion.hpp"
 #include "core/pos.hpp"
+#include "core/register.hpp"
+#include "core/undo.hpp" // TextChange — the planned change plan_edit() builds
 
 namespace noni {
 
@@ -73,6 +75,9 @@ struct Pending {
     MotionId await_char = MotionId::H; // f/F/t/T armed: waiting for the target
     bool want_char = false;
     bool g_armed = false; // 'g' seen: the next 'g' completes 'gg'
+    // P4.4/P4.5: 'i'/'a' seen — the next key names the text object.
+    bool want_object = false;
+    char32_t object_prefix = 0;
 };
 
 // Total repetition count of the composed command:
@@ -83,5 +88,21 @@ struct Pending {
 // Consume one key. `p` is mutated in place; nullptr lines in `tv` cancels.
 [[nodiscard]] std::optional<Edit> step(Pending& p, const Key& k,
                                        const TextView& tv);
+
+// --- P4.2: turning a composed Edit into buffer work -------------------------
+//
+// The FSM only decides WHAT to operate on; this is how the reducer applies it.
+// Pure: `lines` is the buffer's current content, the returned plan describes
+// the single TextChange to record (one undo unit) plus everything else the
+// reducer needs (register payload, final cursor, insert transition).
+struct EditPlan {
+    bool changes_text = false; // false for 'y' (and for no-op plans)
+    TextChange change;         // valid when changes_text
+    Pos cursor_after{};        // where the cursor lands after the edit
+    Register reg;              // text the operator moved (y/d/c only)
+};
+
+[[nodiscard]] eresult<EditPlan>
+plan_edit(const std::vector<std::string>& lines, const Edit& e, Pos cursor);
 
 } // namespace noni

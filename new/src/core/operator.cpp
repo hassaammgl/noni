@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <string>
 
+#include <cwctype>
+
 #include "core/text.hpp"
+#include "core/textobj.hpp"
 
 namespace noni {
 namespace {
@@ -46,8 +49,14 @@ namespace {
         return U'<';
     case OperatorId::AutoIndent:
         return U'=';
+    case OperatorId::Upper:
+        return U'U'; // P4.7: gUU / gUgU
+    case OperatorId::Lower:
+        return U'u'; // P4.7: guu
+    case OperatorId::ToggleCase:
+        return U'~'; // P4.7: g~~
     default:
-        return 0; // gU/gu/g~ repeat as 'g' + key; P4.7 arms them
+        return 0;
     }
 }
 
@@ -56,6 +65,11 @@ struct MotionSpec {
     bool linewise = false;  // j k G gg: the operator works on whole lines
     bool inclusive = false; // the motion's landing char is part of the range
 };
+
+[[nodiscard]] bool is_case_op(const OperatorId op) {
+    return op == OperatorId::Upper || op == OperatorId::Lower
+        || op == OperatorId::ToggleCase;
+}
 
 // Motions accepted right after an operator. `;`/`,` need the window's last
 // find value and land with P4.2 (TODO(P4.2): route them through TextView).
@@ -272,9 +286,21 @@ std::optional<Edit> step(Pending& p, const Key& k, const TextView& tv) {
         return motion_edit(op, reg, from, *r, spec.inclusive, *tv.lines);
     }
 
-    // 'g' + 'g' = gg (linewise): the second key is the only completion.
+    // 'g' + 'g' = gg (linewise); for the case operators 'g' + their own doubled
+    // key is the whole-line form (gUgU / gugu / g~g~).
     if (p.g_armed) {
         p.g_armed = false;
+        if (k.cp == doubled_key(p.op) && is_case_op(p.op)) {
+            const std::uint32_t count = combined_count(p);
+            const std::uint32_t first = tv.cursor.line;
+            const std::uint32_t total =
+                static_cast<std::uint32_t>(tv.lines->size());
+            const std::uint32_t last = std::min(first + count, total) - 1;
+            const char32_t reg = p.reg;
+            const OperatorId op = p.op;
+            p = Pending{};
+            return linewise_edit(op, reg, first, last + 1, last - first + 1);
+        }
         if (k.cp != U'g') {
             p = Pending{};
             return std::nullopt;
@@ -324,10 +350,42 @@ std::optional<Edit> step(Pending& p, const Key& k, const TextView& tv) {
         p.await_char = *find;
         return std::nullopt;
     }
-    // Text objects (iw/aw/i(/a"...) arrive with P4.4/P4.5.
-    if (k.cp == U'i' || k.cp == U'a') {
+    // Text objects (iw/aw/ip/ap, quotes, brackets): the prefix arms, the next
+    // key names the object.
+    if (p.want_object) {
+        p.want_object = false;
+        const char32_t prefix = p.object_prefix;
+        const std::optional<TextObjectId> id = text_object_id(prefix, k.cp);
+        const char32_t reg = p.reg;
+        const OperatorId op = p.op;
         p = Pending{};
-        return std::nullopt; // TODO(P4.4): arm the text-object prefix
+        if (!id) {
+            return std::nullopt;
+        }
+        const auto r = text_object_range(*id, *tv.lines, tv.cursor);
+        if (!r || r->range.start == r->range.end) {
+            return std::nullopt; // unmatched: no edit, count already consumed
+        }
+        Edit e;
+        e.op = op;
+        e.reg = reg;
+        e.enter_insert = op == OperatorId::Change;
+        if (r->linewise) {
+            e.scope = EditScope::Linewise;
+            e.lines = r->range.end.line - r->range.start.line;
+            e.range = TextRange{Pos{r->range.start.line, 0},
+                                Pos{r->range.end.line, 0}};
+            e.keep_indent = op == OperatorId::Change;
+        } else {
+            e.scope = EditScope::Charwise;
+            e.range = r->range;
+        }
+        return e;
+    }
+    if (k.cp == U'i' || k.cp == U'a') {
+        p.want_object = true;
+        p.object_prefix = k.cp;
+        return std::nullopt;
     }
 
     const auto found = motion_for_char(k.cp);
@@ -345,10 +403,21 @@ std::optional<Edit> step(Pending& p, const Key& k, const TextView& tv) {
     const char32_t reg = p.reg;
     const OperatorId op = p.op;
     p = Pending{};
-    if (!r || *r == from) {
-        return std::nullopt; // failed / zero-width motion: nothing to do
+    if (!r) {
+        return std::nullopt; // failed motion: nothing to do
     }
     const Pos to = *r;
+    if (to == from) {
+        // An INCLUSIVE motion that does not move still owns the char under
+        // the cursor (`d$`/`cw` on the last char of a line delete it). An
+        // empty line has no such char.
+        if (!spec.inclusive) {
+            return std::nullopt;
+        }
+        if (from.col >= line_len_cp((*tv.lines)[from.line])) {
+            return std::nullopt;
+        }
+    }
     if (spec.linewise) {
         const std::uint32_t first = std::min(from.line, to.line);
         const std::uint32_t last = std::max(from.line, to.line);
@@ -359,6 +428,369 @@ std::optional<Edit> step(Pending& p, const Key& k, const TextView& tv) {
         return std::nullopt;
     }
     return e;
+}
+
+namespace {
+
+// Leading blank prefix of `line` (bytes) and its length in codepoints.
+[[nodiscard]] std::string indent_prefix(const std::string& line) {
+    std::size_t byte = 0;
+    while (byte < line.size()) {
+        const auto d = decode_utf8(line, byte);
+        if (!d || (d->first != U' ' && d->first != U'\t')) {
+            break;
+        }
+        byte += d->second;
+    }
+    return line.substr(0, byte);
+}
+
+[[nodiscard]] std::uint32_t first_nonblank_col(const std::string& line) {
+    return byte_to_cp(line, indent_prefix(line).size());
+}
+
+// P11 owns 'expandtab'/'shiftwidth'; until then follow the buffer's own style.
+[[nodiscard]] std::string indent_unit(const std::vector<std::string>& lines) {
+    for (const std::string& line : lines) {
+        if (line.empty()) {
+            continue;
+        }
+        if (line.front() == '\t') {
+            return "\t";
+        }
+        if (line.front() == ' ') {
+            return std::string(static_cast<std::size_t>(k_default_tabwidth), ' ');
+        }
+    }
+    return std::string(static_cast<std::size_t>(k_default_tabwidth), ' ');
+}
+
+// Lines a Charwise/Linewise edit actually touches [first, last] (inclusive).
+[[nodiscard]] std::pair<std::uint32_t, std::uint32_t>
+affected_lines(const std::vector<std::string>& lines, const Edit& e,
+               const TextRange& r) {
+    const std::uint32_t total = static_cast<std::uint32_t>(lines.size());
+    const std::uint32_t first = std::min(r.start.line, total - 1);
+    std::uint32_t last = first;
+    if (e.scope == EditScope::Linewise) {
+        const std::uint32_t n = e.lines == 0 ? 1 : e.lines;
+        last = std::min(first + n - 1, total - 1);
+    } else {
+        last = r.end.line >= total ? total - 1 : r.end.line;
+        if (r.end.col == 0 && r.end.line > r.start.line && last > first) {
+            --last; // the end sits on the next line's first char
+        }
+    }
+    return {first, last};
+}
+
+[[nodiscard]] Register extract_register(const std::vector<std::string>& lines,
+                                        const Edit& e, const TextRange& r) {
+    Register reg;
+    const std::uint32_t total = static_cast<std::uint32_t>(lines.size());
+    if (e.scope == EditScope::Linewise) {
+        const auto [first, last] = affected_lines(lines, e, r);
+        reg.lines.assign(lines.begin() + first, lines.begin() + last + 1);
+        reg.linewise = true;
+        return reg;
+    }
+    if (r.start.line == r.end.line) {
+        const std::string& line = lines[r.start.line];
+        const std::size_t b0 = cp_to_byte(line, r.start.col);
+        const std::size_t b1 = cp_to_byte(line, r.end.col);
+        reg.lines = {line.substr(b0, b1 > b0 ? b1 - b0 : 0)};
+        return reg;
+    }
+    const std::string& first_line = lines[r.start.line];
+    reg.lines.push_back(first_line.substr(cp_to_byte(first_line, r.start.col)));
+    for (std::uint32_t l = r.start.line + 1; l < r.end.line && l < total; ++l) {
+        reg.lines.push_back(lines[l]);
+    }
+    if (r.end.line < total) {
+        const std::string& last_line = lines[r.end.line];
+        reg.lines.push_back(last_line.substr(0, cp_to_byte(last_line, r.end.col)));
+    }
+    return reg;
+}
+
+// The single line-span change that ERASES the edit's range ('d' and 'c').
+[[nodiscard]] TextChange erase_change(const std::vector<std::string>& lines,
+                                      const Edit& e, const TextRange& r) {
+    TextChange ch;
+    ch.kind = EditKind::Bulk; // operator ranges are one undo unit each
+    ch.cur_before = r.start;
+    const std::uint32_t total = static_cast<std::uint32_t>(lines.size());
+
+    if (e.scope == EditScope::Linewise) {
+        const auto [first, last] = affected_lines(lines, e, r);
+        const std::uint32_t n = last - first + 1;
+        ch.first_line = first;
+        ch.old_lines.assign(lines.begin() + first, lines.begin() + last + 1);
+        if (e.keep_indent) {
+            ch.new_lines = {indent_prefix(ch.old_lines.front())};
+            ch.cur_after = Pos{first, line_len_cp(ch.new_lines.front())};
+        } else if (n == total) {
+            ch.new_lines = {""}; // a buffer always keeps one line
+            ch.cur_after = Pos{0, 0};
+        } else if (last + 1 < total) {
+            ch.cur_after = Pos{first, first_nonblank_col(lines[first + n])};
+        } else {
+            ch.cur_after = Pos{first - 1, first_nonblank_col(lines[first - 1])};
+        }
+        return ch;
+    }
+
+    ch.first_line = r.start.line;
+    if (r.start.line == r.end.line) {
+        const std::string& line = lines[r.start.line];
+        const std::size_t b0 = cp_to_byte(line, r.start.col);
+        const std::size_t b1 = cp_to_byte(line, r.end.col);
+        ch.old_lines = {line};
+        ch.new_lines = {line.substr(0, b0) + (b1 >= b0 ? line.substr(b1) : "")};
+    } else {
+        const std::uint32_t end_line = std::min(r.end.line, total);
+        const std::string& first_line = lines[r.start.line];
+        ch.old_lines.assign(lines.begin() + r.start.line,
+                            end_line < total ? lines.begin() + end_line + 1
+                                             : lines.end());
+        std::string merged =
+            first_line.substr(0, cp_to_byte(first_line, r.start.col));
+        if (end_line < total) {
+            const std::string& last_line = lines[end_line];
+            merged += last_line.substr(cp_to_byte(last_line, r.end.col));
+        }
+        ch.new_lines = {std::move(merged)};
+    }
+    ch.cur_after = r.start;
+    return ch;
+}
+
+[[nodiscard]] std::string shift_left_one(const std::string& line,
+                                         const std::size_t unit_bytes) {
+    if (!line.empty() && line.front() == '\t') {
+        return line.substr(1);
+    }
+    std::size_t spaces = 0;
+    while (spaces < line.size() && spaces < unit_bytes && line[spaces] == ' ') {
+        ++spaces;
+    }
+    return line.substr(spaces);
+}
+
+[[nodiscard]] TextChange shift_change(const std::vector<std::string>& lines,
+                                      const Edit& e, const TextRange& r,
+                                      const bool left) {
+    const auto [first, last] = affected_lines(lines, e, r);
+    const std::string unit = indent_unit(lines);
+    TextChange ch;
+    ch.kind = EditKind::Bulk;
+    ch.first_line = first;
+    ch.old_lines.assign(lines.begin() + first, lines.begin() + last + 1);
+    ch.cur_before = r.start;
+    ch.new_lines.reserve(ch.old_lines.size());
+    for (const std::string& line : ch.old_lines) {
+        ch.new_lines.push_back(left ? shift_left_one(line, unit.size())
+                                    : unit + line);
+    }
+    ch.cur_after = Pos{first, first_nonblank_col(ch.new_lines.front())};
+    return ch;
+}
+
+// Net nesting delta of one line (crude c-family heuristic; P4.8 promises a
+// heuristic, not nvim's indentexpr).
+[[nodiscard]] int net_depth(const std::string& line) {
+    int depth = 0;
+    const std::size_t body = indent_prefix(line).size();
+    for (std::size_t i = body; i < line.size(); ++i) {
+        switch (line[i]) {
+        case '{':
+        case '(':
+        case '[':
+            ++depth;
+            break;
+        case '}':
+        case ')':
+        case ']':
+            --depth;
+            break;
+        default:
+            break;
+        }
+    }
+    return depth;
+}
+
+[[nodiscard]] TextChange indent_change(const std::vector<std::string>& lines,
+                                       const Edit& e, const TextRange& r) {
+    const auto [first, last] = affected_lines(lines, e, r);
+    const std::string unit = indent_unit(lines);
+    int depth = 0;
+    for (std::uint32_t i = 0; i < first; ++i) {
+        depth += net_depth(lines[i]);
+    }
+    if (depth < 0) {
+        depth = 0;
+    }
+
+    TextChange ch;
+    ch.kind = EditKind::Bulk;
+    ch.first_line = first;
+    ch.old_lines.assign(lines.begin() + first, lines.begin() + last + 1);
+    ch.cur_before = r.start;
+    ch.new_lines.reserve(ch.old_lines.size());
+    for (const std::string& line : ch.old_lines) {
+        const std::string body = line.substr(indent_prefix(line).size());
+        int line_depth = depth;
+        if (!body.empty() && (body.front() == '}'
+                              || body.front() == ')' || body.front() == ']')) {
+            line_depth = depth > 0 ? depth - 1 : 0;
+        }
+        std::string out;
+        for (int k = 0; k < line_depth; ++k) {
+            out += unit;
+        }
+        out += body;
+        ch.new_lines.push_back(std::move(out));
+        depth += net_depth(body);
+        if (depth < 0) {
+            depth = 0;
+        }
+    }
+    ch.cur_after = Pos{first, first_nonblank_col(ch.new_lines.front())};
+    return ch;
+}
+
+[[nodiscard]] std::string transform_case(const std::string& line,
+                                         std::size_t b0, std::size_t b1,
+                                         const OperatorId op) {
+    b1 = std::min(b1, line.size());
+    b0 = std::min(b0, b1);
+    std::string out;
+    out.reserve(line.size());
+    out += line.substr(0, b0);
+    std::size_t byte = b0;
+    while (byte < b1) {
+        const auto d = decode_utf8(line, byte);
+        if (!d) {
+            out += line[byte];
+            ++byte;
+            continue;
+        }
+        char32_t cp = d->first;
+        const std::wint_t wide = static_cast<std::wint_t>(cp);
+        switch (op) {
+        case OperatorId::Upper:
+            cp = static_cast<char32_t>(std::towupper(wide));
+            break;
+        case OperatorId::Lower:
+            cp = static_cast<char32_t>(std::towlower(wide));
+            break;
+        default: {
+            // g~: swap the case of every letter.
+            const std::wint_t up = std::towupper(wide);
+            const std::wint_t low = std::towlower(wide);
+            if (wide == up && wide != low) {
+                cp = static_cast<char32_t>(low);
+            } else if (wide == low && wide != up) {
+                cp = static_cast<char32_t>(up);
+            }
+            break;
+        }
+        }
+        out += encode_utf8(cp);
+        byte += d->second;
+    }
+    out += line.substr(b1);
+    return out;
+}
+
+[[nodiscard]] TextChange case_change(const std::vector<std::string>& lines,
+                                     const Edit& e, const TextRange& r) {
+    const auto [first, last] = affected_lines(lines, e, r);
+    TextChange ch;
+    ch.kind = EditKind::Bulk;
+    ch.first_line = first;
+    ch.old_lines.assign(lines.begin() + first, lines.begin() + last + 1);
+    ch.cur_before = r.start;
+    ch.new_lines.reserve(ch.old_lines.size());
+    for (std::uint32_t i = first; i <= last; ++i) {
+        const std::string& line = lines[i];
+        std::size_t b0 = 0;
+        std::size_t b1 = line.size();
+        if (e.scope == EditScope::Charwise) {
+            if (i == r.start.line) {
+                b0 = cp_to_byte(line, r.start.col);
+            }
+            if (i == r.end.line) {
+                b1 = cp_to_byte(line, r.end.col);
+            }
+        }
+        ch.new_lines.push_back(transform_case(line, b0, b1, e.op));
+    }
+    ch.cur_after = r.start;
+    return ch;
+}
+
+} // namespace
+
+eresult<EditPlan> plan_edit(const std::vector<std::string>& lines,
+                            const Edit& e, const Pos cursor) {
+    if (lines.empty()) {
+        return std::unexpected(Error{"operator: empty buffer"});
+    }
+    EditPlan out;
+    TextRange r = e.range;
+    if (r.end < r.start) {
+        std::swap(r.start, r.end);
+    }
+    const std::uint32_t total = static_cast<std::uint32_t>(lines.size());
+    if (r.start.line >= total) {
+        return std::unexpected(Error{"operator: range past EOF"});
+    }
+    if (r.end.line > total) {
+        r.end.line = total;
+    }
+
+    switch (e.op) {
+    case OperatorId::Yank:
+        out.reg = extract_register(lines, e, r);
+        // vim: a linewise yank does not move the cursor at all; a charwise one
+        // lands on the start of the yanked text.
+        out.cursor_after = e.scope == EditScope::Linewise
+                               ? Pos{std::min(r.start.line, total - 1), cursor.col}
+                               : Pos{std::min(r.start.line, total - 1), r.start.col};
+        return out;
+    case OperatorId::Delete:
+    case OperatorId::Change:
+        out.reg = extract_register(lines, e, r);
+        out.change = erase_change(lines, e, r);
+        out.cursor_after = out.change.cur_after;
+        out.changes_text = true;
+        return out;
+    case OperatorId::ShiftRight:
+        out.change = shift_change(lines, e, r, false);
+        out.cursor_after = out.change.cur_after;
+        out.changes_text = true;
+        return out;
+    case OperatorId::ShiftLeft:
+        out.change = shift_change(lines, e, r, true);
+        out.cursor_after = out.change.cur_after;
+        out.changes_text = true;
+        return out;
+    case OperatorId::AutoIndent:
+        out.change = indent_change(lines, e, r);
+        out.cursor_after = out.change.cur_after;
+        out.changes_text = true;
+        return out;
+    case OperatorId::Upper:
+    case OperatorId::Lower:
+    case OperatorId::ToggleCase:
+        out.change = case_change(lines, e, r);
+        out.cursor_after = out.change.cur_after;
+        out.changes_text = true;
+        return out;
+    }
+    return std::unexpected(Error{"operator: unknown"});
 }
 
 } // namespace noni

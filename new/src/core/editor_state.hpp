@@ -13,6 +13,7 @@
 #include "core/motion.hpp"
 #include "core/operator.hpp"
 #include "core/pos.hpp"
+#include "core/register.hpp"
 #include "core/view.hpp"
 
 namespace noni {
@@ -90,6 +91,7 @@ struct Command {
         ZCancel,     // aborted z sequence
         OperatorKey, // a key routed to the operator FSM (P4.1)
         OperatorCountDigit, // digit typed while an operator is armed (P4.1)
+        CaseOp,      // 'g' + u/U/~ (P4.7): arm the case operator
     };
     Kind kind = Kind::None;
     MotionId motion = MotionId::H; // Motion payload
@@ -145,6 +147,9 @@ public:
     // exactly one key stream, so it lives beside the mode.
     Pending pending_op;
     std::optional<Edit> last_edit;
+    // P4.2: the registers 'y'/'d'/'c' move text through. One bank for the
+    // whole editor (vim's registers are global, not per window).
+    RegisterBank registers;
     std::string msg;      // statusline message (P2.4 renders)
     std::string cmdline;  // prompt row reservation (P6 fills it)
 

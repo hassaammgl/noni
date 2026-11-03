@@ -41,7 +41,7 @@ test: build
 sanitize: run_tests_asan
 
 run_tests_asan:
-	@ASAN_OPTIONS=detect_leaks=1 $(TESTS)
+	@cd $(NEW_DIR) && ASAN_OPTIONS=detect_leaks=1 ./build/tests/noni_tests
 
 clean:
 	rm -rf $(BUILD_DIR)

@@ -129,16 +129,76 @@ std::pair<std::uint32_t, std::string> line_indent(const std::string& line) {
 
 } // namespace
 
+// P4.2 — applies one composed operator Edit: register payload + the single
+// line-span change (one undo unit) + the resulting mode/cursor.
+void apply_operator(EditorState& st, const Edit& e) {
+    WindowState& w = st.win();
+    Buffer* b = st.buffer(w.buffer);
+    if (b == nullptr) {
+        return;
+    }
+    const auto plan = plan_edit(b->lines(), e, w.cursor);
+    if (!plan) {
+        st.msg = plan.error().msg;
+        return;
+    }
+    if (e.op == OperatorId::Yank || e.op == OperatorId::Delete
+        || e.op == OperatorId::Change) {
+        if (!plan->reg.empty()) {
+            st.registers.set(e.reg, plan->reg);
+        }
+    }
+    if (plan->changes_text) {
+        record_change(st, EditKind::Bulk, plan->change, plan->cursor_after);
+    } else {
+        w.cursor = plan->cursor_after;
+        sync_desired(st);
+    }
+    if (e.enter_insert) {
+        st.mode = Mode::Insert;
+    } else {
+        // Normal mode never rests past the last char: an operator that ends at
+        // EOL (diw/d$/da() clamps into the shrunken line (vim-exact).
+        const auto& lines = b->lines();
+        const std::uint32_t line =
+            std::min(w.cursor.line,
+                     static_cast<std::uint32_t>(lines.size() - 1));
+        const std::uint32_t len = line_len_cp(lines[line]);
+        w.cursor.line = line;
+        w.cursor.col = len == 0 ? 0 : std::min(w.cursor.col, len - 1);
+        sync_desired(st);
+    }
+    if (e.op == OperatorId::Yank && plan->reg.linewise
+        && plan->reg.lines.size() > 1) {
+        st.msg = std::to_string(plan->reg.lines.size()) + " lines yanked";
+    }
+    st.mark_dirty();
+}
+
 Command command_for_key(const EditorState& st, const Key& k) {
     using Kind = Command::Kind;
     Command c; // kind None
     switch (st.mode) {
     case Mode::Normal:
-        // P3.4: while gg is armed, only the SECOND 'g' completes it.
+        // P3.4: while gg is armed, only the SECOND 'g' completes it; P4.7 adds
+        // the case operators behind the same prefix (gu / gU / g~).
         if (st.win().gg_pending) {
-            if (k.kind == KeyKind::Char && k.cp == U'g') {
-                c.kind = Kind::Motion;
-                c.motion = MotionId::GotoFirst;
+            if (k.kind == KeyKind::Char) {
+                switch (k.cp) {
+                case U'g':
+                    c.kind = Kind::Motion;
+                    c.motion = MotionId::GotoFirst;
+                    break;
+                case U'u':
+                case U'U':
+                case U'~':
+                    c.kind = Kind::CaseOp;
+                    c.cp = k.cp;
+                    break;
+                default:
+                    c.kind = Kind::GgCancel;
+                    break;
+                }
             } else {
                 c.kind = Kind::GgCancel;
             }
@@ -181,6 +241,7 @@ Command command_for_key(const EditorState& st, const Key& k) {
         if (st.pending_op.phase != Pending::Phase::Idle) {
             if (k.kind == KeyKind::Char
                 && st.pending_op.phase == Pending::Phase::Op
+                && !st.pending_op.want_object
                 && ((k.cp >= U'1' && k.cp <= U'9')
                     || (k.cp == U'0' && st.pending_op.motion_count != 0))) {
                 c.kind = Kind::OperatorCountDigit;
@@ -359,6 +420,20 @@ void reducer(EditorState& st, const Command& cmd) {
         st.win().gg_pending = false;
         st.count_prefix = 0;
         return;
+
+    case Kind::CaseOp: {
+        // P4.7 — 'g' + u/U/~ arms the case operator; the next key is its
+        // [count]motion / text object / doubled key (guu, gUU, g~~).
+        st.win().gg_pending = false;
+        st.pending_op = Pending{};
+        st.pending_op.phase = Pending::Phase::Op;
+        st.pending_op.op = cmd.cp == U'u'   ? OperatorId::Lower
+                           : cmd.cp == U'U' ? OperatorId::Upper
+                                            : OperatorId::ToggleCase;
+        st.pending_op.op_count = has_count ? count : 0;
+        st.mark_dirty();
+        return;
+    }
 
     case Kind::ZArm:
         st.win().z_pending = true;
@@ -700,9 +775,11 @@ void reducer(EditorState& st, const Command& cmd) {
             st.pending_op.op_count = st.count_prefix;
             st.count_prefix = 0;
         } else if (edit) {
-            // Delivered, not applied: P4.2 turns it into a buffer change.
+            // Delivered, then applied here (P4.2+): registers, buffer change,
+            // mode transitions. `last_edit` stays for '.' (P5.5).
             st.last_edit = *edit;
             st.count_prefix = 0;
+            apply_operator(st, *edit);
         } else if (st.pending_op.phase == Pending::Phase::Idle) {
             st.count_prefix = 0; // cancelled / failed motion: vim drops it too
         }
